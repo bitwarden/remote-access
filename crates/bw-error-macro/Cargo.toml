@@ -1,0 +1,20 @@
+[package]
+name = "bw-error-macro"
+description = "Error handling proc macro for bw_remote"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+darling = { workspace = true }
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true }
+
+[lib]
+proc-macro = true
+
+[lints]
+workspace = true

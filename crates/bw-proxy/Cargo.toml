@@ -1,0 +1,40 @@
+[package]
+name = "bw-proxy"
+description = "Zero-knowledge WebSocket proxy for bw_remote"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+default = ["experimental-post-quantum-crypto"]
+experimental-post-quantum-crypto = []
+
+[[bin]]
+name = "bw-proxy"
+path = "src/main.rs"
+
+[dependencies]
+bw-error = { workspace = true }
+chrono = "0.4"
+coset = "0.4.1"
+ed25519-dalek = "2.2.0"
+futures-util = { workspace = true }
+hex = "0.4.3"
+ml-dsa = "0.0.4"
+rand = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["net", "signal", "sync", "time"] }
+tokio-tungstenite = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[lints]
+workspace = true
