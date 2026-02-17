@@ -295,7 +295,7 @@ fn prompt_for_connection_choice(
             match self {
                 ConnectionChoice::New => write!(f, "New connection (requires rendezvous code)"),
                 ConnectionChoice::Existing(fp) => {
-                    let short_hex = format!("{fp:?}").chars().take(6).collect::<String>();
+                    let short_hex = &hex::encode(fp.0)[..6];
                     write!(f, "Session {short_hex}")
                 }
             }
@@ -319,7 +319,7 @@ fn prompt_for_connection_choice(
         .map(|choice| match choice {
             ConnectionChoice::New => "New connection (requires rendezvous code)".to_string(),
             ConnectionChoice::Existing(fp) => {
-                let short_hex = format!("{fp:?}").chars().take(6).collect::<String>();
+                let short_hex = &hex::encode(fp.0)[..6];
                 let last_connected = cached_sessions
                     .iter()
                     .find(|(f, _, _)| f == fp)
