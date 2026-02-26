@@ -119,12 +119,12 @@ impl SessionStore for MockSessionStore {
         Ok(())
     }
 
-    fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64)> {
+    fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64, u64)> {
         self.sessions
             .lock()
             .expect("Lock should not be poisoned")
             .values()
-            .map(|e| (e.fingerprint, e.name.clone(), e.last_connected_at))
+            .map(|e| (e.fingerprint, e.name.clone(), e.cached_at, e.last_connected_at))
             .collect()
     }
 
@@ -202,7 +202,7 @@ impl SessionStore for SharedSessionStore {
         self.0.lock().expect("Lock should not be poisoned").clear()
     }
 
-    fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64)> {
+    fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64, u64)> {
         self.0
             .lock()
             .expect("Lock should not be poisoned")
@@ -1028,7 +1028,7 @@ async fn test_e2e_transport_state_persistence() {
                     self.0.lock().expect("Lock should not be poisoned").clear()
                 }
 
-                fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64)> {
+                fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64, u64)> {
                     self.0
                         .lock()
                         .expect("Lock should not be poisoned")

@@ -113,12 +113,12 @@ impl SessionStore for MockSessionStore {
         Ok(())
     }
 
-    fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64)> {
+    fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64, u64)> {
         self.sessions
             .lock()
             .expect("Lock should not be poisoned")
             .values()
-            .map(|e| (e.fingerprint, e.name.clone(), e.last_connected_at))
+            .map(|e| (e.fingerprint, e.name.clone(), e.cached_at, e.last_connected_at))
             .collect()
     }
 

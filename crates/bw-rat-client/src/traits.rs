@@ -27,8 +27,8 @@ pub trait SessionStore: Send + Sync {
 
     /// List all cached sessions
     ///
-    /// Returns tuples of (fingerprint, optional_name, last_connected_timestamp)
-    fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64)>;
+    /// Returns tuples of (fingerprint, optional_name, created_timestamp, last_connected_timestamp)
+    fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64, u64)>;
 
     /// Update the last_connected_at timestamp for a session
     fn update_last_connected(

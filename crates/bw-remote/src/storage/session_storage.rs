@@ -100,11 +100,11 @@ impl SessionStore for FileSessionCache {
         Ok(())
     }
 
-    fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64)> {
+    fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64, u64)> {
         self.data
             .sessions
             .iter()
-            .map(|s| (s.remote_fingerprint, None, s.last_connected_at))
+            .map(|s| (s.remote_fingerprint, None, s.cached_at, s.last_connected_at))
             .collect()
     }
 

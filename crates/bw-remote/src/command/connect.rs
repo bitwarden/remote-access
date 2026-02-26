@@ -122,7 +122,7 @@ async fn run_interactive_session(
         let fingerprint = parse_fingerprint_hex(&session_hex)?;
 
         // Verify session exists
-        if !cached_sessions.iter().any(|(fp, _, _)| *fp == fingerprint) {
+        if !cached_sessions.iter().any(|(fp, _, _, _)| *fp == fingerprint) {
             bail!("Session not found in cache: {}", session_hex);
         }
 
@@ -296,7 +296,7 @@ fn validate_rendezvous_code(code: &str) -> Result<()> {
 
 /// Prompt user to choose between new connection or existing session
 fn prompt_for_connection_choice(
-    cached_sessions: &[(IdentityFingerprint, Option<String>, u64)],
+    cached_sessions: &[(IdentityFingerprint, Option<String>, u64, u64)],
 ) -> Result<ConnectionMode> {
     #[derive(Debug)]
     enum ConnectionChoice {
@@ -321,9 +321,9 @@ fn prompt_for_connection_choice(
 
     // Add cached sessions sorted by last_connected_at (most recent first)
     let mut sorted_sessions = cached_sessions.to_vec();
-    sorted_sessions.sort_by(|a, b| b.2.cmp(&a.2));
+    sorted_sessions.sort_by(|a, b| b.3.cmp(&a.3));
 
-    for (fingerprint, _, _last_connected_at) in sorted_sessions {
+    for (fingerprint, _, _, _) in sorted_sessions {
         options.push(ConnectionChoice::Existing(fingerprint));
     }
 
@@ -336,8 +336,8 @@ fn prompt_for_connection_choice(
                 let short_hex = &hex::encode(fp.0)[..6];
                 let last_connected = cached_sessions
                     .iter()
-                    .find(|(f, _, _)| f == fp)
-                    .map(|(_, _, ts)| *ts)
+                    .find(|(f, _, _, _)| f == fp)
+                    .map(|(_, _, _, ts)| *ts)
                     .unwrap_or(0);
                 let relative_time = format_relative_time(last_connected);
                 format!("Session {short_hex} (last used: {relative_time})")
