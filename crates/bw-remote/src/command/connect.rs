@@ -287,6 +287,7 @@ async fn run_interactive_session(
         );
         app.input_title = " Token ";
         app.footer = token_footer();
+        app.commands = &["/exit"];
         Phase::TokenInput
     };
 
@@ -315,6 +316,7 @@ async fn run_interactive_session(
                                         app.set_mode(Mode::TextInput);
                                         app.input_title = " Token ";
                                         app.footer = token_footer();
+                                        app.commands = &["/exit"];
                                         phase = Phase::TokenInput;
                                     } else {
                                         let (fingerprint, _, _, _) = &sorted_sessions[idx - 1];
@@ -339,6 +341,7 @@ async fn run_interactive_session(
                                                 event_rx = Some(erx);
                                                 response_tx = Some(rtx);
                                                 client = Some(c);
+                                                app.commands = &[];
                                                 phase = Phase::Connecting;
                                             }
                                             Err(e) => {
@@ -389,6 +392,7 @@ async fn run_interactive_session(
                                                     event_rx = Some(erx);
                                                     response_tx = Some(rtx);
                                                     client = Some(c);
+                                                    app.commands = &[];
                                                     phase = Phase::Connecting;
                                                 }
                                                 Err(e) => {
@@ -553,6 +557,7 @@ async fn run_interactive_session(
                             }
                             app.input_title = " Domain ";
                             app.footer = domain_footer();
+                            app.commands = &["/exit"];
                             phase = Phase::Connected;
                         }
 

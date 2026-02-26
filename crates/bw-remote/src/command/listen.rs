@@ -135,29 +135,33 @@ fn which_bw() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Result of checking the Bitwarden CLI status.
+struct BwStatus {
+    /// The account email from `bw status`, if available.
+    user_email: Option<String>,
+    /// Styled spans summarising the vault status (for the header).
+    status_spans: Vec<Span<'static>>,
+}
+
 /// Check if the Bitwarden CLI is available and unlocked.
 ///
-/// Returns a styled `Message` indicating the vault status.
-fn check_bw_status() -> Message {
+/// Returns a [`BwStatus`] with styled spans and optional account email.
+fn check_bw_status() -> BwStatus {
     let bw_path = match which_bw() {
         Some(p) => p,
         None => {
-            return Message::rich(
-                MessageKind::Error,
-                vec![
-                    Span::styled("Bitwarden CLI ", Style::default().fg(Color::Red)),
+            return BwStatus {
+                user_email: None,
+                status_spans: vec![
+                    Span::styled("CLI ", Style::default().fg(Color::Red)),
                     Span::styled(
                         "not found",
                         Style::default()
                             .fg(Color::Red)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(
-                        " — install with: brew install bitwarden-cli",
-                        Style::default().fg(Color::DarkGray),
-                    ),
                 ],
-            );
+            };
         }
     };
 
@@ -168,70 +172,63 @@ fn check_bw_status() -> Message {
             let json: serde_json::Value =
                 serde_json::from_slice(&o.stdout).unwrap_or_default();
             let status = json["status"].as_str().unwrap_or("unknown");
+            let user_email = json["userEmail"].as_str().map(String::from);
 
-            match status {
-                "unlocked" => Message::rich(
-                    MessageKind::Success,
-                    vec![
-                        Span::styled("Vault ", Style::default().fg(Color::Green)),
-                        Span::styled(
-                            "unlocked",
-                            Style::default()
-                                .fg(Color::Green)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                    ],
-                ),
-                "locked" => Message::rich(
-                    MessageKind::Error,
-                    vec![
-                        Span::styled("Vault ", Style::default().fg(Color::Red)),
-                        Span::styled(
-                            "locked",
-                            Style::default()
-                                .fg(Color::Red)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(
-                            " — run: bw unlock",
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                    ],
-                ),
-                _ => Message::rich(
-                    MessageKind::Error,
-                    vec![
-                        Span::styled("Vault ", Style::default().fg(Color::Red)),
-                        Span::styled(
-                            status.to_string(),
-                            Style::default()
-                                .fg(Color::Red)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(
-                            " — run: bw login",
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                    ],
-                ),
+            let status_spans = match status {
+                "unlocked" => vec![
+                    Span::styled("Vault ", Style::default().fg(Color::Green)),
+                    Span::styled(
+                        "unlocked",
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ],
+                "locked" => vec![
+                    Span::styled("Vault ", Style::default().fg(Color::Red)),
+                    Span::styled(
+                        "locked",
+                        Style::default()
+                            .fg(Color::Red)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        " — run: bw unlock",
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ],
+                _ => vec![
+                    Span::styled("Vault ", Style::default().fg(Color::Red)),
+                    Span::styled(
+                        status.to_string(),
+                        Style::default()
+                            .fg(Color::Red)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        " — run: bw login",
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ],
+            };
+
+            BwStatus {
+                user_email,
+                status_spans,
             }
         }
-        _ => Message::rich(
-            MessageKind::Error,
-            vec![
-                Span::styled("Bitwarden CLI ", Style::default().fg(Color::Red)),
+        _ => BwStatus {
+            user_email: None,
+            status_spans: vec![
+                Span::styled("CLI ", Style::default().fg(Color::Red)),
                 Span::styled(
                     "error",
                     Style::default()
                         .fg(Color::Red)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(
-                    " — could not check vault status",
-                    Style::default().fg(Color::DarkGray),
-                ),
             ],
-        ),
+        },
     }
 }
 
@@ -420,12 +417,22 @@ async fn run_event_loop(
                                     title: "Fingerprint Verification".to_string(),
                                     description: Line::from("Do the fingerprints match?"),
                                 });
-                                app.footer = Line::from(
+                                app.footer = Line::from(vec![
                                     Span::styled(
-                                        " Compare the fingerprint above with the remote device",
+                                        " Compare fingerprints with remote device — ",
                                         Style::default().fg(Color::Yellow),
-                                    )
-                                );
+                                    ),
+                                    Span::styled(
+                                        "[y]",
+                                        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                                    ),
+                                    Span::styled(" approve  ", Style::default().fg(Color::Yellow)),
+                                    Span::styled(
+                                        "[n]",
+                                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                                    ),
+                                    Span::styled(" reject", Style::default().fg(Color::Yellow)),
+                                ]);
                             }
                             UserClientEvent::CredentialRequest { domain, request_id, session_id } => {
                                 match lookup_credential(&domain) {
@@ -503,7 +510,9 @@ async fn run_user_client_session(proxy_url: String, psk_mode: bool) -> Result<()
 
             // Create TUI state once — it survives across `/new` restarts.
             let mut app = App::new();
-            app.push_rich(check_bw_status());
+            let bw_status = check_bw_status();
+            app.account_name = bw_status.user_email;
+            app.vault_status = Some(bw_status.status_spans);
             let mut term = init_terminal();
             let mut reader = EventStream::new();
 

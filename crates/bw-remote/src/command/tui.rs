@@ -183,6 +183,10 @@ pub struct App {
     pub footer: Line<'static>,
     /// Available slash commands for the current phase (e.g. &["/exit", "/new"]).
     pub commands: &'static [&'static str],
+    /// Authenticated account email (from `bw status`).
+    pub account_name: Option<String>,
+    /// Vault status spans for display in the header.
+    pub vault_status: Option<Vec<Span<'static>>>,
     /// Persistent session-info panel rendered above the input area.
     pub session_panel: Vec<Message>,
     /// Index of the currently highlighted suggestion (None = no highlight).
@@ -201,6 +205,8 @@ impl App {
             should_quit: false,
             footer: Line::from(""),
             commands: &[],
+            account_name: None,
+            vault_status: None,
             session_panel: Vec::new(),
             suggestion_idx: None,
             scroll_offset: 0,
@@ -383,7 +389,7 @@ impl App {
         // Determine input panel height based on mode
         let input_height = match &self.mode {
             Mode::TextInput => 3,
-            Mode::Confirm { .. } => 5,
+            Mode::Confirm { .. } => 6,
             Mode::Pick { options, .. } => (options.len() as u16) + 2, // border + items
         };
 
@@ -401,7 +407,7 @@ impl App {
         };
 
         let chunks = Layout::vertical([
-            Constraint::Length(4),                   // header (shield + title)
+            Constraint::Length(5),                   // header (shield + title)
             Constraint::Length(1),                   // separator
             Constraint::Fill(1),                     // messages
             Constraint::Length(session_panel_height), // session info panel
@@ -445,18 +451,14 @@ impl App {
     }
 
     fn draw_header(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
-        // Classic heraldic shield: flat top, straight sides, tapers to a bottom point
-        //   ╭────────╮
-        //   │        │
-        //   ╰─╮    ╭─╯
-        //     ╰────╯
-        const SHIELD: [&str; 4] = [
-            "╭────────╮",
-            "│        │",
-            "╰─╮    ╭─╯",
-            "  ╰────╯  ",
+        const SHIELD: [&str; 5] = [
+            "⣿⠛⠛⠛⠛⠛⣿",
+            "⣿⠀⠀⠀⠀⠀⣿",
+            "⢻⠀⠀⠀⠀⢠⡟",
+            "⠀⠻⣤⣤⣤⠟⠀",
+            "⠀⠀⠈⠛⠁⠀⠀",
         ];
-        const SHIELD_WIDTH: u16 = 11;
+        const SHIELD_WIDTH: u16 = 8;
 
         let hchunks = Layout::horizontal([
             Constraint::Length(SHIELD_WIDTH),
@@ -477,23 +479,40 @@ impl App {
             .collect();
         frame.render_widget(Paragraph::new(shield_lines), hchunks[0]);
 
-        // Title text
+        // Title text (5 lines to match shield height)
+        let account_line = match self.account_name {
+            Some(ref email) => Line::from(Span::styled(
+                email.clone(),
+                Style::default().fg(Color::DarkGray),
+            )),
+            None => Line::from(""),
+        };
+
+        let status_line = match self.vault_status {
+            Some(ref spans) => Line::from(spans.clone()),
+            None => Line::from(""),
+        };
+
         let title_lines = vec![
+            Line::from(""),
             Line::from(Span::styled(
                 "Bitwarden",
                 Style::default().fg(bw_blue).add_modifier(Modifier::BOLD),
             )),
-            Line::from(Span::styled(
-                "Remote Access",
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(Span::styled(
-                format!("v{}", env!("CARGO_PKG_VERSION")),
-                Style::default().fg(Color::DarkGray),
-            )),
-            Line::from(""),
+            Line::from(vec![
+                Span::styled(
+                    "Remote Access",
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(" v{}", env!("CARGO_PKG_VERSION")),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]),
+            account_line,
+            status_line,
         ];
         frame.render_widget(Paragraph::new(title_lines), hchunks[1]);
     }
