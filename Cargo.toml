@@ -31,13 +31,14 @@ ciborium = "0.2"
 clap = { version = "4.5", features = ["derive", "env"] }
 clatter = { version = "2.0", default-features = false, features = ["getrandom", "use-rust-crypto-ml-kem", "use-25519", "use-chacha20poly1305", "use-sha"] }
 color-eyre = "0.6.3"
+crossterm = { version = "0.28", features = ["event-stream"] }
 darling = "0.20.10"
 dirs = "5.0"
 futures-util = "0.3"
 hex = "0.4"
 hkdf = "0.12"
-inquire = "0.9.1"
 once_cell = "1.19"
+ratatui = "0.29"
 proc-macro2 = "1.0"
 rand = "0.8"
 quote = "1.0"

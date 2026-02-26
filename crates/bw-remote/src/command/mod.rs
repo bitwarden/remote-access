@@ -5,6 +5,7 @@
 
 mod cache;
 mod connect;
+pub(crate) mod tui;
 mod listen;
 mod util;
 
