@@ -510,6 +510,7 @@ async fn run_user_client_session(proxy_url: String, psk_mode: bool) -> Result<()
 
             // Create TUI state once — it survives across `/new` restarts.
             let mut app = App::new();
+            app.client_label = "User client";
             let bw_status = check_bw_status();
             app.account_name = bw_status.user_email;
             app.vault_status = Some(bw_status.status_spans);

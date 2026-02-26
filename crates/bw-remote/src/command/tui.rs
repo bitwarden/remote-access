@@ -187,6 +187,8 @@ pub struct App {
     pub account_name: Option<String>,
     /// Vault status spans for display in the header.
     pub vault_status: Option<Vec<Span<'static>>>,
+    /// Label shown in the header subtitle (e.g. "Remote client" or "User client").
+    pub client_label: &'static str,
     /// Persistent session-info panel rendered above the input area.
     pub session_panel: Vec<Message>,
     /// Index of the currently highlighted suggestion (None = no highlight).
@@ -205,6 +207,7 @@ impl App {
             should_quit: false,
             footer: Line::from(""),
             commands: &[],
+            client_label: "Remote client",
             account_name: None,
             vault_status: None,
             session_panel: Vec::new(),
@@ -495,22 +498,20 @@ impl App {
 
         let title_lines = vec![
             Line::from(""),
-            Line::from(Span::styled(
-                "Bitwarden",
-                Style::default().fg(bw_blue).add_modifier(Modifier::BOLD),
-            )),
             Line::from(vec![
                 Span::styled(
-                    "Remote Access",
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
+                    "Bitwarden Remote Access",
+                    Style::default().fg(bw_blue).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
                     format!(" v{}", env!("CARGO_PKG_VERSION")),
                     Style::default().fg(Color::DarkGray),
                 ),
             ]),
+            Line::from(Span::styled(
+                self.client_label,
+                Style::default().fg(Color::DarkGray),
+            )),
             account_line,
             status_line,
         ];
