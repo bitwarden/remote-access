@@ -172,6 +172,24 @@ impl UserClient {
         })
     }
 
+    /// Listen for cached sessions only (no new pairing code generated)
+    ///
+    /// Emits a Listening event and runs the event loop. Cached sessions can
+    /// still reconnect via the normal handshake/credential request flow.
+    pub async fn listen_cached_only(
+        &mut self,
+        event_tx: mpsc::Sender<UserClientEvent>,
+        response_rx: mpsc::Receiver<UserClientResponse>,
+    ) -> Result<(), RemoteClientError> {
+        info!("User client listening for cached sessions only (no new pairing code)");
+
+        // Emit Listening event
+        event_tx.send(UserClientEvent::Listening {}).await.ok();
+
+        // Run event loop
+        self.run_event_loop(event_tx, response_rx).await
+    }
+
     /// Enable PSK mode and run the event loop
     ///
     /// Generates a PSK and token, emits events, and runs the main event loop.

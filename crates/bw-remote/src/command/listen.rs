@@ -7,8 +7,8 @@ use std::process::Command;
 
 use bw_proxy::ProxyClientConfig;
 use bw_rat_client::{
-    DefaultProxyClient, IdentityProvider, UserClient, UserClientEvent, UserClientResponse,
-    UserCredentialData,
+    DefaultProxyClient, IdentityProvider, SessionStore, UserClient, UserClientEvent,
+    UserClientResponse, UserCredentialData,
 };
 use clap::Args;
 use color_eyre::eyre::{Result, bail};
@@ -17,6 +17,7 @@ use serde::Deserialize;
 use tokio::sync::mpsc;
 use tracing::info;
 
+use super::util::format_relative_time;
 use crate::storage::{FileIdentityStorage, FileSessionCache};
 
 const DEFAULT_PROXY_URL: &str = "ws://localhost:8080";
@@ -124,6 +125,38 @@ async fn run_user_client_session(proxy_url: String, psk_mode: bool) -> Result<()
             let identity_provider = Box::new(FileIdentityStorage::load_or_generate("user_client")?);
             let session_store = Box::new(FileSessionCache::load_or_create("user_client")?);
 
+            // Check for cached sessions and prompt user
+            let cached_sessions = session_store.list_sessions();
+            let generate_new_code = if !cached_sessions.is_empty() {
+                // Display cached sessions
+                println!(
+                    "Found {} cached session(s):\n",
+                    cached_sessions.len()
+                );
+
+                let mut sorted_sessions = cached_sessions.clone();
+                sorted_sessions.sort_by(|a, b| b.2.cmp(&a.2));
+
+                for (fingerprint, _, last_connected_at) in &sorted_sessions {
+                    let short_hex = hex::encode(fingerprint.0)
+                        .chars()
+                        .take(12)
+                        .collect::<String>();
+                    let relative_time = format_relative_time(*last_connected_at);
+                    println!("  Session {short_hex}  (last used: {relative_time})");
+                }
+                println!();
+
+                // Prompt user whether to generate a new connection code
+                Confirm::new("Generate a new connection code for additional devices?")
+                    .with_default(false)
+                    .prompt()
+                    .unwrap_or(false)
+            } else {
+                // No cached sessions - always generate a new code
+                true
+            };
+
             // Create proxy client
             let proxy_client = Box::new(DefaultProxyClient::new(ProxyClientConfig {
                 proxy_url,
@@ -134,10 +167,15 @@ async fn run_user_client_session(proxy_url: String, psk_mode: bool) -> Result<()
             let client_handle = tokio::task::spawn_local(async move {
                 let mut client =
                     UserClient::listen(identity_provider, session_store, proxy_client).await?;
-                if psk_mode {
-                    client.enable_psk(event_tx, response_rx).await
+
+                if generate_new_code {
+                    if psk_mode {
+                        client.enable_psk(event_tx, response_rx).await
+                    } else {
+                        client.enable_rendezvous(event_tx, response_rx).await
+                    }
                 } else {
-                    client.enable_rendezvous(event_tx, response_rx).await
+                    client.listen_cached_only(event_tx, response_rx).await
                 }
             });
 
@@ -146,7 +184,12 @@ async fn run_user_client_session(proxy_url: String, psk_mode: bool) -> Result<()
 
             while let Some(event) = event_rx.recv().await {
                 match event {
-                    UserClientEvent::Listening {} => {}
+                    UserClientEvent::Listening {} => {
+                        if !generate_new_code {
+                            println!("Listening for cached sessions only...");
+                            println!("(Press Ctrl+C to exit)\n");
+                        }
+                    }
 
                     UserClientEvent::RendevouzCodeGenerated { code } => {
                         info!("");

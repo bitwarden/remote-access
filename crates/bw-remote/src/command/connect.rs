@@ -11,10 +11,9 @@ use bw_rat_client::{
 use clap::Args;
 use color_eyre::eyre::{Result, bail};
 use inquire::{Select, Text};
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 
-use super::util::handle_event;
+use super::util::{format_relative_time, handle_event};
 use crate::storage::{FileIdentityStorage, FileSessionCache};
 
 const DEFAULT_PROXY_URL: &str = "ws://localhost:8080";
@@ -358,39 +357,6 @@ fn prompt_for_connection_choice(
         ConnectionChoice::Existing(fp) => Ok(ConnectionMode::Existing {
             remote_fingerprint: *fp,
         }),
-    }
-}
-
-/// Format a Unix timestamp as relative time (e.g., "2 hours ago", "3 days ago")
-fn format_relative_time(timestamp: u64) -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-
-    let diff = now.saturating_sub(timestamp);
-
-    if diff < 60 {
-        "just now".to_string()
-    } else if diff < 3600 {
-        let minutes = diff / 60;
-        format!(
-            "{} minute{} ago",
-            minutes,
-            if minutes == 1 { "" } else { "s" }
-        )
-    } else if diff < 86400 {
-        let hours = diff / 3600;
-        format!("{} hour{} ago", hours, if hours == 1 { "" } else { "s" })
-    } else if diff < 604800 {
-        let days = diff / 86400;
-        format!("{} day{} ago", days, if days == 1 { "" } else { "s" })
-    } else if diff < 2592000 {
-        let weeks = diff / 604800;
-        format!("{} week{} ago", weeks, if weeks == 1 { "" } else { "s" })
-    } else {
-        let months = diff / 2592000;
-        format!("{} month{} ago", months, if months == 1 { "" } else { "s" })
     }
 }
 

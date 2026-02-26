@@ -2,10 +2,45 @@
 //!
 //! Contains helper functions used across multiple commands.
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use bw_rat_client::{RemoteClientEvent, RemoteClientResponse};
 use inquire::Confirm;
 use tokio::sync::mpsc;
 use tracing::info;
+
+/// Format a Unix timestamp as relative time (e.g., "2 hours ago", "3 days ago")
+pub fn format_relative_time(timestamp: u64) -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let diff = now.saturating_sub(timestamp);
+
+    if diff < 60 {
+        "just now".to_string()
+    } else if diff < 3600 {
+        let minutes = diff / 60;
+        format!(
+            "{} minute{} ago",
+            minutes,
+            if minutes == 1 { "" } else { "s" }
+        )
+    } else if diff < 86400 {
+        let hours = diff / 3600;
+        format!("{} hour{} ago", hours, if hours == 1 { "" } else { "s" })
+    } else if diff < 604800 {
+        let days = diff / 86400;
+        format!("{} day{} ago", days, if days == 1 { "" } else { "s" })
+    } else if diff < 2592000 {
+        let weeks = diff / 604800;
+        format!("{} week{} ago", weeks, if weeks == 1 { "" } else { "s" })
+    } else {
+        let months = diff / 2592000;
+        format!("{} month{} ago", months, if months == 1 { "" } else { "s" })
+    }
+}
 
 /// Handle and display RemoteClientEvent messages
 ///
