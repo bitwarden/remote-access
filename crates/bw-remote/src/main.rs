@@ -20,10 +20,10 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize logging with appropriate level
-    let log_level = if cli.debug_log {
+    let log_level = if cli.verbose {
         tracing::Level::DEBUG
     } else {
-        tracing::Level::INFO
+        tracing::Level::WARN
     };
 
     tracing_subscriber::fmt()
@@ -31,6 +31,8 @@ async fn main() -> Result<()> {
             tracing_subscriber::EnvFilter::from_default_env().add_directive(log_level.into()),
         )
         .init();
+
+    eprintln!("Bitwarden Remote Access v{}", env!("CARGO_PKG_VERSION"));
 
     process_command(cli).await
 }

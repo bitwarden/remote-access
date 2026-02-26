@@ -45,9 +45,9 @@ pub struct Cli {
     #[arg(long)]
     pub verify_fingerprint: bool,
 
-    /// Enable debug logging for the multi-device Noise protocol
-    #[arg(long, global = true)]
-    pub debug_log: bool,
+    /// Enable verbose output
+    #[arg(long, short = 'v', global = true)]
+    pub verbose: bool,
 }
 
 #[derive(Subcommand)]

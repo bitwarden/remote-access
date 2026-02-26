@@ -192,12 +192,6 @@ async fn run_user_client_session(proxy_url: String, psk_mode: bool) -> Result<()
                     }
 
                     UserClientEvent::RendevouzCodeGenerated { code } => {
-                        info!("");
-                        info!("╔════════════════════════════════════════╗");
-                        info!("║  Your Rendezvous Code: {}  ║", code);
-                        info!("╚════════════════════════════════════════╝");
-                        info!("");
-                        info!("Share this code with the remote device to connect.");
                         println!("\n========================================");
                         println!("  RENDEZVOUS CODE");
                         println!("========================================");
@@ -225,7 +219,7 @@ async fn run_user_client_session(proxy_url: String, psk_mode: bool) -> Result<()
                     }
 
                     UserClientEvent::HandshakeProgress { message } => {
-                        info!("Handshake progress: {}", message);
+                        eprintln!("Handshake progress: {message}");
                     }
 
                     UserClientEvent::HandshakeComplete {} => {
@@ -332,11 +326,11 @@ async fn run_user_client_session(proxy_url: String, psk_mode: bool) -> Result<()
                     }
 
                     UserClientEvent::CredentialApproved { domain } => {
-                        info!("Credential approved: {}", domain);
+                        eprintln!("Credential approved: {domain}");
                     }
 
                     UserClientEvent::CredentialDenied { domain } => {
-                        info!("Credential denied: {}", domain);
+                        eprintln!("Credential denied: {domain}");
                     }
 
                     UserClientEvent::ClientDisconnected {} => {

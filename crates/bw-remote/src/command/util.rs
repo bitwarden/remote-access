@@ -7,7 +7,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use bw_rat_client::{RemoteClientEvent, RemoteClientResponse};
 use inquire::Confirm;
 use tokio::sync::mpsc;
-use tracing::info;
 
 /// Format a Unix timestamp as relative time (e.g., "2 hours ago", "3 days ago")
 pub fn format_relative_time(timestamp: u64) -> String {
@@ -59,7 +58,7 @@ pub async fn handle_event(
 ) {
     match event {
         RemoteClientEvent::Connecting { proxy_url } => {
-            info!("Connecting to proxy: {}", proxy_url);
+            eprintln!("Connecting to proxy: {proxy_url}");
         }
         RemoteClientEvent::Connected { fingerprint } => {
             let fp_hex = hex::encode(fingerprint.0);
@@ -76,11 +75,11 @@ pub async fn handle_event(
             );
         }
         RemoteClientEvent::RendevouzResolving { code } => {
-            info!("Resolving rendezvous code: {}", code);
+            eprintln!("Resolving rendezvous code: {code}");
         }
         RemoteClientEvent::RendevouzResolved { fingerprint } => {
             let fp_hex = hex::encode(fingerprint.0);
-            info!("Resolved to fingerprint: {}", fp_hex);
+            eprintln!("Resolved to fingerprint: {fp_hex}");
         }
         RemoteClientEvent::PskMode { fingerprint } => {
             let fp_hex = hex::encode(fingerprint.0);
@@ -93,7 +92,7 @@ pub async fn handle_event(
             println!("Starting secure channel handshake...");
         }
         RemoteClientEvent::HandshakeProgress { message } => {
-            info!("Handshake: {}", message);
+            eprintln!("Handshake: {message}");
         }
         RemoteClientEvent::HandshakeComplete => {
             println!("Secure channel established");
@@ -105,7 +104,7 @@ pub async fn handle_event(
             println!("Requesting credential for: {domain}...");
         }
         RemoteClientEvent::CredentialReceived { domain, .. } => {
-            info!("Credential received for: {}", domain);
+            eprintln!("Credential received for: {domain}");
         }
         RemoteClientEvent::Error { message, context } => {
             let ctx = context.as_deref().unwrap_or("unknown");
