@@ -32,5 +32,7 @@ async fn main() -> Result<()> {
         )
         .init();
 
+    eprintln!("Bitwarden Remote Access v{}", env!("CARGO_PKG_VERSION"));
+
     process_command(cli).await
 }
