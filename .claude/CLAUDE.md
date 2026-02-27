@@ -36,6 +36,17 @@ cargo fmt --all -- --check         # Check formatting without modifying
 
 **Clippy rules**: `unwrap_used = "deny"` (use `expect()` or proper error handling), `string_slice = "warn"`.
 
+Pre-commit hook runs `npx lint-staged` via Husky.
+
+## Environment Variables
+
+- `BIND_ADDR` — Proxy server bind address (default: `127.0.0.1:8080`)
+- `RUST_LOG` — Tracing log filter. Proxy defaults to INFO; CLI defaults to WARN (`--verbose` upgrades to DEBUG)
+
+## Feature Flags
+
+- `experimental-post-quantum-crypto` — Enables ML-KEM-768 key exchange and ML-DSA-65 signatures. **On by default** in `bw-proxy`; off by default in `bw-noise-protocol`. When enabled, `IdentityKeyPair::generate()` uses ML-DSA-65 instead of Ed25519.
+
 ## Workspace Crate Architecture
 
 ```
@@ -46,10 +57,10 @@ bw-remote (CLI binary)
         └── bw-proxy (WebSocket relay server + client library)
 ```
 
-- **bw-noise-protocol** — Noise NNpsk2 handshake, `MultiDeviceTransport` for encrypted messaging, XChaCha20-Poly1305 transport encryption, session state persistence for resumption. Optional post-quantum support via `experimental-post-quantum-crypto` feature flag.
-- **bw-proxy** — WebSocket relay server (`bw-proxy` binary) and `ProxyProtocolClient` library. Three-phase protocol: authentication (MlDsa65 signatures), rendezvous (temporary peer discovery codes), messaging. Default listen address: `ws://localhost:8080`.
+- **bw-noise-protocol** — Noise NNpsk2 handshake, `MultiDeviceTransport` for encrypted messaging, XChaCha20-Poly1305 transport encryption, session state persistence for resumption.
+- **bw-proxy** — WebSocket relay server (`bw-proxy` binary) and `ProxyProtocolClient` library. Three-phase protocol: authentication, rendezvous, messaging. Default listen address: `ws://localhost:8080`.
 - **bw-rat-client** — `RemoteClient` (untrusted device requesting credentials) and `UserClient` (trusted device serving credentials). Uses trait abstractions (`SessionStore`, `IdentityProvider`, `ProxyClient`) and async event/response channels.
-- **bw-remote** — CLI driver with subcommands: `connect` (remote client mode), `listen` (user client mode), `clear-cache`, `list-cache`, `list-devices`, `clear-keypairs`. Integrates with `bw` CLI for credential lookup via `bw get item`.
+- **bw-remote** — CLI driver with interactive TUI (ratatui + crossterm) and non-interactive single-shot mode. Subcommands: `connect`, `listen`, `clear-cache`, `list-cache`, `list-devices`, `clear-keypairs`. Integrates with `bw` CLI for credential lookup via `bw get item`.
 - **bw-error / bw-error-macro** — Error handling utilities ported from Bitwarden's `sdk-internal`.
 
 ## Key Design Patterns
@@ -57,7 +68,44 @@ bw-remote (CLI binary)
 - **Trait-based abstractions**: `SessionStore`, `IdentityProvider`, `ProxyClient` decouple protocol logic from storage/transport implementations
 - **Event-response model**: Clients communicate via `tokio::sync::mpsc` channels — clients emit events, callers send responses
 - **Connection modes**: `ConnectionMode::New` (rendezvous code), `ConnectionMode::NewPsk`, `ConnectionMode::Existing` (cached session)
-- **Fingerprint verification**: 6-character handshake fingerprints for out-of-band verification between peers
+- **Fingerprint verification**: 6-character hex handshake fingerprints (SHA256 of transport keys, first 3 bytes) for out-of-band verification between peers
+
+## Three-Phase Proxy Protocol
+
+1. **Authentication**: Server sends `AuthChallenge` (32-byte nonce) → client replies with `AuthResponse` (COSE_Sign1 signature + COSE public key identity) → server verifies and registers connection by `IdentityFingerprint`. 5-second timeout.
+2. **Rendezvous** (optional, new connections only): Client sends `GetRendevouz` → server generates 6-char code (5-minute TTL, single-use) → discovering client sends `GetIdentity(code)` → server returns target's `IdentityInfo`.
+3. **Messaging**: `Send { source, destination, payload }` — server replaces source with authenticated fingerprint, delivers to all connections matching destination fingerprint (supports multiple concurrent connections per identity).
+
+Noise handshake and encrypted credential payloads are layered on top as `ProtocolMessage` variants sent through the messaging phase.
+
+## Serialization Formats
+
+| Layer | Format |
+|-------|--------|
+| Proxy wire protocol | JSON (WebSocket text frames) |
+| Identity key files (`~/.bw-remote/*.key`) | CBOR via COSE |
+| Session cache (`~/.bw-remote/session_cache_*.json`) | JSON |
+| Transport state (inside session cache) | CBOR byte array |
+| Handshake/encrypted payloads over wire | Base64-encoded binary inside JSON |
+| Auth challenge signatures | COSE_Sign1 (CBOR) |
+
+## Single-Shot Non-Interactive Mode
+
+For agent/LLM integration: `bw-remote connect --domain example.com --token <TOKEN> [--output json|text]`
+
+- No TUI — status to stderr, credential output to stdout
+- Requires `--token` or `--session`
+- No fingerprint verification (headless)
+- PSK token format: `<64-hex-psk>_<64-hex-fingerprint>` (129 chars)
+- Output formats: `text` (key-value lines) or `json` (`{"success": true, "credential": {...}}`)
+- Exit codes: 0=success, 1=general error, 2=connection failed, 3=auth/handshake failed, 4=credential not found, 5=fingerprint mismatch
+
+## Session Persistence
+
+Storage directory: `~/.bw-remote/`
+- Identity keypairs: `{name}.key` — CBOR-encoded COSE key (32-byte seed, keypair rederived on load)
+- Session cache: `session_cache_{name}.json` — array of sessions keyed by `IdentityFingerprint`, with optional `PersistentTransportState` (CBOR) for session resumption without re-handshake
+- Transport auto-rekeys every 24 hours; replay nonces are not persisted (reset on load, 24h max message age)
 
 ## Rust Conventions
 
@@ -65,3 +113,13 @@ bw-remote (CLI binary)
 - Async runtime: Tokio (multi-threaded)
 - Error handling: `thiserror` for library errors, `color-eyre` in the CLI binary
 - All crypto memory uses `zeroize` for secure cleanup
+- Release profile: LTO enabled, `opt-level = "z"` (size-optimized), single codegen unit
+
+## Demo Flow
+
+1. Start proxy: `cargo run --bin bw-proxy`
+2. Start user-client: `cargo run --bin bw-remote -- listen`
+3. Copy the rendezvous code (6-char code, e.g. `ABC-DEF`) from step 2, connect: `cargo run --bin bw-remote -- connect --token <CODE>`
+4. Type domains on the connect side to request credentials; approve on the listen side
+
+Use `--psk` on the listen side for PSK mode instead of rendezvous codes.
