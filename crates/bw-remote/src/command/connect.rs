@@ -25,15 +25,9 @@ use super::tui::{App, AppAction, MessageKind, Mode, init_terminal, restore_termi
 use super::util::{format_connect_event, format_relative_time};
 use crate::storage::{FileIdentityStorage, FileSessionCache};
 
-const DEFAULT_PROXY_URL: &str = "ws://localhost:8080";
-
 /// Arguments for the connect command
 #[derive(Args)]
 pub struct ConnectArgs {
-    /// Proxy server URL
-    #[arg(long, default_value = DEFAULT_PROXY_URL)]
-    pub proxy_url: String,
-
     /// Token (rendezvous code or PSK token)
     #[arg(long)]
     pub token: Option<String>,
@@ -61,14 +55,14 @@ pub struct ConnectArgs {
 
 impl ConnectArgs {
     /// Execute the connect command
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(self, proxy_url: &str) -> Result<()> {
         if let Some(domain) = self.domain {
             // Single-shot mode: --domain requires --token or --session
             if self.token.is_none() && self.session.is_none() {
                 bail!("--domain requires --token or --session");
             }
             run_single_shot(
-                self.proxy_url,
+                proxy_url.to_string(),
                 self.token,
                 self.session,
                 self.no_cache,
@@ -78,7 +72,7 @@ impl ConnectArgs {
             .await
         } else {
             run_interactive_session(
-                self.proxy_url,
+                proxy_url.to_string(),
                 self.token,
                 self.session,
                 self.no_cache,

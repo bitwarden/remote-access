@@ -10,7 +10,7 @@ use bw_rat_client::{
     DefaultProxyClient, IdentityProvider, SessionStore, UserClient, UserClientEvent,
     UserClientResponse, UserCredentialData,
 };
-use clap::Args;
+use clap::{Args, ValueEnum};
 use color_eyre::eyre::Result;
 use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures_util::StreamExt;
@@ -24,24 +24,27 @@ use super::tui::{App, AppAction, Message, MessageKind, Mode, init_terminal, rest
 use super::util::{format_listen_event, format_relative_time};
 use crate::storage::{FileIdentityStorage, FileSessionCache};
 
-const DEFAULT_PROXY_URL: &str = "ws://localhost:8080";
+/// Authentication mode for peer connections
+#[derive(Clone, ValueEnum)]
+pub enum AuthMode {
+    /// Use rendezvous code pairing (default)
+    Rendezvous,
+    /// Use PSK (Pre-Shared Key) mode
+    Psk,
+}
 
 /// Arguments for the listen command
 #[derive(Args)]
 pub struct ListenArgs {
-    /// Proxy server URL
-    #[arg(long, default_value = DEFAULT_PROXY_URL)]
-    pub proxy_url: String,
-
-    /// Use PSK (Pre-Shared Key) mode instead of rendezvous code
-    #[arg(long)]
-    pub psk: bool,
+    /// Authentication mode: rendezvous (default) or psk
+    #[arg(long, default_value = "rendezvous", value_enum)]
+    pub mode: AuthMode,
 }
 
 impl ListenArgs {
     /// Execute the listen command
-    pub async fn run(self) -> Result<()> {
-        run_user_client_session(self.proxy_url, self.psk).await
+    pub async fn run(self, proxy_url: &str) -> Result<()> {
+        run_user_client_session(proxy_url.to_string(), matches!(self.mode, AuthMode::Psk)).await
     }
 }
 
