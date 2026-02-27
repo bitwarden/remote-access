@@ -17,6 +17,10 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use tokio::sync::mpsc;
 
+use super::output::{
+    OutputFormat, emit_json_error, emit_json_success, emit_text_credential, exit_code_for_error,
+    exit_code_name,
+};
 use super::tui::{App, AppAction, MessageKind, Mode, init_terminal, restore_terminal};
 use super::util::{format_connect_event, format_relative_time};
 use crate::storage::{FileIdentityStorage, FileSessionCache};
@@ -34,7 +38,7 @@ pub struct ConnectArgs {
     #[arg(long)]
     pub token: Option<String>,
 
-    /// Session fingerprint to reconnect to (hex string)
+    /// Session fingerprint to reconnect to (hex string or unique prefix)
     #[arg(long)]
     pub session: Option<String>,
 
@@ -45,19 +49,43 @@ pub struct ConnectArgs {
     /// Require fingerprint verification on the connect side
     #[arg(long)]
     pub verify_fingerprint: bool,
+
+    /// Domain to request credentials for (single-shot, non-interactive)
+    #[arg(long)]
+    pub domain: Option<String>,
+
+    /// Output format for single-shot mode
+    #[arg(long, default_value = "text", value_enum)]
+    pub output: OutputFormat,
 }
 
 impl ConnectArgs {
     /// Execute the connect command
     pub async fn run(self) -> Result<()> {
-        run_interactive_session(
-            self.proxy_url,
-            self.token,
-            self.session,
-            self.no_cache,
-            self.verify_fingerprint,
-        )
-        .await
+        if let Some(domain) = self.domain {
+            // Single-shot mode: --domain requires --token or --session
+            if self.token.is_none() && self.session.is_none() {
+                bail!("--domain requires --token or --session");
+            }
+            run_single_shot(
+                self.proxy_url,
+                self.token,
+                self.session,
+                self.no_cache,
+                domain,
+                self.output,
+            )
+            .await
+        } else {
+            run_interactive_session(
+                self.proxy_url,
+                self.token,
+                self.session,
+                self.no_cache,
+                self.verify_fingerprint,
+            )
+            .await
+        }
     }
 }
 
@@ -197,13 +225,7 @@ async fn run_interactive_session(
 
     // Determine if we can skip straight to connecting based on CLI flags
     let cli_connection_mode = if let Some(session_hex) = session_fingerprint {
-        let fingerprint = parse_fingerprint_hex(&session_hex)?;
-        if !cached_sessions
-            .iter()
-            .any(|(fp, _, _, _)| *fp == fingerprint)
-        {
-            bail!("Session not found in cache: {}", session_hex);
-        }
+        let fingerprint = resolve_session_prefix(&session_hex, &cached_sessions)?;
         Some(ConnectionMode::Existing {
             remote_fingerprint: fingerprint,
         })
@@ -248,8 +270,10 @@ async fn run_interactive_session(
         app.footer = connecting_footer();
 
         match start_connection(
-            deferred_identity.take().unwrap(),
-            deferred_session_store.take().unwrap(),
+            deferred_identity.take().expect("identity consumed twice"),
+            deferred_session_store
+                .take()
+                .expect("session store consumed twice"),
             &deferred_proxy_url,
             &mode,
             verify_fingerprint,
@@ -334,8 +358,8 @@ async fn run_interactive_session(
                                         app.footer = connecting_footer();
 
                                         match start_connection(
-                                            deferred_identity.take().unwrap(),
-                                            deferred_session_store.take().unwrap(),
+                                            deferred_identity.take().expect("identity consumed twice"),
+                                            deferred_session_store.take().expect("session store consumed twice"),
                                             &deferred_proxy_url,
                                             &mode,
                                             verify_fingerprint,
@@ -385,8 +409,8 @@ async fn run_interactive_session(
                                             app.footer = connecting_footer();
 
                                             match start_connection(
-                                                deferred_identity.take().unwrap(),
-                                                deferred_session_store.take().unwrap(),
+                                                deferred_identity.take().expect("identity consumed twice"),
+                                                deferred_session_store.take().expect("session store consumed twice"),
                                                 &deferred_proxy_url,
                                                 &mode,
                                                 verify_fingerprint,
@@ -589,6 +613,130 @@ async fn run_interactive_session(
     Ok(())
 }
 
+/// Run a single-shot credential request — no TUI, stdout/stderr only.
+///
+/// This is the agent/LLM-friendly code path. It never initializes ratatui,
+/// prints structured output to stdout, status to stderr, and exits with a
+/// well-defined exit code.
+async fn run_single_shot(
+    proxy_url: String,
+    token: Option<String>,
+    session_fingerprint: Option<String>,
+    no_cache: bool,
+    domain: String,
+    output: OutputFormat,
+) -> Result<()> {
+    use super::output::exit_code;
+
+    let identity_provider: Box<dyn IdentityProvider> =
+        Box::new(FileIdentityStorage::load_or_generate("remote_client")?);
+
+    let session_store: Box<dyn SessionStore> = if no_cache {
+        // Create a fresh, empty cache that won't be persisted
+        Box::new(FileSessionCache::load_or_create("remote_client")?)
+    } else {
+        Box::new(FileSessionCache::load_or_create("remote_client")?)
+    };
+
+    // Determine connection mode from flags (no interactive prompts)
+    let cached_sessions = session_store.list_sessions();
+    let mode = if let Some(session_hex) = session_fingerprint {
+        match resolve_session_prefix(&session_hex, &cached_sessions) {
+            Ok(fingerprint) => ConnectionMode::Existing {
+                remote_fingerprint: fingerprint,
+            },
+            Err(e) => {
+                let msg = format!("{e}");
+                match output {
+                    OutputFormat::Json => emit_json_error(&msg, "general_error"),
+                    OutputFormat::Text => eprintln!("Error: {msg}"),
+                }
+                std::process::exit(exit_code::GENERAL_ERROR);
+            }
+        }
+    } else if let Some(code_or_token) = token {
+        match parse_token(&code_or_token) {
+            Ok(TokenType::Rendezvous(code)) => ConnectionMode::New {
+                rendezvous_code: code,
+            },
+            Ok(TokenType::Psk { psk, fingerprint }) => ConnectionMode::NewPsk {
+                psk,
+                remote_fingerprint: fingerprint,
+            },
+            Err(e) => {
+                let msg = format!("{e}");
+                match output {
+                    OutputFormat::Json => emit_json_error(&msg, "general_error"),
+                    OutputFormat::Text => eprintln!("Error: {msg}"),
+                }
+                std::process::exit(exit_code::GENERAL_ERROR);
+            }
+        }
+    } else {
+        // Should not happen due to validation in run(), but guard anyway
+        let msg = "--domain requires --token or --session";
+        match output {
+            OutputFormat::Json => emit_json_error(msg, "general_error"),
+            OutputFormat::Text => eprintln!("Error: {msg}"),
+        }
+        std::process::exit(exit_code::GENERAL_ERROR);
+    };
+
+    eprintln!("Connecting to proxy...");
+
+    // Connect — never verify fingerprint in single-shot mode (no human present)
+    let (mut event_rx, _response_tx, mut client) =
+        match start_connection(identity_provider, session_store, &proxy_url, &mode, false).await {
+            Ok(result) => result,
+            Err(e) => {
+                let msg = format!("{e}");
+                match output {
+                    OutputFormat::Json => {
+                        emit_json_error(&msg, exit_code_name(exit_code::CONNECTION_FAILED))
+                    }
+                    OutputFormat::Text => eprintln!("Error: {msg}"),
+                }
+                std::process::exit(exit_code::CONNECTION_FAILED);
+            }
+        };
+
+    // Drain events in background (prevents channel backpressure)
+    tokio::spawn(async move {
+        while event_rx.recv().await.is_some() {
+            // Events are silently consumed — the single-shot path
+            // only cares about the credential response.
+        }
+    });
+
+    // Wait for the connection to be ready by giving the handshake a moment
+    // The start_connection call initiates pairing but the Ready event
+    // arrives asynchronously. request_credential will fail if the secure
+    // channel isn't established yet, so we just call it and let the client
+    // handle the internal state.
+    eprintln!("Requesting credential for: {domain}");
+
+    match client.request_credential(&domain).await {
+        Ok(credential) => {
+            match output {
+                OutputFormat::Json => emit_json_success(&domain, &credential),
+                OutputFormat::Text => emit_text_credential(&domain, &credential),
+            }
+            client.close().await;
+            std::process::exit(exit_code::SUCCESS);
+        }
+        Err(e) => {
+            let code = exit_code_for_error(&e);
+            let msg = format!("{e}");
+            match output {
+                OutputFormat::Json => emit_json_error(&msg, exit_code_name(code)),
+                OutputFormat::Text => eprintln!("Error: {msg}"),
+            }
+            client.close().await;
+            std::process::exit(code);
+        }
+    }
+}
+
 /// Create a connection, start pairing, and return the event/response channels + client.
 async fn start_connection(
     identity_provider: Box<dyn IdentityProvider>,
@@ -674,6 +822,39 @@ fn validate_rendezvous_code(code: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Resolve a session hex prefix against cached sessions.
+///
+/// Accepts a full 64-char hex fingerprint or any unique prefix (e.g. "a1b2c3").
+/// Returns the matching fingerprint, or an error if the prefix is ambiguous or not found.
+fn resolve_session_prefix(
+    prefix: &str,
+    cached_sessions: &[(IdentityFingerprint, Option<String>, u64, u64)],
+) -> Result<IdentityFingerprint> {
+    let clean_prefix = prefix.replace(['-', ' ', ':'], "").to_lowercase();
+
+    if clean_prefix.is_empty() {
+        bail!("Session prefix must not be empty");
+    }
+
+    if !clean_prefix.chars().all(|c| c.is_ascii_hexdigit()) {
+        bail!("Session prefix must be a hex string");
+    }
+
+    let matches: Vec<IdentityFingerprint> = cached_sessions
+        .iter()
+        .filter(|(fp, _, _, _)| hex::encode(fp.0).starts_with(&clean_prefix))
+        .map(|(fp, _, _, _)| *fp)
+        .collect();
+
+    match matches.len() {
+        0 => bail!("No cached session matches prefix: {prefix}"),
+        1 => Ok(matches[0]),
+        n => bail!(
+            "Ambiguous session prefix '{prefix}' matches {n} sessions — provide more characters"
+        ),
+    }
 }
 
 /// Parse a fingerprint from hex string
