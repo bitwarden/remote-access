@@ -215,6 +215,7 @@ pub fn format_connect_event(event: &RemoteClientEvent) -> Option<Message> {
 ///
 /// Returns `None` for events handled structurally by the caller
 /// (e.g., `Listening`, `CredentialRequest`, `HandshakeFingerprint`).
+#[allow(clippy::string_slice)]
 pub fn format_listen_event(event: &UserClientEvent) -> Option<Message> {
     match event {
         UserClientEvent::Listening {} => None,
@@ -314,6 +315,21 @@ pub fn format_listen_event(event: &UserClientEvent) -> Option<Message> {
                 Span::styled(domain.clone(), val_style()),
             ],
         )),
+
+        UserClientEvent::SessionRefreshed { fingerprint } => {
+            let fp_hex = hex::encode(fingerprint.0);
+            let short = &fp_hex[..12.min(fp_hex.len())];
+            Some(Message::rich(
+                MessageKind::Success,
+                vec![
+                    Span::styled(
+                        "Known client re-paired and connected — transport keys refreshed: ",
+                        text(),
+                    ),
+                    Span::styled(short.to_string(), val_style()),
+                ],
+            ))
+        }
 
         UserClientEvent::ClientDisconnected {} => {
             Some(Message::new(MessageKind::Info, "Client disconnected"))

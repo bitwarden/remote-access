@@ -78,6 +78,11 @@ pub enum UserClientEvent {
         /// Domain
         domain: String,
     },
+    /// A known/cached device reconnected — transport keys refreshed, no re-verification needed
+    SessionRefreshed {
+        /// The remote device's identity fingerprint
+        fingerprint: IdentityFingerprint,
+    },
     /// Client disconnected
     ClientDisconnected {},
     /// An error occurred
@@ -407,6 +412,13 @@ impl UserClient {
             self.session_store.cache_session(source)?;
             self.session_store
                 .save_transport_state(&source, transport)?;
+
+            event_tx
+                .send(UserClientEvent::SessionRefreshed {
+                    fingerprint: source,
+                })
+                .await
+                .ok();
         } else if is_psk_connection {
             // PSK connection: trust established via pre-shared key, no verification needed
             self.transports.insert(source, transport.clone());
