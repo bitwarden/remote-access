@@ -59,6 +59,17 @@ bw-remote (CLI binary)
 - **Connection modes**: `ConnectionMode::New` (rendezvous code), `ConnectionMode::NewPsk`, `ConnectionMode::Existing` (cached session)
 - **Fingerprint verification**: 6-character handshake fingerprints for out-of-band verification between peers
 
+## Before Committing
+
+Always run these checks before committing:
+
+```bash
+cargo fmt --all -- --check         # Verify formatting
+cargo clippy --workspace           # Lint check
+cargo build --workspace            # Verify it compiles
+cargo test --workspace             # Run all tests
+```
+
 ## Rust Conventions
 
 - Edition 2024, minimum Rust version 1.85, toolchain channel 1.93
