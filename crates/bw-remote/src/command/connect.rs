@@ -198,7 +198,10 @@ async fn run_interactive_session(
     // Determine if we can skip straight to connecting based on CLI flags
     let cli_connection_mode = if let Some(session_hex) = session_fingerprint {
         let fingerprint = parse_fingerprint_hex(&session_hex)?;
-        if !cached_sessions.iter().any(|(fp, _, _, _)| *fp == fingerprint) {
+        if !cached_sessions
+            .iter()
+            .any(|(fp, _, _, _)| *fp == fingerprint)
+        {
             bail!("Session not found in cache: {}", session_hex);
         }
         Some(ConnectionMode::Existing {

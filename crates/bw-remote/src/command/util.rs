@@ -92,10 +92,7 @@ pub fn format_connect_event(event: &RemoteClientEvent) -> Option<Message> {
                 MessageKind::Status,
                 vec![
                     Span::styled("Reconnecting to session: ", text()),
-                    Span::styled(
-                        fp_hex[..12.min(fp_hex.len())].to_string(),
-                        val_style(),
-                    ),
+                    Span::styled(fp_hex[..12.min(fp_hex.len())].to_string(), val_style()),
                 ],
             ))
         }
@@ -122,16 +119,14 @@ pub fn format_connect_event(event: &RemoteClientEvent) -> Option<Message> {
                 MessageKind::Status,
                 vec![
                     Span::styled("Using PSK authentication to: ", text()),
-                    Span::styled(
-                        fp_hex[..12.min(fp_hex.len())].to_string(),
-                        val_style(),
-                    ),
+                    Span::styled(fp_hex[..12.min(fp_hex.len())].to_string(), val_style()),
                 ],
             ))
         }
-        RemoteClientEvent::HandshakeStart => {
-            Some(Message::new(MessageKind::Status, "Starting secure channel handshake..."))
-        }
+        RemoteClientEvent::HandshakeStart => Some(Message::new(
+            MessageKind::Status,
+            "Starting secure channel handshake...",
+        )),
         RemoteClientEvent::HandshakeProgress { message } => Some(Message::rich(
             MessageKind::Status,
             vec![
@@ -139,9 +134,10 @@ pub fn format_connect_event(event: &RemoteClientEvent) -> Option<Message> {
                 Span::styled(message.clone(), dim()),
             ],
         )),
-        RemoteClientEvent::HandshakeComplete => {
-            Some(Message::new(MessageKind::Success, "Secure channel established"))
-        }
+        RemoteClientEvent::HandshakeComplete => Some(Message::new(
+            MessageKind::Success,
+            "Secure channel established",
+        )),
         RemoteClientEvent::Ready { .. } => None,
         RemoteClientEvent::CredentialRequestSent { domain } => Some(Message::rich(
             MessageKind::Status,
@@ -166,9 +162,7 @@ pub fn format_connect_event(event: &RemoteClientEvent) -> Option<Message> {
                     Span::styled(format!("Error ({ctx}): "), Style::default().fg(Color::Red)),
                     Span::styled(
                         message.clone(),
-                        Style::default()
-                            .fg(Color::Red)
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                     ),
                 ],
             ))
@@ -181,9 +175,7 @@ pub fn format_connect_event(event: &RemoteClientEvent) -> Option<Message> {
                     Span::styled("Disconnected: ", Style::default().fg(Color::Red)),
                     Span::styled(
                         reason_str.to_string(),
-                        Style::default()
-                            .fg(Color::Red)
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                     ),
                 ],
             ))
@@ -191,14 +183,20 @@ pub fn format_connect_event(event: &RemoteClientEvent) -> Option<Message> {
         RemoteClientEvent::HandshakeFingerprint { fingerprint } => Some(Message::rich(
             MessageKind::Prompt,
             vec![
-                Span::styled("HANDSHAKE FINGERPRINT: ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "HANDSHAKE FINGERPRINT: ",
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(fingerprint.clone(), val_style()),
                 Span::styled(" — Compare with the trusted device", dim()),
             ],
         )),
-        RemoteClientEvent::FingerprintVerified => {
-            Some(Message::new(MessageKind::Success, "Fingerprint verified successfully!"))
-        }
+        RemoteClientEvent::FingerprintVerified => Some(Message::new(
+            MessageKind::Success,
+            "Fingerprint verified successfully!",
+        )),
         RemoteClientEvent::FingerprintRejected { reason } => Some(Message::rich(
             MessageKind::Error,
             vec![
@@ -259,9 +257,10 @@ pub fn format_listen_event(event: &UserClientEvent) -> Option<Message> {
                 Span::styled(message.clone(), dim()),
             ],
         )),
-        UserClientEvent::HandshakeComplete {} => {
-            Some(Message::new(MessageKind::Success, "Secure channel established"))
-        }
+        UserClientEvent::HandshakeComplete {} => Some(Message::new(
+            MessageKind::Success,
+            "Secure channel established",
+        )),
 
         UserClientEvent::HandshakeFingerprint { fingerprint } => Some(Message::rich(
             MessageKind::Prompt,
@@ -277,9 +276,10 @@ pub fn format_listen_event(event: &UserClientEvent) -> Option<Message> {
             ],
         )),
 
-        UserClientEvent::FingerprintVerified {} => {
-            Some(Message::new(MessageKind::Success, "Fingerprint verified successfully!"))
-        }
+        UserClientEvent::FingerprintVerified {} => Some(Message::new(
+            MessageKind::Success,
+            "Fingerprint verified successfully!",
+        )),
         UserClientEvent::FingerprintRejected { reason } => Some(Message::rich(
             MessageKind::Error,
             vec![
@@ -327,9 +327,7 @@ pub fn format_listen_event(event: &UserClientEvent) -> Option<Message> {
                     Span::styled(format!("Error ({ctx}): "), Style::default().fg(Color::Red)),
                     Span::styled(
                         message.clone(),
-                        Style::default()
-                            .fg(Color::Red)
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                     ),
                 ],
             ))

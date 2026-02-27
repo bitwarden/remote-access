@@ -391,10 +391,7 @@ impl UserClient {
 
         if is_new_connection && !is_psk_connection {
             // New rendezvous connection: require fingerprint verification before caching
-            self.pending_verification = Some(PendingHandshakeVerification {
-                source,
-                transport,
-            });
+            self.pending_verification = Some(PendingHandshakeVerification { source, transport });
 
             event_tx
                 .send(UserClientEvent::HandshakeFingerprint {

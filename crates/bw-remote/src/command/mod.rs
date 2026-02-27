@@ -5,8 +5,8 @@
 
 mod cache;
 mod connect;
-pub(crate) mod tui;
 mod listen;
+pub(crate) mod tui;
 mod util;
 
 use clap::{Parser, Subcommand};

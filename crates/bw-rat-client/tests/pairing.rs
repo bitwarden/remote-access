@@ -118,7 +118,14 @@ impl SessionStore for MockSessionStore {
             .lock()
             .expect("Lock should not be poisoned")
             .values()
-            .map(|e| (e.fingerprint, e.name.clone(), e.cached_at, e.last_connected_at))
+            .map(|e| {
+                (
+                    e.fingerprint,
+                    e.name.clone(),
+                    e.cached_at,
+                    e.last_connected_at,
+                )
+            })
             .collect()
     }
 

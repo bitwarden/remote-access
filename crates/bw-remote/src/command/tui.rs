@@ -87,12 +87,8 @@ impl Message {
             ),
             MessageKind::Error => (
                 "✗ ",
-                Style::default()
-                    .fg(Color::Red)
-                    .add_modifier(Modifier::BOLD),
-                Style::default()
-                    .fg(Color::Red)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
             ),
             MessageKind::Prompt => (
                 "▸ ",
@@ -161,8 +157,7 @@ pub enum AppAction {
 
 /// Brightness lookup table for the listening-dot pulse (20 frames, smooth triangle wave).
 const PULSE: [u8; 20] = [
-    30, 55, 85, 120, 155, 185, 210, 230, 245, 255,
-    255, 245, 230, 210, 185, 155, 120, 85, 55, 30,
+    30, 55, 85, 120, 155, 185, 210, 230, 245, 255, 255, 245, 230, 210, 185, 155, 120, 85, 55, 30,
 ];
 
 /// Map a tick counter to a pulsing yellow/amber colour.
@@ -325,8 +320,7 @@ impl App {
                     if let Some(idx) = self.suggestion_idx {
                         let count = self.filtered_commands().len();
                         if count > 0 {
-                            self.suggestion_idx =
-                                Some(if idx == 0 { count - 1 } else { idx - 1 });
+                            self.suggestion_idx = Some(if idx == 0 { count - 1 } else { idx - 1 });
                         }
                     }
                     None
@@ -410,9 +404,9 @@ impl App {
         };
 
         let chunks = Layout::vertical([
-            Constraint::Length(5),                   // header (shield + title)
-            Constraint::Length(1),                   // separator
-            Constraint::Fill(1),                     // messages
+            Constraint::Length(5),                    // header (shield + title)
+            Constraint::Length(1),                    // separator
+            Constraint::Fill(1),                      // messages
             Constraint::Length(session_panel_height), // session info panel
             Constraint::Length(suggestion_height),    // suggestions (0 when hidden)
             Constraint::Length(input_height),         // input panel
@@ -454,20 +448,11 @@ impl App {
     }
 
     fn draw_header(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
-        const SHIELD: [&str; 5] = [
-            "⣿⠛⠛⠛⠛⠛⣿",
-            "⣿⠀⠀⠀⠀⠀⣿",
-            "⢻⠀⠀⠀⠀⢠⡟",
-            "⠀⠻⣤⣤⣤⠟⠀",
-            "⠀⠀⠈⠛⠁⠀⠀",
-        ];
+        const SHIELD: [&str; 5] = ["⣿⠛⠛⠛⠛⠛⣿", "⣿⠀⠀⠀⠀⠀⣿", "⢻⠀⠀⠀⠀⢠⡟", "⠀⠻⣤⣤⣤⠟⠀", "⠀⠀⠈⠛⠁⠀⠀"];
         const SHIELD_WIDTH: u16 = 8;
 
-        let hchunks = Layout::horizontal([
-            Constraint::Length(SHIELD_WIDTH),
-            Constraint::Fill(1),
-        ])
-        .split(area);
+        let hchunks =
+            Layout::horizontal([Constraint::Length(SHIELD_WIDTH), Constraint::Fill(1)]).split(area);
 
         // Shield rendered in Bitwarden blue
         let bw_blue = Color::Rgb(23, 93, 220);
@@ -594,18 +579,13 @@ impl App {
                         Span::raw(" Yes  "),
                         Span::styled(
                             "[n]",
-                            Style::default()
-                                .fg(Color::Red)
-                                .add_modifier(Modifier::BOLD),
+                            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                         ),
                         Span::raw(" No"),
                     ]),
                 ];
-                let confirm_widget = Paragraph::new(lines).block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(" Confirm "),
-                );
+                let confirm_widget = Paragraph::new(lines)
+                    .block(Block::default().borders(Borders::ALL).title(" Confirm "));
                 frame.render_widget(confirm_widget, area);
             }
             Mode::Pick {
@@ -650,12 +630,7 @@ impl App {
         }
     }
 
-    fn draw_suggestions(
-        &self,
-        frame: &mut Frame,
-        area: ratatui::layout::Rect,
-        filtered: &[&str],
-    ) {
+    fn draw_suggestions(&self, frame: &mut Frame, area: ratatui::layout::Rect, filtered: &[&str]) {
         let lines: Vec<Line<'_>> = filtered
             .iter()
             .enumerate()

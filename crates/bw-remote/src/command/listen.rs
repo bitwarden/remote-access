@@ -156,9 +156,7 @@ fn check_bw_status() -> BwStatus {
                     Span::styled("CLI ", Style::default().fg(Color::Red)),
                     Span::styled(
                         "not found",
-                        Style::default()
-                            .fg(Color::Red)
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                     ),
                 ],
             };
@@ -169,8 +167,7 @@ fn check_bw_status() -> BwStatus {
 
     match output {
         Ok(o) if o.status.success() => {
-            let json: serde_json::Value =
-                serde_json::from_slice(&o.stdout).unwrap_or_default();
+            let json: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap_or_default();
             let status = json["status"].as_str().unwrap_or("unknown");
             let user_email = json["userEmail"].as_str().map(String::from);
 
@@ -188,27 +185,17 @@ fn check_bw_status() -> BwStatus {
                     Span::styled("Vault ", Style::default().fg(Color::Red)),
                     Span::styled(
                         "locked",
-                        Style::default()
-                            .fg(Color::Red)
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(
-                        " — run: bw unlock",
-                        Style::default().fg(Color::DarkGray),
-                    ),
+                    Span::styled(" — run: bw unlock", Style::default().fg(Color::DarkGray)),
                 ],
                 _ => vec![
                     Span::styled("Vault ", Style::default().fg(Color::Red)),
                     Span::styled(
                         status.to_string(),
-                        Style::default()
-                            .fg(Color::Red)
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(
-                        " — run: bw login",
-                        Style::default().fg(Color::DarkGray),
-                    ),
+                    Span::styled(" — run: bw login", Style::default().fg(Color::DarkGray)),
                 ],
             };
 
@@ -223,9 +210,7 @@ fn check_bw_status() -> BwStatus {
                 Span::styled("CLI ", Style::default().fg(Color::Red)),
                 Span::styled(
                     "error",
-                    Style::default()
-                        .fg(Color::Red)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                 ),
             ],
         },
@@ -235,10 +220,7 @@ fn check_bw_status() -> BwStatus {
 type SessionInfo = (IdentityFingerprint, Option<String>, u64, u64);
 
 /// Build session info messages for display in the TUI.
-fn session_info_messages(
-    sessions: &[SessionInfo],
-    pending_label: Option<&str>,
-) -> Vec<Message> {
+fn session_info_messages(sessions: &[SessionInfo], pending_label: Option<&str>) -> Vec<Message> {
     let mut sorted = sessions.to_vec();
     sorted.sort_by(|a, b| b.3.cmp(&a.3));
 
@@ -520,8 +502,7 @@ async fn run_user_client_session(proxy_url: String, psk_mode: bool) -> Result<()
             loop {
                 let identity_provider =
                     Box::new(FileIdentityStorage::load_or_generate("user_client")?);
-                let session_store =
-                    Box::new(FileSessionCache::load_or_create("user_client")?);
+                let session_store = Box::new(FileSessionCache::load_or_create("user_client")?);
                 let cached_sessions = session_store.list_sessions();
 
                 let has_cached = !cached_sessions.is_empty() && !force_new_session;
@@ -553,7 +534,17 @@ async fn run_user_client_session(proxy_url: String, psk_mode: bool) -> Result<()
                     }
                 });
 
-                match run_event_loop(&mut app, &mut term, &mut reader, event_rx, response_tx, &sessions, client_handle).await? {
+                match run_event_loop(
+                    &mut app,
+                    &mut term,
+                    &mut reader,
+                    event_rx,
+                    response_tx,
+                    &sessions,
+                    client_handle,
+                )
+                .await?
+                {
                     EventLoopExit::NewSession => {
                         force_new_session = true;
                         continue;

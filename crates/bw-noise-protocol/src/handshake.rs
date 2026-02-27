@@ -216,27 +216,21 @@ impl ResponderHandshake {
 }
 
 #[instrument(skip(psk))]
-fn new_handshake(
-    ciphersuite: Ciphersuite,
-    psk: Psk,
-    initiator: bool,
-) -> HandshakeState {
+fn new_handshake(ciphersuite: Ciphersuite, psk: Psk, initiator: bool) -> HandshakeState {
     debug!("Creating handshake with PSK");
 
     match ciphersuite {
         Ciphersuite::ClassicalNNpsk2_25519_XChaCha20Poly1035 => {
             let pattern = noise_nn_psk2();
-            let mut handshake =
-                NqHandshake::new(pattern, &[], initiator, None, None, None, None)
-                    .expect("Handshake creation cannot fail");
+            let mut handshake = NqHandshake::new(pattern, &[], initiator, None, None, None, None)
+                .expect("Handshake creation cannot fail");
             handshake.push_psk(psk.as_slice());
             HandshakeState::Classical(Box::new(handshake))
         }
         Ciphersuite::PQNNpsk2_Kyber768_XChaCha20Poly1305 => {
             let pattern = noise_pqnn_psk2();
-            let mut handshake =
-                PqHandshake::new(pattern, &[], initiator, None, None, None, None)
-                    .expect("Handshake creation cannot fail");
+            let mut handshake = PqHandshake::new(pattern, &[], initiator, None, None, None, None)
+                .expect("Handshake creation cannot fail");
             handshake.push_psk(psk.as_slice());
             HandshakeState::PostQuantum(Box::new(handshake))
         }
