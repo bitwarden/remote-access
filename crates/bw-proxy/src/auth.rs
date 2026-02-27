@@ -13,6 +13,8 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 
+use crate::error::ProxyError;
+
 /// Signature algorithm selection for key generation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SignatureAlgorithm {
@@ -23,6 +25,7 @@ pub enum SignatureAlgorithm {
     MlDsa65,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for SignatureAlgorithm {
     fn default() -> Self {
         #[cfg(not(feature = "experimental-post-quantum-crypto"))]
@@ -38,6 +41,7 @@ impl Default for SignatureAlgorithm {
 
 /// A cryptographic identity key-pair for signing challenges.
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum IdentityKeyPair {
     Ed25519 {
         private_key_encoded: [u8; 32],
@@ -147,10 +151,14 @@ impl IdentityKeyPair {
     }
 
     /// Deserialize a key pair from COSE key format.
-    pub fn from_cose(cose_bytes: &[u8]) -> Result<Self, ()> {
-        let cose_key = CoseKey::from_slice(cose_bytes).map_err(|_| ())?;
+    pub fn from_cose(cose_bytes: &[u8]) -> Result<Self, ProxyError> {
+        let cose_key = CoseKey::from_slice(cose_bytes).map_err(|_| {
+            ProxyError::InvalidMessage("Invalid COSE key encoding".to_string())
+        })?;
 
-        let alg = cose_key.alg.as_ref().ok_or(())?;
+        let alg = cose_key.alg.as_ref().ok_or_else(|| {
+            ProxyError::InvalidMessage("Missing algorithm in COSE key".to_string())
+        })?;
 
         match alg {
             coset::Algorithm::Assigned(iana::Algorithm::EdDSA) => {
@@ -168,7 +176,11 @@ impl IdentityKeyPair {
                     }
                 }
 
-                let seed = seed.ok_or(())?;
+                let seed = seed.ok_or_else(|| {
+                    ProxyError::InvalidMessage(
+                        "Missing Ed25519 private key seed in COSE key".to_string(),
+                    )
+                })?;
                 let private_key = SigningKey::from_bytes(&seed);
                 let public_key = VerifyingKey::from(&private_key);
 
@@ -196,7 +208,11 @@ impl IdentityKeyPair {
                     }
                 }
 
-                let seed = seed.ok_or(())?;
+                let seed = seed.ok_or_else(|| {
+                    ProxyError::InvalidMessage(
+                        "Missing ML-DSA-65 private key seed in COSE key".to_string(),
+                    )
+                })?;
                 let keypair = MlDsa65::key_gen_internal(&seed.into());
                 let private_key = keypair.signing_key();
                 let public_key = keypair.verifying_key();
@@ -207,7 +223,9 @@ impl IdentityKeyPair {
                     public_key: public_key.clone(),
                 })
             }
-            _ => Err(()),
+            _ => Err(ProxyError::InvalidMessage(
+                "Unsupported algorithm in COSE key".to_string(),
+            )),
         }
     }
 
@@ -514,8 +532,10 @@ impl Challenge {
                     .sign_deterministic(&self.0, &[])
                     .expect("ML-DSA signing should succeed");
 
-                let mut header = coset::Header::default();
-                header.alg = Some(coset::Algorithm::Assigned(iana::Algorithm::ML_DSA_65));
+                let header = coset::Header {
+                    alg: Some(coset::Algorithm::Assigned(iana::Algorithm::ML_DSA_65)),
+                    ..Default::default()
+                };
 
                 let cose_sign1 = CoseSign1 {
                     protected: coset::ProtectedHeader {

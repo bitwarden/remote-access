@@ -120,6 +120,12 @@ impl InitiatorHandshake {
     }
 }
 
+impl Default for InitiatorHandshake {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// The handshake from the responder side. The handshake consists of 2 messages:
 /// 1. HandshakeInit (I → R)
 /// 2. HandshakeResponse (R → I)
@@ -212,6 +218,12 @@ impl ResponderHandshake {
         }
 
         finalize(self.inner, false, self.ciphersuite)
+    }
+}
+
+impl Default for ResponderHandshake {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

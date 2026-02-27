@@ -117,7 +117,7 @@ impl MultiDeviceTransport {
             recv_key,
             recv_rekey_counter: 1,
             seen_nonces: BTreeMap::new(),
-            timeprovider: timeprovider,
+            timeprovider,
         }
     }
 
