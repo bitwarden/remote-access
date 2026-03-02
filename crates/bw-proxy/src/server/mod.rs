@@ -49,4 +49,4 @@
 mod handler;
 mod proxy_server;
 
-pub use proxy_server::ProxyServer;
+pub use proxy_server::{ProxyServer, ProxyServerConfig};

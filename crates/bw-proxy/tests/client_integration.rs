@@ -1,18 +1,23 @@
 use bw_proxy::{
     IdentityKeyPair,
+    auth::IdentityFingerprint,
     client::{IncomingMessage, ProxyClientConfig, ProxyProtocolClient},
-    server::ProxyServer,
+    server::{ProxyServer, ProxyServerConfig},
 };
 use std::net::SocketAddr;
 
 async fn start_test_server() -> SocketAddr {
+    start_test_server_with_config(ProxyServerConfig::default()).await
+}
+
+async fn start_test_server_with_config(config: ProxyServerConfig) -> SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("should bind to localhost");
     let addr = listener.local_addr().expect("should get local address");
     drop(listener);
 
-    let server = ProxyServer::new(addr);
+    let server = ProxyServer::with_config(addr, config);
     tokio::spawn(async move { server.run().await.ok() });
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
@@ -391,6 +396,125 @@ async fn test_messages_broadcast_to_all_same_identity_connections() {
         .disconnect()
         .await
         .expect("sender should disconnect");
+}
+
+#[tokio::test]
+async fn test_buffered_messages_delivered_on_connect() {
+    let addr = start_test_server().await;
+
+    // Pre-generate keypair for client B (not yet connected)
+    let keypair_b = IdentityKeyPair::generate();
+    let fingerprint_b: IdentityFingerprint = keypair_b.identity().fingerprint();
+    let cose_b = keypair_b.to_cose();
+
+    // Connect client A
+    let config_a = ProxyClientConfig {
+        proxy_url: format!("ws://{addr}"),
+        identity_keypair: None,
+    };
+    let mut client_a = ProxyProtocolClient::new(config_a);
+    let _incoming_a = client_a.connect().await.expect("client A should connect");
+
+    // A sends a message to B's fingerprint while B is offline
+    let payload = b"Hello offline B".to_vec();
+    client_a
+        .send_to(fingerprint_b, payload.clone())
+        .await
+        .expect("client A should send message");
+
+    // Give the server time to process the send and buffer it
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    // Now connect client B with the pre-generated keypair
+    let config_b = ProxyClientConfig {
+        proxy_url: format!("ws://{addr}"),
+        identity_keypair: Some(IdentityKeyPair::from_cose(&cose_b).expect("should parse cose")),
+    };
+    let mut client_b = ProxyProtocolClient::new(config_b);
+    let mut incoming_b = client_b.connect().await.expect("client B should connect");
+
+    // B should receive the buffered message
+    tokio::time::timeout(tokio::time::Duration::from_secs(2), async {
+        let msg = incoming_b
+            .recv()
+            .await
+            .expect("client B should receive buffered message");
+        match msg {
+            IncomingMessage::Send {
+                source,
+                payload: recv_payload,
+                ..
+            } => {
+                assert_eq!(source, client_a.fingerprint());
+                assert_eq!(recv_payload, payload);
+            }
+            _ => panic!("Expected Send message, got {:?}", msg),
+        }
+    })
+    .await
+    .expect("receive should not timeout");
+
+    client_a
+        .disconnect()
+        .await
+        .expect("client A should disconnect");
+    client_b
+        .disconnect()
+        .await
+        .expect("client B should disconnect");
+}
+
+#[tokio::test]
+async fn test_buffering_disabled_drops_messages() {
+    let config = ProxyServerConfig {
+        max_buffered_messages_per_destination: 0,
+    };
+    let addr = start_test_server_with_config(config).await;
+
+    // Pre-generate keypair for client B
+    let keypair_b = IdentityKeyPair::generate();
+    let fingerprint_b: IdentityFingerprint = keypair_b.identity().fingerprint();
+    let cose_b = keypair_b.to_cose();
+
+    // Connect client A and send to offline B
+    let config_a = ProxyClientConfig {
+        proxy_url: format!("ws://{addr}"),
+        identity_keypair: None,
+    };
+    let mut client_a = ProxyProtocolClient::new(config_a);
+    let _incoming_a = client_a.connect().await.expect("client A should connect");
+
+    client_a
+        .send_to(fingerprint_b, b"should be dropped".to_vec())
+        .await
+        .expect("client A should send message");
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    // Connect client B — should NOT receive the message
+    let config_b = ProxyClientConfig {
+        proxy_url: format!("ws://{addr}"),
+        identity_keypair: Some(IdentityKeyPair::from_cose(&cose_b).expect("should parse cose")),
+    };
+    let mut client_b = ProxyProtocolClient::new(config_b);
+    let mut incoming_b = client_b.connect().await.expect("client B should connect");
+
+    let result =
+        tokio::time::timeout(tokio::time::Duration::from_millis(500), incoming_b.recv()).await;
+
+    assert!(
+        result.is_err(),
+        "B should not receive any message when buffering is disabled"
+    );
+
+    client_a
+        .disconnect()
+        .await
+        .expect("client A should disconnect");
+    client_b
+        .disconnect()
+        .await
+        .expect("client B should disconnect");
 }
 
 #[tokio::test]

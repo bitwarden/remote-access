@@ -1,13 +1,35 @@
 use crate::server::handler::ConnectionHandler;
 use crate::{auth::IdentityFingerprint, connection::AuthenticatedConnection, error::ProxyError};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tokio_tungstenite::accept_async;
+
+const DEFAULT_MAX_BUFFERED_MESSAGES: usize = 100;
+pub const MESSAGE_BUFFER_TTL: Duration = Duration::from_secs(600); // 10 minutes
+
+pub struct ProxyServerConfig {
+    /// Maximum number of buffered messages per offline destination.
+    /// Set to 0 to disable offline message buffering entirely.
+    pub max_buffered_messages_per_destination: usize,
+}
+
+impl Default for ProxyServerConfig {
+    fn default() -> Self {
+        Self {
+            max_buffered_messages_per_destination: DEFAULT_MAX_BUFFERED_MESSAGES,
+        }
+    }
+}
+
+pub struct BufferedMessage {
+    pub message: String,
+    pub buffered_at: Instant,
+}
 
 pub struct RendevouzEntry {
     pub fingerprint: IdentityFingerprint,
@@ -18,6 +40,8 @@ pub struct RendevouzEntry {
 pub struct ServerState {
     pub connections: Arc<RwLock<HashMap<IdentityFingerprint, Vec<Arc<AuthenticatedConnection>>>>>,
     pub rendezvous_map: Arc<RwLock<HashMap<String, RendevouzEntry>>>,
+    pub message_buffer: Arc<RwLock<HashMap<IdentityFingerprint, VecDeque<BufferedMessage>>>>,
+    pub config: ProxyServerConfig,
 }
 
 impl Default for ServerState {
@@ -28,9 +52,15 @@ impl Default for ServerState {
 
 impl ServerState {
     pub fn new() -> Self {
+        Self::with_config(ProxyServerConfig::default())
+    }
+
+    pub fn with_config(config: ProxyServerConfig) -> Self {
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),
             rendezvous_map: Arc::new(RwLock::new(HashMap::new())),
+            message_buffer: Arc::new(RwLock::new(HashMap::new())),
+            config,
         }
     }
 }
@@ -108,6 +138,15 @@ impl ProxyServer {
         Self {
             bind_addr,
             state: Arc::new(ServerState::new()),
+            conn_counter: AtomicU64::new(0),
+        }
+    }
+
+    /// Create a new proxy server with the given configuration.
+    pub fn with_config(bind_addr: SocketAddr, config: ProxyServerConfig) -> Self {
+        Self {
+            bind_addr,
+            state: Arc::new(ServerState::with_config(config)),
             conn_counter: AtomicU64::new(0),
         }
     }
@@ -190,6 +229,21 @@ impl ProxyServer {
                     rendezvous_map.remove(&code);
                     tracing::debug!("Cleaned up expired rendezvous code: {}", code);
                 }
+
+                // Clean up expired buffered messages
+                let mut buffer = cleanup_state.message_buffer.write().await;
+                let now_instant = Instant::now();
+                buffer.retain(|fingerprint, queue| {
+                    queue.retain(|msg| {
+                        now_instant.duration_since(msg.buffered_at) < MESSAGE_BUFFER_TTL
+                    });
+                    if queue.is_empty() {
+                        tracing::debug!("Cleaned up empty message buffer for {:?}", fingerprint);
+                        false
+                    } else {
+                        true
+                    }
+                });
             }
         });
 

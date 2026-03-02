@@ -4,11 +4,12 @@ use crate::{
     error::ProxyError,
     messages::Messages,
     rendevouz::RendevouzCode,
-    server::proxy_server::ServerState,
+    server::proxy_server::{BufferedMessage, MESSAGE_BUFFER_TTL, ServerState},
 };
 use futures_util::{SinkExt, StreamExt};
+use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
@@ -107,6 +108,28 @@ impl ConnectionHandler {
         }
 
         tracing::info!("Connection #{}: Added to connection map", conn_id);
+
+        // Deliver any buffered messages for this client
+        {
+            let mut buffer = state.message_buffer.write().await;
+            if let Some(queue) = buffer.remove(&fingerprint) {
+                let now = Instant::now();
+                let mut delivered = 0u64;
+                for buffered in queue {
+                    if now.duration_since(buffered.buffered_at) < MESSAGE_BUFFER_TTL {
+                        let _ = tx.send(Message::Text(buffered.message));
+                        delivered += 1;
+                    }
+                }
+                if delivered > 0 {
+                    tracing::info!(
+                        "Connection #{}: Delivered {} buffered message(s)",
+                        conn_id,
+                        delivered
+                    );
+                }
+            }
+        }
 
         let result =
             Self::handle_authenticated_messages(&state, &mut ws_read, fingerprint, conn_id).await;
@@ -231,11 +254,35 @@ impl ConnectionHandler {
                             );
                         }
                         _ => {
-                            tracing::warn!(
-                                "Connection #{}: Destination not found: {:?}",
-                                conn_id,
-                                destination
-                            );
+                            let max = state.config.max_buffered_messages_per_destination;
+                            if max == 0 {
+                                tracing::warn!(
+                                    "Connection #{}: Destination not found (buffering disabled): {:?}",
+                                    conn_id,
+                                    destination
+                                );
+                            } else {
+                                let forward_msg = serde_json::to_string(&Messages::Send {
+                                    source: Some(source),
+                                    destination,
+                                    payload,
+                                })?;
+                                let mut buffer = state.message_buffer.write().await;
+                                let queue = buffer.entry(destination).or_insert_with(VecDeque::new);
+                                queue.push_back(BufferedMessage {
+                                    message: forward_msg,
+                                    buffered_at: Instant::now(),
+                                });
+                                if queue.len() > max {
+                                    queue.pop_front();
+                                }
+                                tracing::debug!(
+                                    "Connection #{}: Buffered message for offline destination {:?} ({} buffered)",
+                                    conn_id,
+                                    destination,
+                                    queue.len()
+                                );
+                            }
                         }
                     }
                 }

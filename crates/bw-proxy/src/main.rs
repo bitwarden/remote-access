@@ -1,5 +1,5 @@
 use bw_proxy::error::ProxyError;
-use bw_proxy::server::ProxyServer;
+use bw_proxy::server::{ProxyServer, ProxyServerConfig};
 use std::env;
 use tracing_subscriber::{EnvFilter, fmt};
 
@@ -14,9 +14,21 @@ async fn main() -> Result<(), ProxyError> {
         .parse()
         .expect("Invalid BIND_ADDR");
 
-    tracing::info!("Starting proxy server on {}", bind_addr);
+    let max_buffered = env::var("MESSAGE_BUFFER_SIZE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(100);
 
-    let server = ProxyServer::new(bind_addr);
+    tracing::info!(
+        "Starting proxy server on {} (message buffer: {})",
+        bind_addr,
+        max_buffered
+    );
+
+    let config = ProxyServerConfig {
+        max_buffered_messages_per_destination: max_buffered,
+    };
+    let server = ProxyServer::with_config(bind_addr, config);
 
     tokio::select! {
         result = server.run() => {
