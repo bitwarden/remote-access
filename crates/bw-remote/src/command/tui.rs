@@ -186,6 +186,8 @@ pub struct App {
     pub client_label: &'static str,
     /// Persistent session-info panel rendered above the input area.
     pub session_panel: Vec<Message>,
+    /// When true, input characters are masked with `*` (for password entry).
+    pub password_mode: bool,
     /// Index of the currently highlighted suggestion (None = no highlight).
     suggestion_idx: Option<usize>,
     scroll_offset: usize,
@@ -206,6 +208,7 @@ impl App {
             account_name: None,
             vault_status: None,
             session_panel: Vec::new(),
+            password_mode: false,
             suggestion_idx: None,
             scroll_offset: 0,
             tick: 0,
@@ -228,6 +231,7 @@ impl App {
     pub fn set_mode(&mut self, mode: Mode) {
         self.mode = mode;
         self.input.clear();
+        self.password_mode = false;
     }
 
     /// Replace the persistent session-info panel content.
@@ -242,6 +246,9 @@ impl App {
 
     /// Return the commands that match the current input prefix.
     fn filtered_commands(&self) -> Vec<&'static str> {
+        if self.password_mode {
+            return Vec::new();
+        }
         if self.input.starts_with('/') {
             self.commands
                 .iter()
@@ -551,9 +558,14 @@ impl App {
     fn draw_input(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
         match &self.mode {
             Mode::TextInput => {
+                let display_text = if self.password_mode {
+                    "*".repeat(self.input.len())
+                } else {
+                    self.input.clone()
+                };
                 let input_line = Line::from(vec![
                     Span::styled("> ", Style::default().fg(Color::Cyan)),
-                    Span::raw(&self.input),
+                    Span::raw(display_text),
                     Span::styled("_", Style::default().add_modifier(Modifier::SLOW_BLINK)),
                 ]);
                 let input_widget = Paragraph::new(input_line).block(
