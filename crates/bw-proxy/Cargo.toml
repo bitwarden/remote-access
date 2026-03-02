@@ -16,6 +16,7 @@ name = "bw-proxy"
 path = "src/main.rs"
 
 [dependencies]
+async-trait = "0.1"
 bw-error = { workspace = true }
 chrono = "0.4"
 coset = "0.4.1"

@@ -216,6 +216,7 @@ dependencies = [
 name = "bw-proxy"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "bw-error",
  "chrono",
  "coset",

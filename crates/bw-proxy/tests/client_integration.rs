@@ -2,7 +2,7 @@ use bw_proxy::{
     IdentityKeyPair,
     auth::IdentityFingerprint,
     client::{IncomingMessage, ProxyClientConfig, ProxyProtocolClient},
-    server::{ProxyServer, ProxyServerConfig},
+    server::{InMemoryMessageBufferConfig, ProxyServer, ProxyServerConfig},
 };
 use std::net::SocketAddr;
 
@@ -467,8 +467,10 @@ async fn test_buffered_messages_delivered_on_connect() {
 #[tokio::test]
 async fn test_buffering_disabled_drops_messages() {
     let config = ProxyServerConfig {
-        max_buffered_messages_per_destination: 0,
-        ..ProxyServerConfig::default()
+        message_buffer: InMemoryMessageBufferConfig {
+            max_messages_per_destination: 0,
+            ..InMemoryMessageBufferConfig::default()
+        },
     };
     let addr = start_test_server_with_config(config).await;
 

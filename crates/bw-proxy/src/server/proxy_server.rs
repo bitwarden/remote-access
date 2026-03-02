@@ -1,45 +1,21 @@
 use crate::server::handler::ConnectionHandler;
+use crate::server::message_buffer::{
+    InMemoryMessageBuffer, InMemoryMessageBufferConfig, MessageBuffer,
+};
 use crate::{auth::IdentityFingerprint, connection::AuthenticatedConnection, error::ProxyError};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::SystemTime;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tokio_tungstenite::accept_async;
 
-const DEFAULT_MAX_BUFFERED_MESSAGES: usize = 5;
-const DEFAULT_MAX_BUFFERED_DESTINATIONS: usize = 1000;
-pub const MESSAGE_BUFFER_TTL: Duration = Duration::from_secs(600); // 10 minutes
-
+#[derive(Default)]
 pub struct ProxyServerConfig {
-    /// Maximum number of buffered messages per offline destination.
-    /// Set to 0 to disable offline message buffering entirely.
-    pub max_buffered_messages_per_destination: usize,
-    /// Maximum number of distinct offline destinations to buffer messages for.
-    /// Prevents memory exhaustion from messages targeting many unique fingerprints.
-    pub max_buffered_destinations: usize,
-}
-
-impl Default for ProxyServerConfig {
-    fn default() -> Self {
-        Self {
-            max_buffered_messages_per_destination: DEFAULT_MAX_BUFFERED_MESSAGES,
-            max_buffered_destinations: DEFAULT_MAX_BUFFERED_DESTINATIONS,
-        }
-    }
-}
-
-pub struct BufferedMessage {
-    pub message: String,
-    pub buffered_at: Instant,
-}
-
-impl BufferedMessage {
-    pub fn is_expired(&self) -> bool {
-        self.buffered_at.elapsed() >= MESSAGE_BUFFER_TTL
-    }
+    /// Configuration for the in-memory message buffer.
+    pub message_buffer: InMemoryMessageBufferConfig,
 }
 
 pub struct RendevouzEntry {
@@ -51,8 +27,7 @@ pub struct RendevouzEntry {
 pub struct ServerState {
     pub connections: Arc<RwLock<HashMap<IdentityFingerprint, Vec<Arc<AuthenticatedConnection>>>>>,
     pub rendezvous_map: Arc<RwLock<HashMap<String, RendevouzEntry>>>,
-    pub message_buffer: Arc<RwLock<HashMap<IdentityFingerprint, VecDeque<BufferedMessage>>>>,
-    pub config: ProxyServerConfig,
+    pub message_buffer: Arc<dyn MessageBuffer>,
 }
 
 impl Default for ServerState {
@@ -70,8 +45,19 @@ impl ServerState {
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),
             rendezvous_map: Arc::new(RwLock::new(HashMap::new())),
-            message_buffer: Arc::new(RwLock::new(HashMap::new())),
-            config,
+            message_buffer: Arc::new(InMemoryMessageBuffer::new(config.message_buffer)),
+        }
+    }
+
+    /// Create a new `ServerState` with a custom [`MessageBuffer`] implementation.
+    ///
+    /// This is the injection point for alternative storage backends (e.g., Redis).
+    #[allow(dead_code)]
+    pub fn with_message_buffer(message_buffer: Arc<dyn MessageBuffer>) -> Self {
+        Self {
+            connections: Arc::new(RwLock::new(HashMap::new())),
+            rendezvous_map: Arc::new(RwLock::new(HashMap::new())),
+            message_buffer,
         }
     }
 }
@@ -242,16 +228,7 @@ impl ProxyServer {
                 }
 
                 // Clean up expired buffered messages
-                let mut buffer = cleanup_state.message_buffer.write().await;
-                buffer.retain(|fingerprint, queue| {
-                    queue.retain(|msg| !msg.is_expired());
-                    if queue.is_empty() {
-                        tracing::debug!("Cleaned up empty message buffer for {:?}", fingerprint);
-                        false
-                    } else {
-                        true
-                    }
-                });
+                cleanup_state.message_buffer.cleanup().await;
             }
         });
 

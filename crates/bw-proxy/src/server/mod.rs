@@ -47,6 +47,8 @@
 //! - Sees metadata: source, destination, timing, message size
 
 mod handler;
+mod message_buffer;
 mod proxy_server;
 
+pub use message_buffer::{InMemoryMessageBuffer, InMemoryMessageBufferConfig, MessageBuffer};
 pub use proxy_server::{ProxyServer, ProxyServerConfig};

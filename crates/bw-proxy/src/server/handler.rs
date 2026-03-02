@@ -4,11 +4,11 @@ use crate::{
     error::ProxyError,
     messages::Messages,
     rendevouz::RendevouzCode,
-    server::proxy_server::{BufferedMessage, ServerState},
+    server::proxy_server::ServerState,
 };
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
-use std::time::{Instant, SystemTime};
+use std::time::SystemTime;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
@@ -110,21 +110,15 @@ impl ConnectionHandler {
 
         // Deliver any buffered messages for this client
         {
-            let mut buffer = state.message_buffer.write().await;
-            if let Some(queue) = buffer.remove(&fingerprint) {
-                let mut delivered = 0u64;
-                for buffered in queue {
-                    if !buffered.is_expired() {
-                        let _ = tx.send(Message::Text(buffered.message));
-                        delivered += 1;
-                    }
-                }
-                if delivered > 0 {
-                    tracing::info!(
-                        "Connection #{}: Delivered {} buffered message(s)",
-                        conn_id,
-                        delivered
-                    );
+            let messages = state.message_buffer.retrieve_messages(&fingerprint).await;
+            if !messages.is_empty() {
+                tracing::info!(
+                    "Connection #{}: Delivering {} buffered message(s)",
+                    conn_id,
+                    messages.len()
+                );
+                for message in messages {
+                    let _ = tx.send(Message::Text(message));
                 }
             }
         }
@@ -254,40 +248,22 @@ impl ConnectionHandler {
                             );
                         }
                         _ => {
-                            let max = state.config.max_buffered_messages_per_destination;
-                            if max == 0 {
-                                tracing::warn!(
-                                    "Connection #{}: Destination not found (buffering disabled): {:?}",
+                            let accepted = state
+                                .message_buffer
+                                .buffer_message(destination, forward_msg)
+                                .await;
+                            if accepted {
+                                tracing::debug!(
+                                    "Connection #{}: Buffered message for offline destination {:?}",
                                     conn_id,
                                     destination
                                 );
                             } else {
-                                let mut buffer = state.message_buffer.write().await;
-                                let is_new_destination = !buffer.contains_key(&destination);
-                                if is_new_destination
-                                    && buffer.len() >= state.config.max_buffered_destinations
-                                {
-                                    tracing::warn!(
-                                        "Connection #{}: Buffer destination limit reached, dropping message for {:?}",
-                                        conn_id,
-                                        destination
-                                    );
-                                } else {
-                                    let queue = buffer.entry(destination).or_default();
-                                    queue.push_back(BufferedMessage {
-                                        message: forward_msg,
-                                        buffered_at: Instant::now(),
-                                    });
-                                    if queue.len() > max {
-                                        queue.pop_front();
-                                    }
-                                    tracing::debug!(
-                                        "Connection #{}: Buffered message for offline destination {:?} ({} buffered)",
-                                        conn_id,
-                                        destination,
-                                        queue.len()
-                                    );
-                                }
+                                tracing::warn!(
+                                    "Connection #{}: Message for offline destination {:?} was not buffered",
+                                    conn_id,
+                                    destination
+                                );
                             }
                         }
                     }
