@@ -572,7 +572,10 @@ async fn test_fingerprint_pairing() {
                     if let UserClientEvent::HandshakeFingerprint { fingerprint: _ } = event {
                         // Auto-approve the fingerprint on the user/listener side
                         let _ = user_response_tx
-                            .send(UserClientResponse::VerifyFingerprint { approved: true })
+                            .send(UserClientResponse::VerifyFingerprint {
+                                approved: true,
+                                name: None,
+                            })
                             .await;
                         break;
                     }
@@ -723,7 +726,10 @@ async fn test_fingerprint_pairing_both_sides_verify() {
                 while let Some(event) = user_event_rx.recv().await {
                     if let UserClientEvent::HandshakeFingerprint { fingerprint: _ } = event {
                         let _ = user_response_tx
-                            .send(UserClientResponse::VerifyFingerprint { approved: true })
+                            .send(UserClientResponse::VerifyFingerprint {
+                                approved: true,
+                                name: None,
+                            })
                             .await;
                         break;
                     }

@@ -101,6 +101,8 @@ pub enum UserClientResponse {
     VerifyFingerprint {
         /// Whether user approved the fingerprint
         approved: bool,
+        /// Optional friendly name to assign to the session
+        name: Option<String>,
     },
     /// Respond to a credential request
     RespondCredential {
@@ -452,6 +454,7 @@ impl UserClient {
     async fn handle_fingerprint_verification(
         &mut self,
         approved: bool,
+        name: Option<String>,
         event_tx: &mpsc::Sender<UserClientEvent>,
     ) -> Result<(), RemoteClientError> {
         let pending = self
@@ -467,7 +470,7 @@ impl UserClient {
             self.transports
                 .insert(pending.source, pending.transport.clone());
             self.session_store.cache_session(pending.source)?;
-            if let Some(name) = self.pending_session_name.take() {
+            if let Some(name) = name.or(self.pending_session_name.take()) {
                 self.session_store.set_session_name(&pending.source, name)?;
             }
             self.session_store
@@ -545,8 +548,8 @@ impl UserClient {
         event_tx: &mpsc::Sender<UserClientEvent>,
     ) -> Result<(), RemoteClientError> {
         match response {
-            UserClientResponse::VerifyFingerprint { approved } => {
-                self.handle_fingerprint_verification(approved, event_tx)
+            UserClientResponse::VerifyFingerprint { approved, name } => {
+                self.handle_fingerprint_verification(approved, name, event_tx)
                     .await?;
             }
             UserClientResponse::RespondCredential {

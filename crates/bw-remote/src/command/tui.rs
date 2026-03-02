@@ -305,7 +305,7 @@ impl App {
                         None
                     } else {
                         let text = std::mem::take(&mut self.input);
-                        (!text.is_empty()).then_some(AppAction::Submit(text))
+                        Some(AppAction::Submit(text))
                     }
                 }
                 KeyCode::Tab => {

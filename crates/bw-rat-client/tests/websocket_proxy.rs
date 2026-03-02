@@ -558,7 +558,10 @@ async fn test_e2e_fingerprint_pairing_and_credential_request() {
                     if let UserClientEvent::HandshakeFingerprint { fingerprint: _ } = event {
                         // Auto-approve the fingerprint on the user/listener side
                         user_response_tx
-                            .send(UserClientResponse::VerifyFingerprint { approved: true })
+                            .send(UserClientResponse::VerifyFingerprint {
+                                approved: true,
+                                name: None,
+                            })
                             .await
                             .expect("Should send fingerprint approval");
                         break;

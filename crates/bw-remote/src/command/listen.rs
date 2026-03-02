@@ -51,6 +51,8 @@ enum Phase {
     Idle,
     /// Fingerprint verification pending.
     FingerprintConfirm,
+    /// Prompting user for a friendly device name after fingerprint approval.
+    NameInput,
     /// Credential approval pending.
     CredentialApproval {
         domain: String,
@@ -298,6 +300,7 @@ fn idle_footer() -> Line<'static> {
 ///
 /// The TUI state (`app`, `term`, `reader`) is owned by the caller so that
 /// it survives across `/pair` session restarts without flickering.
+#[allow(clippy::too_many_arguments)]
 async fn run_event_loop(
     app: &mut App,
     term: &mut ratatui::DefaultTerminal,
@@ -305,6 +308,7 @@ async fn run_event_loop(
     mut event_rx: mpsc::Receiver<UserClientEvent>,
     response_tx: mpsc::Sender<UserClientResponse>,
     sessions: &[SessionInfo],
+    pending_session_name: &Option<String>,
     client_handle: tokio::task::JoinHandle<Result<(), bw_rat_client::RemoteClientError>>,
 ) -> Result<EventLoopExit> {
     let mut phase = Phase::Idle;
@@ -345,16 +349,52 @@ async fn run_event_loop(
                                 // Fingerprint confirmation
                                 (Phase::FingerprintConfirm, AppAction::Confirmed(approved)) => {
                                     let approved = *approved;
+                                    if !approved {
+                                        response_tx
+                                            .send(UserClientResponse::VerifyFingerprint { approved: false, name: None })
+                                            .await
+                                            .ok();
+                                        app.push_msg(MessageKind::Error, "Fingerprint rejected");
+                                        phase = Phase::Idle;
+                                        app.set_mode(Mode::TextInput);
+                                        app.footer = idle_footer();
+                                        app.commands = &["/pair [name]", "/exit"];
+                                    } else if let Some(name) = pending_session_name.clone() {
+                                        // Name was pre-set via /pair — send immediately
+                                        response_tx
+                                            .send(UserClientResponse::VerifyFingerprint { approved: true, name: Some(name) })
+                                            .await
+                                            .ok();
+                                        app.push_msg(MessageKind::Success, "Fingerprint approved");
+                                        phase = Phase::Idle;
+                                        app.set_mode(Mode::TextInput);
+                                        app.footer = idle_footer();
+                                        app.commands = &["/pair [name]", "/exit"];
+                                    } else {
+                                        // No name pre-set — prompt user for one
+                                        app.push_msg(MessageKind::Success, "Fingerprint approved");
+                                        phase = Phase::NameInput;
+                                        app.input_title = " Name this device (Enter to skip) ";
+                                        app.set_mode(Mode::TextInput);
+                                        app.commands = &[];
+                                        app.footer = Line::from(vec![
+                                            Span::styled(
+                                                " Type a friendly name for this device, or press Enter to skip",
+                                                Style::default().fg(Color::Yellow),
+                                            ),
+                                        ]);
+                                    }
+                                }
+
+                                // Name input after fingerprint approval
+                                (Phase::NameInput, AppAction::Submit(text)) => {
+                                    let name = if text.is_empty() { None } else { Some(text.clone()) };
                                     response_tx
-                                        .send(UserClientResponse::VerifyFingerprint { approved })
+                                        .send(UserClientResponse::VerifyFingerprint { approved: true, name })
                                         .await
                                         .ok();
-                                    if approved {
-                                        app.push_msg(MessageKind::Success, "Fingerprint approved");
-                                    } else {
-                                        app.push_msg(MessageKind::Error, "Fingerprint rejected");
-                                    }
                                     phase = Phase::Idle;
+                                    app.input_title = " Commands ";
                                     app.set_mode(Mode::TextInput);
                                     app.footer = idle_footer();
                                     app.commands = &["/pair [name]", "/exit"];
@@ -415,9 +455,20 @@ async fn run_event_loop(
                             UserClientEvent::HandshakeFingerprint { .. } => {
                                 phase = Phase::FingerprintConfirm;
                                 app.commands = &[];
+                                let description = match pending_session_name {
+                                    Some(name) => Line::from(vec![
+                                        Span::styled("Device: ", Style::default().fg(Color::DarkGray)),
+                                        Span::styled(
+                                            name.clone(),
+                                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                                        ),
+                                        Span::styled(" — Do the fingerprints match?", Style::default()),
+                                    ]),
+                                    None => Line::from("Do the fingerprints match?"),
+                                };
                                 app.set_mode(Mode::Confirm {
                                     title: "Fingerprint Verification".to_string(),
-                                    description: Line::from("Do the fingerprints match?"),
+                                    description,
                                 });
                                 app.footer = Line::from(vec![
                                     Span::styled(
@@ -545,7 +596,7 @@ async fn run_user_client_session(proxy_url: String, psk_mode: bool) -> Result<()
 
                 let sessions = session_store.list_sessions();
 
-                let session_name = pending_session_name.take();
+                let client_session_name = pending_session_name.clone();
                 let client_handle = tokio::task::spawn_local(async move {
                     let mut client = UserClient::listen(
                         identity_provider as Box<dyn IdentityProvider>,
@@ -554,7 +605,7 @@ async fn run_user_client_session(proxy_url: String, psk_mode: bool) -> Result<()
                     )
                     .await?;
 
-                    if let Some(name) = session_name {
+                    if let Some(name) = client_session_name {
                         client.set_pending_session_name(name);
                     }
 
@@ -574,6 +625,7 @@ async fn run_user_client_session(proxy_url: String, psk_mode: bool) -> Result<()
                     event_rx,
                     response_tx,
                     &sessions,
+                    &pending_session_name,
                     client_handle,
                 )
                 .await?
