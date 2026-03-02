@@ -135,6 +135,14 @@ impl SessionStore for MockSessionStore {
             .collect()
     }
 
+    fn set_session_name(
+        &mut self,
+        _fingerprint: &IdentityFingerprint,
+        _name: String,
+    ) -> Result<(), bw_rat_client::RemoteClientError> {
+        Ok(())
+    }
+
     fn update_last_connected(
         &mut self,
         fingerprint: &IdentityFingerprint,
@@ -214,6 +222,17 @@ impl SessionStore for SharedSessionStore {
             .lock()
             .expect("Lock should not be poisoned")
             .list_sessions()
+    }
+
+    fn set_session_name(
+        &mut self,
+        fingerprint: &IdentityFingerprint,
+        name: String,
+    ) -> Result<(), bw_rat_client::RemoteClientError> {
+        self.0
+            .lock()
+            .expect("Lock should not be poisoned")
+            .set_session_name(fingerprint, name)
     }
 
     fn update_last_connected(
@@ -1040,6 +1059,17 @@ async fn test_e2e_transport_state_persistence() {
                         .lock()
                         .expect("Lock should not be poisoned")
                         .list_sessions()
+                }
+
+                fn set_session_name(
+                    &mut self,
+                    fingerprint: &IdentityFingerprint,
+                    name: String,
+                ) -> Result<(), bw_rat_client::RemoteClientError> {
+                    self.0
+                        .lock()
+                        .expect("Lock should not be poisoned")
+                        .set_session_name(fingerprint, name)
                 }
 
                 fn update_last_connected(

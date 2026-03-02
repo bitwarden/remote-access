@@ -172,6 +172,8 @@ pub struct UserClient {
     incoming_rx: Option<mpsc::UnboundedReceiver<IncomingMessage>>,
     /// Pending handshake awaiting fingerprint verification
     pending_verification: Option<PendingHandshakeVerification>,
+    /// Name to assign to the next newly-paired session
+    pending_session_name: Option<String>,
 }
 
 impl UserClient {
@@ -197,6 +199,7 @@ impl UserClient {
             psk: None,
             incoming_rx: Some(incoming_rx),
             pending_verification: None,
+            pending_session_name: None,
         })
     }
 
@@ -410,6 +413,11 @@ impl UserClient {
             // and save the new transport state from the fresh handshake.
             self.transports.insert(source, transport.clone());
             self.session_store.cache_session(source)?;
+            // Apply pending name if user explicitly re-paired (e.g. `/pair MyName`).
+            // During passive reconnections, pending_session_name is None so this is a no-op.
+            if let Some(name) = self.pending_session_name.take() {
+                self.session_store.set_session_name(&source, name)?;
+            }
             self.session_store
                 .save_transport_state(&source, transport)?;
 
@@ -423,6 +431,9 @@ impl UserClient {
             // PSK connection: trust established via pre-shared key, no verification needed
             self.transports.insert(source, transport.clone());
             self.session_store.cache_session(source)?;
+            if let Some(name) = self.pending_session_name.take() {
+                self.session_store.set_session_name(&source, name)?;
+            }
             self.session_store
                 .save_transport_state(&source, transport)?;
 
@@ -456,6 +467,9 @@ impl UserClient {
             self.transports
                 .insert(pending.source, pending.transport.clone());
             self.session_store.cache_session(pending.source)?;
+            if let Some(name) = self.pending_session_name.take() {
+                self.session_store.set_session_name(&pending.source, name)?;
+            }
             self.session_store
                 .save_transport_state(&pending.source, pending.transport)?;
 
@@ -682,5 +696,10 @@ impl UserClient {
     /// Get the current rendezvous code
     pub fn rendezvous_code(&self) -> Option<&RendevouzCode> {
         self.rendezvous_code.as_ref()
+    }
+
+    /// Set a friendly name to assign to the next newly-paired session
+    pub fn set_pending_session_name(&mut self, name: String) {
+        self.pending_session_name = Some(name);
     }
 }

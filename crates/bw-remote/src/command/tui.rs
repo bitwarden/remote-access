@@ -176,7 +176,7 @@ pub struct App {
     pub mode: Mode,
     pub should_quit: bool,
     pub footer: Line<'static>,
-    /// Available slash commands for the current phase (e.g. &["/exit", "/new"]).
+    /// Available slash commands for the current phase (e.g. &["/pair", "/exit"]).
     pub commands: &'static [&'static str],
     /// Authenticated account email (from `bw status`).
     pub account_name: Option<String>,
@@ -253,6 +253,13 @@ impl App {
         }
     }
 
+    /// Extract the completable portion of a command string.
+    /// Strips `[placeholder]` suffixes so Tab/Enter fill just the base command.
+    /// e.g. "/pair [name]" → "/pair " , "/exit" → "/exit"
+    fn command_base(cmd: &str) -> &str {
+        cmd.split('[').next().unwrap_or(cmd)
+    }
+
     /// Recalculate `suggestion_idx` after an input change.
     fn update_suggestions(&mut self) {
         let matches = self.filtered_commands();
@@ -289,28 +296,23 @@ impl App {
         match &mut self.mode {
             Mode::TextInput => match key.code {
                 KeyCode::Enter => {
-                    let text = if let Some(idx) = self.suggestion_idx.take() {
+                    if let Some(idx) = self.suggestion_idx.take() {
+                        // Fill input with the base command for editing, don't submit
                         let matches = self.filtered_commands();
                         if let Some(&cmd) = matches.get(idx) {
-                            self.input.clear();
-                            cmd.to_string()
-                        } else {
-                            std::mem::take(&mut self.input)
+                            self.input = Self::command_base(cmd).to_string();
                         }
-                    } else {
-                        std::mem::take(&mut self.input)
-                    };
-                    if !text.is_empty() {
-                        Some(AppAction::Submit(text))
-                    } else {
                         None
+                    } else {
+                        let text = std::mem::take(&mut self.input);
+                        (!text.is_empty()).then_some(AppAction::Submit(text))
                     }
                 }
                 KeyCode::Tab => {
                     if let Some(idx) = self.suggestion_idx {
                         let matches = self.filtered_commands();
                         if let Some(&cmd) = matches.get(idx) {
-                            self.input = cmd.to_string();
+                            self.input = Self::command_base(cmd).to_string();
                             self.suggestion_idx = None;
                         }
                     }

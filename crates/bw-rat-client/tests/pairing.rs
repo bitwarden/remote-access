@@ -129,6 +129,14 @@ impl SessionStore for MockSessionStore {
             .collect()
     }
 
+    fn set_session_name(
+        &mut self,
+        _fingerprint: &IdentityFingerprint,
+        _name: String,
+    ) -> Result<(), bw_rat_client::RemoteClientError> {
+        Ok(())
+    }
+
     fn update_last_connected(
         &mut self,
         fingerprint: &IdentityFingerprint,

@@ -16,6 +16,8 @@ struct SessionRecord {
     last_connected_at: u64,
     #[serde(default)]
     transport_state: Option<Vec<u8>>,
+    #[serde(default)]
+    name: Option<String>,
 }
 
 /// Cache data structure
@@ -74,6 +76,7 @@ impl SessionStore for FileSessionCache {
                 cached_at: now,
                 last_connected_at: now,
                 transport_state: None,
+                name: None,
             });
             debug!("Added new session cache entry");
         }
@@ -104,8 +107,37 @@ impl SessionStore for FileSessionCache {
         self.data
             .sessions
             .iter()
-            .map(|s| (s.remote_fingerprint, None, s.cached_at, s.last_connected_at))
+            .map(|s| {
+                (
+                    s.remote_fingerprint,
+                    s.name.clone(),
+                    s.cached_at,
+                    s.last_connected_at,
+                )
+            })
             .collect()
+    }
+
+    fn set_session_name(
+        &mut self,
+        fingerprint: &IdentityFingerprint,
+        name: String,
+    ) -> Result<(), RemoteClientError> {
+        if let Some(session) = self
+            .data
+            .sessions
+            .iter_mut()
+            .find(|s| s.remote_fingerprint == *fingerprint)
+        {
+            session.name = Some(name);
+            self.save()?;
+            debug!("Set session name for {:?}", fingerprint);
+            Ok(())
+        } else {
+            Err(RemoteClientError::SessionCache(
+                "Session not found".to_string(),
+            ))
+        }
     }
 
     fn update_last_connected(

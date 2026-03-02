@@ -43,10 +43,14 @@ impl ListCacheArgs {
         // Sort by last_connected descending (most recent first)
         sessions.sort_by(|a, b| b.3.cmp(&a.3));
 
-        for (fingerprint, _name, _cached_at, last_connected) in &sessions {
+        for (fingerprint, name, _cached_at, last_connected) in &sessions {
             let hex = hex::encode(fingerprint.0);
             let relative = format_relative_time(*last_connected);
-            println!("{hex}  (last used: {relative})");
+            if let Some(name) = name {
+                println!("{name}  {hex}  (last used: {relative})");
+            } else {
+                println!("{hex}  (last used: {relative})");
+            }
         }
 
         Ok(())
