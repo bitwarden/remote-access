@@ -4,10 +4,9 @@ use crate::{
     error::ProxyError,
     messages::Messages,
     rendevouz::RendevouzCode,
-    server::proxy_server::{BufferedMessage, MESSAGE_BUFFER_TTL, ServerState},
+    server::proxy_server::{BufferedMessage, ServerState},
 };
 use futures_util::{SinkExt, StreamExt};
-use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 use tokio::net::TcpStream;
@@ -103,7 +102,7 @@ impl ConnectionHandler {
             let mut connections = state.connections.write().await;
             connections
                 .entry(fingerprint)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(Arc::clone(&authenticated_conn));
         }
 
@@ -113,10 +112,9 @@ impl ConnectionHandler {
         {
             let mut buffer = state.message_buffer.write().await;
             if let Some(queue) = buffer.remove(&fingerprint) {
-                let now = Instant::now();
                 let mut delivered = 0u64;
                 for buffered in queue {
-                    if now.duration_since(buffered.buffered_at) < MESSAGE_BUFFER_TTL {
+                    if !buffered.is_expired() {
                         let _ = tx.send(Message::Text(buffered.message));
                         delivered += 1;
                     }
@@ -223,6 +221,13 @@ impl ConnectionHandler {
                     // Use authenticated fingerprint as source (client doesn't provide it)
                     let source = fingerprint;
 
+                    // Serialize once for both delivery and buffering paths
+                    let forward_msg = serde_json::to_string(&Messages::Send {
+                        source: Some(source),
+                        destination,
+                        payload,
+                    })?;
+
                     // Route message to all connections with destination fingerprint
                     let dest_conns = {
                         let connections = state.connections.read().await;
@@ -231,11 +236,6 @@ impl ConnectionHandler {
 
                     match dest_conns {
                         Some(conns) if !conns.is_empty() => {
-                            let forward_msg = serde_json::to_string(&Messages::Send {
-                                source: Some(source),
-                                destination,
-                                payload,
-                            })?;
                             for conn in conns.iter() {
                                 if conn.tx.send(Message::Text(forward_msg.clone())).is_err() {
                                     tracing::error!(
@@ -262,26 +262,32 @@ impl ConnectionHandler {
                                     destination
                                 );
                             } else {
-                                let forward_msg = serde_json::to_string(&Messages::Send {
-                                    source: Some(source),
-                                    destination,
-                                    payload,
-                                })?;
                                 let mut buffer = state.message_buffer.write().await;
-                                let queue = buffer.entry(destination).or_insert_with(VecDeque::new);
-                                queue.push_back(BufferedMessage {
-                                    message: forward_msg,
-                                    buffered_at: Instant::now(),
-                                });
-                                if queue.len() > max {
-                                    queue.pop_front();
+                                let is_new_destination = !buffer.contains_key(&destination);
+                                if is_new_destination
+                                    && buffer.len() >= state.config.max_buffered_destinations
+                                {
+                                    tracing::warn!(
+                                        "Connection #{}: Buffer destination limit reached, dropping message for {:?}",
+                                        conn_id,
+                                        destination
+                                    );
+                                } else {
+                                    let queue = buffer.entry(destination).or_default();
+                                    queue.push_back(BufferedMessage {
+                                        message: forward_msg,
+                                        buffered_at: Instant::now(),
+                                    });
+                                    if queue.len() > max {
+                                        queue.pop_front();
+                                    }
+                                    tracing::debug!(
+                                        "Connection #{}: Buffered message for offline destination {:?} ({} buffered)",
+                                        conn_id,
+                                        destination,
+                                        queue.len()
+                                    );
                                 }
-                                tracing::debug!(
-                                    "Connection #{}: Buffered message for offline destination {:?} ({} buffered)",
-                                    conn_id,
-                                    destination,
-                                    queue.len()
-                                );
                             }
                         }
                     }

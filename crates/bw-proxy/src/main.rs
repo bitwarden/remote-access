@@ -14,10 +14,11 @@ async fn main() -> Result<(), ProxyError> {
         .parse()
         .expect("Invalid BIND_ADDR");
 
+    let default_config = ProxyServerConfig::default();
     let max_buffered = env::var("MESSAGE_BUFFER_SIZE")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(100);
+        .unwrap_or(default_config.max_buffered_messages_per_destination);
 
     tracing::info!(
         "Starting proxy server on {} (message buffer: {})",
@@ -27,6 +28,7 @@ async fn main() -> Result<(), ProxyError> {
 
     let config = ProxyServerConfig {
         max_buffered_messages_per_destination: max_buffered,
+        ..default_config
     };
     let server = ProxyServer::with_config(bind_addr, config);
 

@@ -468,6 +468,7 @@ async fn test_buffered_messages_delivered_on_connect() {
 async fn test_buffering_disabled_drops_messages() {
     let config = ProxyServerConfig {
         max_buffered_messages_per_destination: 0,
+        ..ProxyServerConfig::default()
     };
     let addr = start_test_server_with_config(config).await;
 

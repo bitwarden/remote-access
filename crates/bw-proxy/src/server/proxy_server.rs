@@ -10,18 +10,23 @@ use tokio::sync::RwLock;
 use tokio_tungstenite::accept_async;
 
 const DEFAULT_MAX_BUFFERED_MESSAGES: usize = 100;
+const DEFAULT_MAX_BUFFERED_DESTINATIONS: usize = 1000;
 pub const MESSAGE_BUFFER_TTL: Duration = Duration::from_secs(600); // 10 minutes
 
 pub struct ProxyServerConfig {
     /// Maximum number of buffered messages per offline destination.
     /// Set to 0 to disable offline message buffering entirely.
     pub max_buffered_messages_per_destination: usize,
+    /// Maximum number of distinct offline destinations to buffer messages for.
+    /// Prevents memory exhaustion from messages targeting many unique fingerprints.
+    pub max_buffered_destinations: usize,
 }
 
 impl Default for ProxyServerConfig {
     fn default() -> Self {
         Self {
             max_buffered_messages_per_destination: DEFAULT_MAX_BUFFERED_MESSAGES,
+            max_buffered_destinations: DEFAULT_MAX_BUFFERED_DESTINATIONS,
         }
     }
 }
@@ -29,6 +34,12 @@ impl Default for ProxyServerConfig {
 pub struct BufferedMessage {
     pub message: String,
     pub buffered_at: Instant,
+}
+
+impl BufferedMessage {
+    pub fn is_expired(&self) -> bool {
+        self.buffered_at.elapsed() >= MESSAGE_BUFFER_TTL
+    }
 }
 
 pub struct RendevouzEntry {
@@ -232,11 +243,8 @@ impl ProxyServer {
 
                 // Clean up expired buffered messages
                 let mut buffer = cleanup_state.message_buffer.write().await;
-                let now_instant = Instant::now();
                 buffer.retain(|fingerprint, queue| {
-                    queue.retain(|msg| {
-                        now_instant.duration_since(msg.buffered_at) < MESSAGE_BUFFER_TTL
-                    });
+                    queue.retain(|msg| !msg.is_expired());
                     if queue.is_empty() {
                         tracing::debug!("Cleaned up empty message buffer for {:?}", fingerprint);
                         false
