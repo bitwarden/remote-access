@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use bw_proxy::IdentityKeyPair;
+use bw_proxy::{IdentityFingerprint, IdentityKeyPair};
 use bw_rat_client::{IdentityProvider, RemoteClientError};
 use tracing::{debug, info};
 
@@ -33,6 +33,36 @@ impl FileIdentityStorage {
         };
 
         Ok(Self { keypair })
+    }
+
+    /// Load the identity fingerprint without generating a new key if none exists.
+    ///
+    /// Returns `None` if no key file exists, `Some(fingerprint)` if it does.
+    pub fn load_fingerprint(
+        storage_name: &str,
+    ) -> Result<Option<IdentityFingerprint>, RemoteClientError> {
+        let storage_path = Self::default_storage_path(storage_name)?;
+        if !storage_path.exists() {
+            return Ok(None);
+        }
+        let keypair = Self::load_from_file(&storage_path)?;
+        Ok(Some(keypair.identity().fingerprint()))
+    }
+
+    /// Delete the identity key file for the given storage name.
+    ///
+    /// Does nothing if the file does not exist.
+    pub fn delete(storage_name: &str) -> Result<(), RemoteClientError> {
+        let storage_path = Self::default_storage_path(storage_name)?;
+        if storage_path.exists() {
+            fs::remove_file(&storage_path).map_err(|e| {
+                RemoteClientError::IdentityStorageFailed(format!(
+                    "Failed to delete identity file: {e}"
+                ))
+            })?;
+            info!("Deleted identity key file: {:?}", storage_path);
+        }
+        Ok(())
     }
 
     /// Get the default storage path (~/.bw-remote/identity.key)
