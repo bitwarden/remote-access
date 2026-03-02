@@ -15,7 +15,7 @@ use color_eyre::eyre::Result;
 
 use output::OutputFormat;
 
-pub use cache::{ClearCacheArgs, ListCacheArgs};
+pub use cache::CacheArgs;
 pub use connect::ConnectArgs;
 pub use listen::ListenArgs;
 
@@ -64,10 +64,8 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Clear all cached sessions
-    ClearCache(ClearCacheArgs),
-    /// List cached sessions
-    ListCache(ListCacheArgs),
+    /// Manage the session cache
+    Cache(CacheArgs),
     /// Connect to proxy and request credentials (default)
     Connect(ConnectArgs),
     /// Listen for remote client connections (user-client mode)
@@ -77,8 +75,7 @@ pub enum Commands {
 /// Process the parsed command and execute the appropriate handler
 pub async fn process_command(cli: Cli) -> Result<()> {
     match cli.command {
-        Some(Commands::ClearCache(args)) => args.run(),
-        Some(Commands::ListCache(args)) => args.run(),
+        Some(Commands::Cache(args)) => args.run(),
         Some(Commands::Connect(args)) => args.run().await,
         Some(Commands::Listen(args)) => args.run().await,
         None => {

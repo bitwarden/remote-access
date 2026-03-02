@@ -60,7 +60,7 @@ bw-remote (CLI binary)
 - **bw-noise-protocol** — Noise NNpsk2 handshake, `MultiDeviceTransport` for encrypted messaging, XChaCha20-Poly1305 transport encryption, session state persistence for resumption.
 - **bw-proxy** — WebSocket relay server (`bw-proxy` binary) and `ProxyProtocolClient` library. Three-phase protocol: authentication, rendezvous, messaging. Default listen address: `ws://localhost:8080`.
 - **bw-rat-client** — `RemoteClient` (untrusted device requesting credentials) and `UserClient` (trusted device serving credentials). Uses trait abstractions (`SessionStore`, `IdentityProvider`, `ProxyClient`) and async event/response channels.
-- **bw-remote** — CLI driver with interactive TUI (ratatui + crossterm) and non-interactive single-shot mode. Subcommands: `connect`, `listen`, `clear-cache`, `list-cache`, `list-devices`, `clear-keypairs`. Integrates with `bw` CLI for credential lookup via `bw get item`.
+- **bw-remote** — CLI driver with interactive TUI (ratatui + crossterm) and non-interactive single-shot mode. Subcommands: `connect`, `listen`, `cache` (with `clear`/`list`), `list-devices`, `clear-keypairs`. Integrates with `bw` CLI for credential lookup via `bw get item`.
 - **bw-error / bw-error-macro** — Error handling utilities ported from Bitwarden's `sdk-internal`.
 
 ## Key Design Patterns

@@ -35,10 +35,9 @@ Connect to a user-client through a proxy to request credentials over a secure ch
 Usage: bw-remote [OPTIONS] [COMMAND]
 
 Commands:
-  clear-cache  Clear all cached sessions
-  list-cache   List cached sessions
-  connect      Connect to proxy and request credentials (default)
-  listen       Listen for remote client connections (user-client mode)
+  cache    Manage the session cache
+  connect  Connect to proxy and request credentials (default)
+  listen   Listen for remote client connections (user-client mode)
   help         Print this message or the help of the given subcommand(s)
 
 Options:
