@@ -42,11 +42,7 @@ impl ServerState {
     }
 
     pub fn with_config(config: ProxyServerConfig) -> Self {
-        Self {
-            connections: Arc::new(RwLock::new(HashMap::new())),
-            rendezvous_map: Arc::new(RwLock::new(HashMap::new())),
-            message_buffer: Arc::new(InMemoryMessageBuffer::new(config.message_buffer)),
-        }
+        Self::with_message_buffer(Arc::new(InMemoryMessageBuffer::new(config.message_buffer)))
     }
 
     /// Create a new `ServerState` with a custom [`MessageBuffer`] implementation.
@@ -210,21 +206,23 @@ impl ProxyServer {
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
 
-                let mut rendezvous_map = cleanup_state.rendezvous_map.write().await;
-                let now = SystemTime::now();
-                let mut expired_codes = Vec::new();
+                {
+                    let mut rendezvous_map = cleanup_state.rendezvous_map.write().await;
+                    let now = SystemTime::now();
+                    let mut expired_codes = Vec::new();
 
-                for (code, entry) in rendezvous_map.iter() {
-                    let elapsed = now.duration_since(entry.created_at).unwrap_or_default();
+                    for (code, entry) in rendezvous_map.iter() {
+                        let elapsed = now.duration_since(entry.created_at).unwrap_or_default();
 
-                    if elapsed.as_secs() > 300 {
-                        expired_codes.push(code.clone());
+                        if elapsed.as_secs() > 300 {
+                            expired_codes.push(code.clone());
+                        }
                     }
-                }
 
-                for code in expired_codes {
-                    rendezvous_map.remove(&code);
-                    tracing::debug!("Cleaned up expired rendezvous code: {}", code);
+                    for code in expired_codes {
+                        rendezvous_map.remove(&code);
+                        tracing::debug!("Cleaned up expired rendezvous code: {}", code);
+                    }
                 }
 
                 // Clean up expired buffered messages

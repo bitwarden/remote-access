@@ -1,8 +1,9 @@
 use crate::auth::IdentityFingerprint;
 use async_trait::async_trait;
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
+use tokio::sync::Mutex;
 
 /// Trait abstraction for offline message buffering.
 ///
@@ -54,14 +55,14 @@ impl BufferedMessage {
 
 /// In-memory implementation of [`MessageBuffer`] backed by a `HashMap` + `VecDeque`.
 pub struct InMemoryMessageBuffer {
-    buffer: RwLock<HashMap<IdentityFingerprint, VecDeque<BufferedMessage>>>,
+    buffer: Mutex<HashMap<IdentityFingerprint, VecDeque<BufferedMessage>>>,
     config: InMemoryMessageBufferConfig,
 }
 
 impl InMemoryMessageBuffer {
     pub fn new(config: InMemoryMessageBufferConfig) -> Self {
         Self {
-            buffer: RwLock::new(HashMap::new()),
+            buffer: Mutex::new(HashMap::new()),
             config,
         }
     }
@@ -74,13 +75,14 @@ impl MessageBuffer for InMemoryMessageBuffer {
             return false;
         }
 
-        let mut buffer = self.buffer.write().await;
-        let is_new = !buffer.contains_key(&destination);
-        if is_new && buffer.len() >= self.config.max_destinations {
+        let mut buffer = self.buffer.lock().await;
+        let len = buffer.len();
+        let entry = buffer.entry(destination);
+        if matches!(&entry, Entry::Vacant(_)) && len >= self.config.max_destinations {
             return false;
         }
 
-        let queue = buffer.entry(destination).or_default();
+        let queue = entry.or_default();
         queue.push_back(BufferedMessage {
             message,
             buffered_at: Instant::now(),
@@ -92,7 +94,7 @@ impl MessageBuffer for InMemoryMessageBuffer {
     }
 
     async fn retrieve_messages(&self, destination: &IdentityFingerprint) -> Vec<String> {
-        let mut buffer = self.buffer.write().await;
+        let mut buffer = self.buffer.lock().await;
         let Some(queue) = buffer.remove(destination) else {
             return Vec::new();
         };
@@ -104,7 +106,7 @@ impl MessageBuffer for InMemoryMessageBuffer {
     }
 
     async fn cleanup(&self) {
-        let mut buffer = self.buffer.write().await;
+        let mut buffer = self.buffer.lock().await;
         buffer.retain(|fingerprint, queue| {
             queue.retain(|msg| !msg.is_expired(self.config.message_ttl));
             if queue.is_empty() {
