@@ -9,7 +9,7 @@ use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tokio_tungstenite::accept_async;
 
-const DEFAULT_MAX_BUFFERED_MESSAGES: usize = 100;
+const DEFAULT_MAX_BUFFERED_MESSAGES: usize = 5;
 const DEFAULT_MAX_BUFFERED_DESTINATIONS: usize = 1000;
 pub const MESSAGE_BUFFER_TTL: Duration = Duration::from_secs(600); // 10 minutes
 
