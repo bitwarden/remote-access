@@ -116,13 +116,10 @@ fn clear_cache(client_type: Option<ClientType>, scope: ClearScope) -> Result<()>
 
 fn list_cache(client_type: Option<ClientType>) -> Result<()> {
     let sides = sides_for(client_type);
-    let mut first = true;
-
-    for side in &sides {
-        if !first {
+    for (i, side) in sides.iter().enumerate() {
+        if i > 0 {
             println!();
         }
-        first = false;
 
         // Load identity fingerprint (if key exists)
         let fingerprint = FileIdentityStorage::load_fingerprint(side.storage_name)?;

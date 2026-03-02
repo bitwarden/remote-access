@@ -54,15 +54,16 @@ impl FileIdentityStorage {
     /// Does nothing if the file does not exist.
     pub fn delete(storage_name: &str) -> Result<(), RemoteClientError> {
         let storage_path = Self::default_storage_path(storage_name)?;
-        if storage_path.exists() {
-            fs::remove_file(&storage_path).map_err(|e| {
-                RemoteClientError::IdentityStorageFailed(format!(
-                    "Failed to delete identity file: {e}"
-                ))
-            })?;
-            info!("Deleted identity key file: {:?}", storage_path);
+        match fs::remove_file(&storage_path) {
+            Ok(()) => {
+                info!("Deleted identity key file: {:?}", storage_path);
+                Ok(())
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(RemoteClientError::IdentityStorageFailed(format!(
+                "Failed to delete identity file: {e}"
+            ))),
         }
-        Ok(())
     }
 
     /// Get the default storage path (~/.bw-remote/identity.key)
