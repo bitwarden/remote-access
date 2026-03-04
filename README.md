@@ -1,5 +1,63 @@
 # Bitwarden Remote Access
 
+Remote Access allows users to access credentials from their password manager on remote systems, without exposing their entire vault.
+It creates an e2e connected tunnel between the remote and the password manager.
+
+Remote Access is both an open protocol, CLI tool, and a Rust SDK that you can use to implement it directly into agents or custom software. While we at Bitwarden has built it, it's open for any Password Manager to leverage to further support Agentic or automation use cases without exposting your entire vault.
+ 
+Download the binary for your system from the latest release:
+
+* Linux
+* Mac (Silicon)
+* Windows
+
+## Examples
+
+* OpenClaw skill
+* Automated script requesting an API-token.
+* Github Action
+
+## Getting started (cli, bitwarden)
+
+Once you've installed the CLI tool, it can connect to your bitwarden vault using the bitwarden cli.
+
+```shell
+bw-remote listen
+```
+
+The interactive CLI will create a pairing code that you can use to establish a connection on the remote side
+
+**Setting up the remote side**
+
+You can run the remote side interactively (most useful for testing/demonstration) or to "one-shot" credential requests
+
+```shell
+# interactive mode
+bw-remote connect
+```
+
+```shell
+# one time pairing
+bw-remote connect --token <rendevouz-code> --output json
+
+# one shot mode
+bw-remote connect --session <sessionId> --domain example.com --output json
+bw-remote connect --session <sessionId> --domain github.com --output json
+
+```
+
+## Contributing
+
+This repo contains multiple building blocks that powers Remote Access.
+
+It contains:
+
+* A e2e tunnel, using Noise
+* A Rust SDK for establishing a tunnel, sending requests, and responding to them
+* A CLI tool for request / releasing credentials
+* A proxy server for demo/development purposes
+
+
 ## Crate Structure
 
 * `bw-error` - Error handling utilities for bw_remote. Re-exports the `bw_error` proc macro and provides the `FlatError` trait.
