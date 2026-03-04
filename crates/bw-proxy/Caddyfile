@@ -11,8 +11,16 @@
 		respond "OK" 200
 	}
 
-	reverse_proxy localhost:9090 {
+	@websocket {
+		header Connection *upgrade*
+		header Upgrade websocket
+	}
+	reverse_proxy @websocket localhost:9090 {
 		flush_interval -1
+	}
+
+	handle {
+		respond "Bitwarden Remote Access Proxy {env.VERSION}" 200
 	}
 
 	header {
