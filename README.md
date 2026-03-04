@@ -5,11 +5,14 @@ It creates an e2e connected tunnel between the remote and the password manager.
 
 Remote Access is both an open protocol, CLI tool, and a Rust SDK that you can use to implement it directly into agents or custom software. While we at Bitwarden has built it, it's open for any Password Manager to leverage to further support Agentic or automation use cases without exposting your entire vault.
  
-Download the binary for your system from the latest release:
+Download the binary for your system from the [latest release](https://github.com/bitwarden/remote-access/releases/latest):
 
-* Linux
-* Mac (Silicon)
-* Windows
+| Platform | Download |
+|----------|----------|
+| Linux x86_64 (static) | [bw-remote-x86_64-unknown-linux-musl.tar.gz](https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-x86_64-unknown-linux-musl.tar.gz) |
+| macOS Apple Silicon | [bw-remote-aarch64-apple-darwin.tar.gz](https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-aarch64-apple-darwin.tar.gz) |
+| macOS Intel | [bw-remote-x86_64-apple-darwin.tar.gz](https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-x86_64-apple-darwin.tar.gz) |
+| Windows x86_64 | [bw-remote-x86_64-pc-windows-msvc.zip](https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-x86_64-pc-windows-msvc.zip) |
 
 ## Examples
 
