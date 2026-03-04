@@ -1,0 +1,10 @@
+target/
+.git/
+.github/
+.claude/
+*.md
+.DS_Store
+.gitignore
+.dockerignore
+scripts/
+extra-root-ca.crt
