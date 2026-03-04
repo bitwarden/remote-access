@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. v1.0.0)"
+        required: true
 
 permissions: {}
 
@@ -107,7 +112,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "${{ github.ref_name }}" \
-            --title "${{ github.ref_name }}" \
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          gh release create "$VERSION" \
+            --title "$VERSION" \
             --generate-notes \
             artifacts/*
