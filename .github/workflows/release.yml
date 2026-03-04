@@ -30,19 +30,19 @@ jobs:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
-            ext: ""
+            name: linux-x86_64
           - os: macos-latest
             target: aarch64-apple-darwin
             archive: tar.gz
-            ext: ""
+            name: macos-aarch64
           - os: macos-latest
             target: x86_64-apple-darwin
             archive: tar.gz
-            ext: ""
+            name: macos-x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             archive: zip
-            ext: .exe
+            name: windows-x86_64
 
     steps:
       - name: Checkout
@@ -70,20 +70,18 @@ jobs:
         if: matrix.archive == 'tar.gz'
         shell: bash
         run: |
-          TARGET="${{ matrix.target }}"
-          tar -czf "bw-remote-${TARGET}.tar.gz" -C "target/${TARGET}/release" bw-remote
+          tar -czf "bw-remote-${{ matrix.name }}.tar.gz" -C "target/${{ matrix.target }}/release" bw-remote
 
       - name: Package (zip)
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          $TARGET = "${{ matrix.target }}"
-          Compress-Archive -Path "target\$TARGET\release\bw-remote.exe" -DestinationPath "bw-remote-$TARGET.zip"
+          Compress-Archive -Path "target\${{ matrix.target }}\release\bw-remote.exe" -DestinationPath "bw-remote-${{ matrix.name }}.zip"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: binaries-${{ matrix.target }}
+          name: binaries-${{ matrix.name }}
           path: |
             *.tar.gz
             *.zip
