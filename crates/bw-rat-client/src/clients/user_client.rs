@@ -457,13 +457,13 @@ impl UserClient {
         name: Option<String>,
         event_tx: &mpsc::Sender<UserClientEvent>,
     ) -> Result<(), RemoteClientError> {
-        let pending = self
-            .pending_verification
-            .take()
-            .ok_or(RemoteClientError::InvalidState {
-                expected: "pending verification".to_string(),
-                current: "no pending verification".to_string(),
-            })?;
+        let pending = match self.pending_verification.take() {
+            Some(p) => p,
+            None => {
+                warn!("VerifyFingerprint received but no pending verification — ignoring");
+                return Ok(());
+            }
+        };
 
         if approved {
             // Cache session and store transport
