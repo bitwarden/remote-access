@@ -25,7 +25,7 @@ use super::tui::{App, AppAction, MessageKind, Mode, init_terminal, restore_termi
 use super::util::{format_connect_event, format_relative_time};
 use crate::storage::{FileIdentityStorage, FileSessionCache};
 
-const DEFAULT_PROXY_URL: &str = "wss://rat1.lesspassword.dev";
+use super::DEFAULT_PROXY_URL;
 
 /// Arguments for the connect command
 #[derive(Args)]
