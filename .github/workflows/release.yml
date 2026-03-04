@@ -5,6 +5,10 @@ on:
     tags:
       - "v*"
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 permissions: {}
 
 env:
@@ -25,19 +29,15 @@ jobs:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-musl
             archive: tar.gz
-            ext: ""
           - os: macos-latest
             target: aarch64-apple-darwin
             archive: tar.gz
-            ext: ""
           - os: macos-13
             target: x86_64-apple-darwin
             archive: tar.gz
-            ext: ""
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             archive: zip
-            ext: .exe
 
     steps:
       - name: Checkout
@@ -81,9 +81,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: binaries-${{ matrix.target }}
-          path: |
-            *.tar.gz
-            *.zip
+          path: bw-remote-*
           if-no-files-found: error
 
   release:
@@ -108,6 +106,5 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           gh release create "${{ github.ref_name }}" \
-            --title "${{ github.ref_name }}" \
             --generate-notes \
             artifacts/*
