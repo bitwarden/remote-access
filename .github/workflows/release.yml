@@ -28,7 +28,7 @@ jobs:
       matrix:
         include:
           - os: ubuntu-24.04
-            target: x86_64-unknown-linux-musl
+            target: x86_64-unknown-linux-gnu
             archive: tar.gz
             ext: ""
           - os: macos-latest
@@ -58,18 +58,12 @@ jobs:
       - name: Add target
         run: rustup target add ${{ matrix.target }}
 
-      - name: Install musl tools
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: sudo apt-get install -y musl-tools
-
       - name: Cache cargo registry
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           key: ${{ matrix.target }}
 
       - name: Build bw-remote
-        env:
-          OPENSSL_VENDORED: ${{ matrix.target == 'x86_64-unknown-linux-musl' && '1' || '' }}
         run: cargo build --release --target ${{ matrix.target }} -p bw-remote
 
       - name: Package (tar.gz)
