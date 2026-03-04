@@ -19,7 +19,7 @@ pub use cache::CacheArgs;
 pub use connect::ConnectArgs;
 pub use listen::ListenArgs;
 
-const DEFAULT_PROXY_URL: &str = "ws://localhost:8080";
+const DEFAULT_PROXY_URL: &str = "wss://rat1.lesspassword.dev";
 
 /// Bitwarden Remote Client CLI
 #[derive(Parser)]
