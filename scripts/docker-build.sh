@@ -68,6 +68,10 @@ assemble_context() {
         cp -r "$REPO_ROOT/crates/$crate" "$ctx/crates/"
     done
 
+    # Caddy reverse proxy config and entrypoint
+    cp "$PROXY_DIR/Caddyfile" "$ctx/crates/bw-proxy/"
+    cp "$PROXY_DIR/entrypoint.sh" "$ctx/crates/bw-proxy/"
+
     # Optional Zscaler CA cert (empty file if not present)
     if [[ -f "$PROXY_DIR/extra-root-ca.crt" ]]; then
         cp "$PROXY_DIR/extra-root-ca.crt" "$ctx/"

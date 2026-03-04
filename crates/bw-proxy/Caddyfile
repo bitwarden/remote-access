@@ -1,0 +1,26 @@
+{
+	auto_https off
+	log {
+		format json
+		output stdout
+	}
+}
+
+:8080 {
+	handle /health {
+		respond "OK" 200
+	}
+
+	reverse_proxy localhost:9090 {
+		flush_interval -1
+	}
+
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
+}
