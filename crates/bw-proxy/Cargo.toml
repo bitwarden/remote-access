@@ -8,12 +8,15 @@ rust-version.workspace = true
 license.workspace = true
 
 [features]
-default = ["experimental-post-quantum-crypto"]
+default = ["native", "experimental-post-quantum-crypto"]
 experimental-post-quantum-crypto = []
+native = ["dep:tokio-tungstenite", "tokio/net", "tokio/signal", "tokio/time"]
+wasm = []
 
 [[bin]]
 name = "bw-proxy"
 path = "src/main.rs"
+required-features = ["native"]
 
 [dependencies]
 bw-error = { workspace = true }
@@ -28,8 +31,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["net", "signal", "sync", "time"] }
-tokio-tungstenite = { workspace = true }
+tokio = { version = "1.36.0", features = ["sync"] }
+tokio-tungstenite = { workspace = true, optional = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 

@@ -1,7 +1,9 @@
 use crate::{
-    auth::{Identity, IdentityFingerprint, IdentityKeyPair},
+    auth::{Identity, IdentityFingerprint},
     rendevouz::RendevouzCode,
 };
+#[cfg(feature = "native")]
+use crate::auth::IdentityKeyPair;
 
 /// Configuration for creating a proxy client.
 ///
@@ -29,6 +31,7 @@ use crate::{
 ///     identity_keypair: Some(keypair),
 /// };
 /// ```
+#[cfg(feature = "native")]
 pub struct ProxyClientConfig {
     /// WebSocket URL of the proxy server.
     ///
@@ -122,6 +125,7 @@ pub enum IncomingMessage {
 }
 
 /// Internal client connection state
+#[cfg(feature = "native")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ClientState {
     Disconnected,

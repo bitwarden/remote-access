@@ -79,16 +79,25 @@ pub mod types;
 
 mod clients;
 
+#[cfg(feature = "native")]
 pub use clients::remote_client::RemoteClient;
 pub use clients::user_client::{
     CredentialData as UserCredentialData, UserClient, UserClientEvent, UserClientResponse,
 };
 pub use error::RemoteClientError;
-pub use proxy::{DefaultProxyClient, ProxyClient};
+#[cfg(feature = "native")]
+pub use proxy::DefaultProxyClient;
+pub use proxy::ProxyClient;
 pub use traits::{IdentityProvider, SessionStore};
+#[cfg(feature = "native")]
 pub use types::{ConnectionMode, CredentialData, RemoteClientEvent, RemoteClientResponse};
+#[cfg(not(feature = "native"))]
+pub use types::CredentialData;
 
 // Re-export bw-proxy types
-pub use bw_proxy::{IdentityFingerprint, RendevouzCode};
+pub use bw_proxy::{
+    Challenge, ChallengeResponse, Identity, IdentityFingerprint, IdentityKeyPair, IncomingMessage,
+    Messages, RendevouzCode,
+};
 // Re-export PSK type from noise protocol
-pub use bw_noise_protocol::Psk;
+pub use bw_noise_protocol::{MultiDeviceTransport, Psk};

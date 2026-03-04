@@ -113,14 +113,18 @@
 
 pub mod auth;
 pub mod client;
+#[cfg(feature = "native")]
 mod connection;
 pub mod error;
 pub mod messages;
 pub mod rendevouz;
+#[cfg(feature = "native")]
 pub mod server;
 
 pub use auth::{Challenge, ChallengeResponse, Identity, IdentityFingerprint, IdentityKeyPair};
-pub use client::{IncomingMessage, ProxyClientConfig, ProxyProtocolClient};
+pub use client::IncomingMessage;
+#[cfg(feature = "native")]
+pub use client::{ProxyClientConfig, ProxyProtocolClient};
 pub use error::ProxyError;
 pub use messages::Messages;
 pub use rendevouz::RendevouzCode;
