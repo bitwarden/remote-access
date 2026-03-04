@@ -5,7 +5,8 @@ cleanup() {
     kill "$BW_PROXY_PID" "$CADDY_PID" 2>/dev/null || true
     wait "$BW_PROXY_PID" "$CADDY_PID" 2>/dev/null || true
 }
-trap cleanup EXIT TERM INT
+trap cleanup EXIT
+trap 'cleanup; exit 0' TERM INT
 
 bw-proxy &
 BW_PROXY_PID=$!
