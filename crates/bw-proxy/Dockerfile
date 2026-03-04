@@ -21,9 +21,7 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    cargo build --release -p bw-proxy
+RUN cargo build --release -p bw-proxy
 
 # --- Runtime stage ---
 FROM debian:bookworm-slim

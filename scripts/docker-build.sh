@@ -35,7 +35,52 @@ while [[ $# -gt 0 ]]; do
 done
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PROXY_DIR="$REPO_ROOT/crates/bw-proxy"
 FULL_IMAGE="${IMAGE_NAME}:${TAG}"
+
+# Assemble a minimal build context in a temp directory.
+# The Dockerfile expects a workspace layout (Cargo.toml, Cargo.lock, crates/),
+# but we only include the crates bw-proxy actually depends on and trim the
+# workspace members list so cargo doesn't look for the others.
+assemble_context() {
+    local ctx="$1"
+    cp "$PROXY_DIR/Dockerfile" "$ctx/"
+    cp "$REPO_ROOT/Cargo.lock" "$ctx/"
+
+    # Copy workspace Cargo.toml with only the required members
+    awk '
+        /^members/ { in_members=1 }
+        in_members && /\]/ {
+            print "members = ["
+            print "    \"crates/bw-error\","
+            print "    \"crates/bw-error-macro\","
+            print "    \"crates/bw-proxy\","
+            print "]"
+            in_members=0
+            next
+        }
+        in_members == 0 { print }
+    ' "$REPO_ROOT/Cargo.toml" > "$ctx/Cargo.toml"
+
+    # Copy only the crates bw-proxy depends on
+    mkdir -p "$ctx/crates"
+    for crate in bw-proxy bw-error bw-error-macro; do
+        cp -r "$REPO_ROOT/crates/$crate" "$ctx/crates/"
+    done
+
+    # Optional Zscaler CA cert (empty file if not present)
+    if [[ -f "$PROXY_DIR/extra-root-ca.crt" ]]; then
+        cp "$PROXY_DIR/extra-root-ca.crt" "$ctx/"
+    else
+        touch "$ctx/extra-root-ca.crt"
+    fi
+
+    echo "Build context: $(du -sh "$ctx" | cut -f1)"
+}
+
+CTX="$(mktemp -d)"
+trap "rm -rf '$CTX'" EXIT
+assemble_context "$CTX"
 
 if $ACR; then
     if [[ -z "$REGISTRY" ]]; then
@@ -48,9 +93,9 @@ if $ACR; then
         --registry "$REGISTRY" \
         --image "$FULL_IMAGE" \
         --platform linux/amd64 \
-        "$REPO_ROOT"
+        "$CTX"
 else
     echo "Building ${FULL_IMAGE} locally..."
-    docker build -t "$FULL_IMAGE" "$REPO_ROOT"
+    docker build -t "$FULL_IMAGE" "$CTX"
     echo "Loaded ${FULL_IMAGE} into local Docker"
 fi
