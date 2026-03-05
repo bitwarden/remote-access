@@ -46,11 +46,11 @@ pub struct ConnectArgs {
     pub proxy_url: String,
 
     /// Token (rendezvous code or PSK token)
-    #[arg(long)]
+    #[arg(long, conflicts_with = "session")]
     pub token: Option<String>,
 
     /// Session fingerprint to reconnect to (hex string or unique prefix)
-    #[arg(long)]
+    #[arg(long, conflicts_with = "token")]
     pub session: Option<String>,
 
     /// Disable session caching
@@ -823,7 +823,9 @@ fn resolve_connection_mode(
     session_fingerprint: Option<&str>,
     cached_sessions: &[(IdentityFingerprint, Option<String>, u64, u64)],
 ) -> Result<ConnectionMode> {
-    if let Some(session_hex) = session_fingerprint {
+    if session_fingerprint.is_some() && token.is_some() {
+        bail!("--session and --token are mutually exclusive")
+    } else if let Some(session_hex) = session_fingerprint {
         let fingerprint = resolve_session_prefix(session_hex, cached_sessions)?;
         Ok(ConnectionMode::Existing {
             remote_fingerprint: fingerprint,
@@ -965,15 +967,13 @@ mod tests {
     }
 
     #[test]
-    fn resolve_mode_session_takes_priority_over_token() {
+    fn resolve_mode_session_and_token_both_provided_errors() {
         let sessions = vec![session(0xaa), session(0xbb)];
         let prefix = &hex::encode([0xaa; 32])[..8];
-        let mode = resolve_connection_mode(Some("ABC123"), Some(prefix), &sessions)
-            .expect("should succeed");
-        assert!(matches!(
-            mode,
-            ConnectionMode::Existing { remote_fingerprint } if remote_fingerprint == fp(0xaa)
-        ));
+        let result = resolve_connection_mode(Some("ABC123"), Some(prefix), &sessions);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("mutually exclusive"));
     }
 
     // ── resolve_session_prefix ──────────────────────────────────────
