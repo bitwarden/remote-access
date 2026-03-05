@@ -35,8 +35,7 @@ Download [bw-remote-windows-x86_64.zip](https://github.com/bitwarden/remote-acce
 ### OpenClaw skill
 
 ```shell
-curl -fsSL "https://raw.githubusercontent.com/bitwarden/remote-access/instructions/oc-remote-access.md" -o
-  ~/.openclaw/skills/remote-access/SKILL.md --create-dirs
+curl -fsSL "https://raw.githubusercontent.com/bitwarden/remote-access/instructions/oc-remote-access.md" -o ~/.openclaw/skills/remote-access/SKILL.md --create-dirs
 ```
 
 ## Examples
