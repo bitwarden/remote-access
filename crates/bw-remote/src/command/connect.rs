@@ -846,7 +846,7 @@ fn resolve_connection_mode(
             remote_fingerprint: *fingerprint,
         })
     } else if cached_sessions.is_empty() {
-        bail!("No cached sessions found — provide --token or --session")
+        bail!("No cached sessions found — provide --token to start a new connection")
     } else {
         bail!(
             "Multiple cached sessions found — specify one with --session. \
