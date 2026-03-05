@@ -11,21 +11,21 @@ Remote Access is an open protocol, CLI tool, and Rust SDK that you can use to im
 
 ```shell
 curl -L https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-aarch64-apple-darwin.tar.gz | tar xz
-sudo mv bw-remote /usr/local/bin/
+sudo mv bw-remote /usr/local/bin/ # Makes it available on PATH
 ```
 
 ### macOS (Intel)
 
 ```shell
 curl -L https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-x86_64-apple-darwin.tar.gz | tar xz
-sudo mv bw-remote /usr/local/bin/
+sudo mv bw-remote /usr/local/bin/ # Makes it available on PATH
 ```
 
 ### Linux (x86_64)
 
 ```shell
 curl -L https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-x86_64-unknown-linux-gnu.tar.gz | tar xz
-sudo mv bw-remote /usr/local/bin/
+sudo mv bw-remote /usr/local/bin/ # Makes it available on PATH
 ```
 
 ### Windows (x86_64)
@@ -98,7 +98,7 @@ Run `cargo build` in this directory. This is a standalone workspace and has no d
 
 Run the `bw-proxy` binary to start the WebSocket proxy server:
 
-```
+```shell
 cargo run -p bw-proxy
 ```
 
@@ -108,7 +108,7 @@ The proxy binds to `127.0.0.1:8080` by default. Set the `BIND_ADDR` environment 
 
 Run `bw-remote` to use the demo CLI. This top-level driver command lets you explore the functionality of the SDK:
 
-```
+```shell
 Connect to a user-client through a proxy to request credentials over a secure channel
 
 Usage: bw-remote [OPTIONS] [COMMAND]
