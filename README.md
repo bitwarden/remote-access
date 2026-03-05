@@ -10,27 +10,27 @@ Remote Access is an open protocol, CLI tool, and Rust SDK that you can use to im
 ### macOS (Apple Silicon)
 
 ```shell
-curl -L https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-aarch64-apple-darwin.tar.gz | tar xz
+curl -L https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-macos-aarch64.tar.gz | tar xz
 sudo mv bw-remote /usr/local/bin/ # Makes it available on PATH
 ```
 
 ### macOS (Intel)
 
 ```shell
-curl -L https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-x86_64-apple-darwin.tar.gz | tar xz
+curl -L https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-macos-x86_64.tar.gz | tar xz
 sudo mv bw-remote /usr/local/bin/ # Makes it available on PATH
 ```
 
 ### Linux (x86_64)
 
 ```shell
-curl -L https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-x86_64-unknown-linux-gnu.tar.gz | tar xz
+curl -L https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-linux-x86_64.tar.gz | tar xz
 sudo mv bw-remote /usr/local/bin/ # Makes it available on PATH
 ```
 
 ### Windows (x86_64)
 
-Download [bw-remote-x86_64-pc-windows-msvc.zip](https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-x86_64-pc-windows-msvc.zip) from the [latest release](https://github.com/bitwarden/remote-access/releases/latest) and extract it to a directory on your PATH.
+Download [bw-remote-windows-x86_64.zip](https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-windows-x86_64.zip) from the [latest release](https://github.com/bitwarden/remote-access/releases/latest) and extract it to a directory on your PATH.
 
 ## Examples
 
