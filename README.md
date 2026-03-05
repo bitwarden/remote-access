@@ -32,6 +32,13 @@ sudo mv bw-remote /usr/local/bin/ # Makes it available on PATH
 
 Download [bw-remote-windows-x86_64.zip](https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-windows-x86_64.zip) from the [latest release](https://github.com/bitwarden/remote-access/releases/latest) and extract it to a directory on your PATH.
 
+### OpenClaw skill
+
+```shell
+curl -fsSL "https://raw.githubusercontent.com/bitwarden/remote-access/instructions/oc-remote-access.md" -o
+  ~/.openclaw/skills/remote-access/SKILL.md --create-dirs
+```
+
 ## Examples
 
 * OpenClaw skill
