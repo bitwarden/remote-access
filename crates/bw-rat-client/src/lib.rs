@@ -14,7 +14,7 @@
 //!
 //! ```ignore
 //! use bw_noise_client::{RemoteClient, DefaultProxyClient, IdentityProvider, SessionStore};
-//! use bw_proxy::ProxyClientConfig;
+//! use bw_proxy_client::ProxyClientConfig;
 //! use tokio::sync::mpsc;
 //!
 //! // Create proxy client
@@ -46,7 +46,7 @@
 //! use bw_noise_client::{
 //!     DefaultProxyClient, IdentityProvider, UserClient, UserClientEvent, UserClientResponse,
 //! };
-//! use bw_proxy::ProxyClientConfig;
+//! use bw_proxy_client::ProxyClientConfig;
 //! use tokio::sync::mpsc;
 //!
 //! // Create proxy client
@@ -88,7 +88,7 @@ pub use proxy::{DefaultProxyClient, ProxyClient};
 pub use traits::{IdentityProvider, SessionStore};
 pub use types::{ConnectionMode, CredentialData, RemoteClientEvent, RemoteClientResponse};
 
-// Re-export bw-proxy types
-pub use bw_proxy::{IdentityFingerprint, RendevouzCode};
+// Re-export bw-proxy-protocol types
+pub use bw_proxy_protocol::{IdentityFingerprint, RendevouzCode};
 // Re-export PSK type from noise protocol
 pub use bw_noise_protocol::Psk;

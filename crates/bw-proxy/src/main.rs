@@ -1,5 +1,5 @@
-use bw_proxy::error::ProxyError;
 use bw_proxy::server::ProxyServer;
+use bw_proxy_protocol::ProxyError;
 use std::env;
 use tracing_subscriber::{EnvFilter, fmt};
 

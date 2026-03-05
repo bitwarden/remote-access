@@ -236,7 +236,7 @@ impl IdentityKeyPair {
     /// # Examples
     ///
     /// ```
-    /// use bw_proxy::IdentityKeyPair;
+    /// use bw_proxy_protocol::IdentityKeyPair;
     ///
     /// let keypair = IdentityKeyPair::generate();
     /// let public_identity = keypair.identity();
@@ -257,7 +257,7 @@ impl IdentityKeyPair {
 /// # Examples
 ///
 /// ```
-/// use bw_proxy::IdentityKeyPair;
+/// use bw_proxy_protocol::IdentityKeyPair;
 ///
 /// let keypair = IdentityKeyPair::generate();
 /// let identity = keypair.identity();
@@ -375,7 +375,7 @@ impl Identity {
     /// # Examples
     ///
     /// ```
-    /// use bw_proxy::IdentityKeyPair;
+    /// use bw_proxy_protocol::IdentityKeyPair;
     ///
     /// let keypair = IdentityKeyPair::generate();
     /// let identity = keypair.identity();
@@ -402,7 +402,7 @@ impl Identity {
 /// # Examples
 ///
 /// ```
-/// use bw_proxy::IdentityKeyPair;
+/// use bw_proxy_protocol::IdentityKeyPair;
 /// use std::collections::HashMap;
 ///
 /// let keypair = IdentityKeyPair::generate();
@@ -440,7 +440,7 @@ impl std::fmt::Debug for IdentityFingerprint {
 /// Server-side challenge generation:
 ///
 /// ```
-/// use bw_proxy::Challenge;
+/// use bw_proxy_protocol::Challenge;
 ///
 /// let challenge = Challenge::new();
 /// // Send to client for signing
@@ -449,7 +449,7 @@ impl std::fmt::Debug for IdentityFingerprint {
 /// Client-side challenge signing:
 ///
 /// ```
-/// use bw_proxy::{Challenge, IdentityKeyPair};
+/// use bw_proxy_protocol::{Challenge, IdentityKeyPair};
 ///
 /// let keypair = IdentityKeyPair::generate();
 /// # let challenge = Challenge::new();
@@ -474,7 +474,7 @@ impl Challenge {
     /// # Examples
     ///
     /// ```
-    /// use bw_proxy::Challenge;
+    /// use bw_proxy_protocol::Challenge;
     ///
     /// let challenge = Challenge::new();
     /// // Each call produces a different random challenge
@@ -492,7 +492,7 @@ impl Challenge {
     /// # Examples
     ///
     /// ```
-    /// use bw_proxy::{Challenge, IdentityKeyPair};
+    /// use bw_proxy_protocol::{Challenge, IdentityKeyPair};
     ///
     /// let keypair = IdentityKeyPair::generate();
     /// let challenge = Challenge::new();
@@ -566,7 +566,7 @@ impl Challenge {
 /// Create and verify a challenge response:
 ///
 /// ```
-/// use bw_proxy::{Challenge, IdentityKeyPair};
+/// use bw_proxy_protocol::{Challenge, IdentityKeyPair};
 ///
 /// // Client signs challenge
 /// let keypair = IdentityKeyPair::generate();
@@ -603,7 +603,7 @@ impl ChallengeResponse {
     /// # Examples
     ///
     /// ```
-    /// use bw_proxy::{Challenge, IdentityKeyPair};
+    /// use bw_proxy_protocol::{Challenge, IdentityKeyPair};
     ///
     /// let keypair = IdentityKeyPair::generate();
     /// let challenge = Challenge::new();

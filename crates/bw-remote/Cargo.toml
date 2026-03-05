@@ -13,7 +13,8 @@ path = "src/main.rs"
 
 [dependencies]
 bw-noise-protocol = { workspace = true }
-bw-proxy = { workspace = true }
+bw-proxy-client = { workspace = true }
+bw-proxy-protocol = { workspace = true }
 bw-rat-client = { workspace = true }
 clap = { workspace = true }
 color-eyre = { workspace = true }

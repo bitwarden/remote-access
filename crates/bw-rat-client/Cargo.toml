@@ -12,7 +12,8 @@ async-trait = "0.1"
 base64 = { workspace = true }
 bw-error = { workspace = true }
 bw-noise-protocol = { workspace = true }
-bw-proxy = { path = "../bw-proxy" }
+bw-proxy-client = { workspace = true }
+bw-proxy-protocol = { workspace = true }
 dirs = { workspace = true }
 futures-util = { workspace = true }
 hex = { workspace = true }
@@ -24,6 +25,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+bw-proxy = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 
 [lints]

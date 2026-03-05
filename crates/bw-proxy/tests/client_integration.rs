@@ -1,8 +1,5 @@
-use bw_proxy::{
-    IdentityKeyPair,
-    client::{IncomingMessage, ProxyClientConfig, ProxyProtocolClient},
-    server::ProxyServer,
-};
+use bw_proxy::server::ProxyServer;
+use bw_proxy_client::{IdentityKeyPair, IncomingMessage, ProxyClientConfig, ProxyProtocolClient};
 use std::net::SocketAddr;
 
 async fn start_test_server() -> SocketAddr {

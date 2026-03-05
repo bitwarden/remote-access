@@ -8,7 +8,8 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use bw_noise_protocol::{MultiDeviceTransport, PersistentTransportState};
-use bw_proxy::{IdentityFingerprint, IdentityKeyPair, IncomingMessage, RendevouzCode};
+use bw_proxy_client::IncomingMessage;
+use bw_proxy_protocol::{IdentityFingerprint, IdentityKeyPair, RendevouzCode};
 use bw_rat_client::{
     IdentityProvider, ProxyClient, Psk, RemoteClient, RemoteClientEvent, RemoteClientResponse,
     SessionStore, UserClient, UserClientEvent, UserClientResponse,

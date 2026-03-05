@@ -4,9 +4,8 @@
 //! enabling dependency injection and easier testing.
 
 use async_trait::async_trait;
-use bw_proxy::{
-    IdentityFingerprint, IncomingMessage, ProxyClientConfig, ProxyProtocolClient, RendevouzCode,
-};
+use bw_proxy_client::{IncomingMessage, ProxyClientConfig, ProxyProtocolClient};
+use bw_proxy_protocol::{IdentityFingerprint, RendevouzCode};
 use tokio::sync::mpsc;
 
 use crate::error::RemoteClientError;

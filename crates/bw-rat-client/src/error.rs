@@ -100,8 +100,8 @@ impl From<serde_json::Error> for RemoteClientError {
     }
 }
 
-impl From<bw_proxy::ProxyError> for RemoteClientError {
-    fn from(err: bw_proxy::ProxyError) -> Self {
+impl From<bw_proxy_protocol::ProxyError> for RemoteClientError {
+    fn from(err: bw_proxy_protocol::ProxyError) -> Self {
         RemoteClientError::ConnectionFailed(err.to_string())
     }
 }

@@ -8,7 +8,9 @@ use std::net::SocketAddr;
 use std::sync::Mutex;
 
 use bw_noise_protocol::MultiDeviceTransport;
-use bw_proxy::{IdentityFingerprint, IdentityKeyPair, ProxyClientConfig, server::ProxyServer};
+use bw_proxy::server::ProxyServer;
+use bw_proxy_client::ProxyClientConfig;
+use bw_proxy_protocol::{IdentityFingerprint, IdentityKeyPair};
 use bw_rat_client::{
     DefaultProxyClient, IdentityProvider, Psk, RemoteClient, RemoteClientEvent,
     RemoteClientResponse, SessionStore, UserClient, UserClientEvent, UserClientResponse,

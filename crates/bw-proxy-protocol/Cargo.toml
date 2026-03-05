@@ -1,0 +1,27 @@
+[package]
+name = "bw-proxy-protocol"
+description = "Shared wire protocol types for the bw-proxy WebSocket relay"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+default = ["experimental-post-quantum-crypto"]
+experimental-post-quantum-crypto = []
+
+[dependencies]
+bw-error = { workspace = true }
+coset = { workspace = true }
+ed25519-dalek = { workspace = true }
+hex = { workspace = true }
+ml-dsa = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

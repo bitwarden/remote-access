@@ -1,7 +1,11 @@
-//! WebSocket proxy
+//! WebSocket proxy server for secure peer-to-peer messaging.
 //!
-//! `bw-proxy` provides both a relay server and client library for secure peer-to-peer messaging.
-//! For authentication, a challenge-response using cryptographic identities is used.
+//! This crate provides the relay server that accepts WebSocket connections,
+//! authenticates clients, and routes messages between them. The server is
+//! zero-knowledge and cannot decrypt client payloads.
+//!
+//! For the client library, see [`bw-proxy-client`](https://docs.rs/bw-proxy-client).
+//! For shared protocol types, see [`bw-proxy-protocol`](https://docs.rs/bw-proxy-protocol).
 //!
 //! # Architecture
 //!
@@ -46,58 +50,15 @@
 //!
 //! Once authenticated, clients can send messages to other clients by their identity fingerprint.
 //! The proxy validates the source identity and routes messages to the destination. The proxy
-//! cannot decrypt message contents - clients should implement end-to-end encryption separately.
+//! cannot decrypt message contents — clients should implement end-to-end encryption separately.
 //!
-//! # Usage Modes
-//!
-//! ## As a Client Library
-//!
-//! Use [`ProxyProtocolClient`] to connect to a proxy server:
-//!
-//! ```no_run
-//! use bw_proxy::{ProxyClientConfig, ProxyProtocolClient, IncomingMessage};
-//!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let config = ProxyClientConfig {
-//!     proxy_url: "ws://localhost:8080".to_string(),
-//!     identity_keypair: None, // Generates new identity
-//! };
-//!
-//! let mut client = ProxyProtocolClient::new(config);
-//! let mut incoming = client.connect().await?;
-//!
-//! // Handle incoming messages
-//! tokio::spawn(async move {
-//!     while let Some(msg) = incoming.recv().await {
-//!         match msg {
-//!             IncomingMessage::Send { source, payload, .. } => {
-//!                 println!("Message from {:?}", source);
-//!             }
-//!             IncomingMessage::RendevouzInfo(code) => {
-//!                 println!("Your code: {}", code.as_str());
-//!             }
-//!             IncomingMessage::IdentityInfo { identity, .. } => {
-//!                 println!("Found peer: {:?}", identity.fingerprint());
-//!             }
-//!         }
-//!     }
-//! });
-//!
-//! // Request a rendezvous code
-//! client.request_rendezvous().await?;
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! ## As a Binary Server
-//!
-//! Run the proxy server using the binary:
+//! # Running as a Binary
 //!
 //! ```bash
 //! cargo run --bin bw-proxy
 //! ```
 //!
-//! Or embed the server in your application using [`server::ProxyServer`]:
+//! # Embedding in Your Application
 //!
 //! ```no_run
 //! use bw_proxy::server::ProxyServer;
@@ -111,16 +72,5 @@
 //! # }
 //! ```
 
-pub mod auth;
-pub mod client;
-mod connection;
-pub mod error;
-pub mod messages;
-pub mod rendevouz;
+pub(crate) mod connection;
 pub mod server;
-
-pub use auth::{Challenge, ChallengeResponse, Identity, IdentityFingerprint, IdentityKeyPair};
-pub use client::{IncomingMessage, ProxyClientConfig, ProxyProtocolClient};
-pub use error::ProxyError;
-pub use messages::Messages;
-pub use rendevouz::RendevouzCode;

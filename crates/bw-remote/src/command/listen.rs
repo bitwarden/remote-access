@@ -5,7 +5,8 @@
 
 use std::process::Command;
 
-use bw_proxy::{IdentityFingerprint, ProxyClientConfig};
+use bw_proxy_client::ProxyClientConfig;
+use bw_proxy_protocol::IdentityFingerprint;
 use bw_rat_client::{
     DefaultProxyClient, IdentityProvider, SessionStore, UserClient, UserClientEvent,
     UserClientResponse, UserCredentialData,

@@ -4,7 +4,7 @@
 //! and requesting credentials over a secure Noise Protocol channel.
 
 use bw_noise_protocol::Psk;
-use bw_proxy::ProxyClientConfig;
+use bw_proxy_client::ProxyClientConfig;
 use bw_rat_client::{
     ConnectionMode, DefaultProxyClient, IdentityFingerprint, IdentityProvider, RemoteClient,
     RemoteClientEvent, RemoteClientResponse, SessionStore,

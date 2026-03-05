@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use bw_noise_protocol::{Ciphersuite, MultiDeviceTransport, Psk, ResponderHandshake};
-use bw_proxy::{IdentityFingerprint, IncomingMessage, RendevouzCode};
+use bw_proxy_client::IncomingMessage;
+use bw_proxy_protocol::{IdentityFingerprint, RendevouzCode};
 
 use crate::proxy::ProxyClient;
 use serde::{Deserialize, Serialize};

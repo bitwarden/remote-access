@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use bw_proxy::{IdentityFingerprint, IdentityKeyPair};
+use bw_proxy_protocol::{IdentityFingerprint, IdentityKeyPair};
 use bw_rat_client::{IdentityProvider, RemoteClientError};
 use tracing::{debug, info};
 
