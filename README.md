@@ -1,18 +1,36 @@
 # Bitwarden Remote Access
 
 Remote Access allows users to access credentials from their password manager on remote systems, without exposing their entire vault.
-It creates an e2e connected tunnel between the remote and the password manager.
+It creates an end-to-end encrypted tunnel between the remote system and the password manager.
 
-Remote Access is both an open protocol, CLI tool, and a Rust SDK that you can use to implement it directly into agents or custom software. While we at Bitwarden has built it, it's open for any Password Manager to leverage to further support Agentic or automation use cases without exposting your entire vault.
- 
-Download the binary for your system from the [latest release](https://github.com/bitwarden/remote-access/releases/latest):
+Remote Access is an open protocol, CLI tool, and Rust SDK that you can use to implement it directly into agents or custom software. While we at Bitwarden have built it, it's open for any password manager to leverage to further support agentic or automation use cases without exposing your entire vault.
 
-| Platform | Download |
-|----------|----------|
-| Linux x86_64 | [bw-remote-x86_64-unknown-linux-gnu.tar.gz](https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-x86_64-unknown-linux-gnu.tar.gz) |
-| macOS Apple Silicon | [bw-remote-aarch64-apple-darwin.tar.gz](https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-aarch64-apple-darwin.tar.gz) |
-| macOS Intel | [bw-remote-x86_64-apple-darwin.tar.gz](https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-x86_64-apple-darwin.tar.gz) |
-| Windows x86_64 | [bw-remote-x86_64-pc-windows-msvc.zip](https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-x86_64-pc-windows-msvc.zip) |
+## Installation
+
+### macOS (Apple Silicon)
+
+```shell
+curl -L https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-aarch64-apple-darwin.tar.gz | tar xz
+sudo mv bw-remote /usr/local/bin/
+```
+
+### macOS (Intel)
+
+```shell
+curl -L https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-x86_64-apple-darwin.tar.gz | tar xz
+sudo mv bw-remote /usr/local/bin/
+```
+
+### Linux (x86_64)
+
+```shell
+curl -L https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-x86_64-unknown-linux-gnu.tar.gz | tar xz
+sudo mv bw-remote /usr/local/bin/
+```
+
+### Windows (x86_64)
+
+Download [bw-remote-x86_64-pc-windows-msvc.zip](https://github.com/bitwarden/remote-access/releases/latest/download/bw-remote-x86_64-pc-windows-msvc.zip) from the [latest release](https://github.com/bitwarden/remote-access/releases/latest) and extract it to a directory on your PATH.
 
 ## Examples
 
@@ -22,17 +40,17 @@ Download the binary for your system from the [latest release](https://github.com
 
 ## Getting started (cli, bitwarden)
 
-Once you've installed the CLI tool, it can connect to your bitwarden vault using the bitwarden cli.
+Once you've installed the CLI tool, it can connect to your Bitwarden vault using the Bitwarden CLI.
 
 ```shell
 bw-remote listen
 ```
 
-The interactive CLI will create a pairing code that you can use to establish a connection on the remote side
+The interactive CLI will create a pairing code that you can use to establish a connection on the remote side.
 
 **Setting up the remote side**
 
-You can run the remote side interactively (most useful for testing/demonstration) or to "one-shot" credential requests
+You can run the remote side interactively (most useful for testing/demonstration) or in "one-shot" mode for single credential requests.
 
 ```shell
 # interactive mode
@@ -51,13 +69,13 @@ bw-remote connect --session <sessionId> --domain github.com --output json
 
 ## Contributing
 
-This repo contains multiple building blocks that powers Remote Access.
+This repo contains multiple building blocks that power Remote Access.
 
 It contains:
 
-* A e2e tunnel, using Noise
+* An end-to-end encrypted tunnel, using Noise
 * A Rust SDK for establishing a tunnel, sending requests, and responding to them
-* A CLI tool for request / releasing credentials
+* A CLI tool for requesting / releasing credentials
 * A proxy server for demo/development purposes
 
 
