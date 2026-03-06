@@ -91,10 +91,12 @@ Noise handshake and encrypted credential payloads are layered on top as `Protoco
 
 ## Single-Shot Non-Interactive Mode
 
-For agent/LLM integration: `bw-remote connect --domain example.com --token <TOKEN> [--output json|text]`
+For agent/LLM integration: `bw-remote connect --domain example.com [--output json|text]`
 
 - No TUI — status to stderr, credential output to stdout
-- Requires `--token` or `--session`
+- If exactly one cached session exists, it is used automatically (no `--token` or `--session` needed)
+- With multiple cached sessions, `--session` is required to disambiguate
+- `--token` starts a new handshake (rendezvous or PSK) regardless of cache
 - No fingerprint verification (headless)
 - PSK token format: `<64-hex-psk>_<64-hex-fingerprint>` (129 chars)
 - Output formats: `text` (key-value lines) or `json` (`{"success": true, "credential": {...}}`)

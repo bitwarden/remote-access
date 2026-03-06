@@ -14,7 +14,7 @@
 //!
 //! ```ignore
 //! use bw_noise_client::{RemoteClient, DefaultProxyClient, IdentityProvider, SessionStore};
-//! use bw_proxy::ProxyClientConfig;
+//! use bw_proxy_client::ProxyClientConfig;
 //! use tokio::sync::mpsc;
 //!
 //! // Create proxy client
@@ -46,7 +46,7 @@
 //! use bw_noise_client::{
 //!     DefaultProxyClient, IdentityProvider, UserClient, UserClientEvent, UserClientResponse,
 //! };
-//! use bw_proxy::ProxyClientConfig;
+//! use bw_proxy_client::ProxyClientConfig;
 //! use tokio::sync::mpsc;
 //!
 //! // Create proxy client
@@ -89,15 +89,16 @@ pub use error::RemoteClientError;
 pub use proxy::DefaultProxyClient;
 pub use proxy::ProxyClient;
 pub use traits::{IdentityProvider, SessionStore};
-#[cfg(feature = "native")]
-pub use types::{ConnectionMode, CredentialData, RemoteClientEvent, RemoteClientResponse};
 #[cfg(not(feature = "native"))]
 pub use types::CredentialData;
+#[cfg(feature = "native")]
+pub use types::{ConnectionMode, CredentialData, RemoteClientEvent, RemoteClientResponse};
 
-// Re-export bw-proxy types
-pub use bw_proxy::{
-    Challenge, ChallengeResponse, Identity, IdentityFingerprint, IdentityKeyPair, IncomingMessage,
-    Messages, RendevouzCode,
+// Re-export bw-proxy-protocol types
+pub use bw_proxy_protocol::{
+    Challenge, ChallengeResponse, Identity, IdentityFingerprint, IdentityKeyPair, Messages,
+    RendevouzCode,
 };
+pub use bw_proxy_protocol::IncomingMessage;
 // Re-export PSK type from noise protocol
 pub use bw_noise_protocol::{MultiDeviceTransport, Psk};

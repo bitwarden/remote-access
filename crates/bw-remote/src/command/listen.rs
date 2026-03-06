@@ -5,7 +5,8 @@
 
 use std::process::Command;
 
-use bw_proxy::{IdentityFingerprint, ProxyClientConfig};
+use bw_proxy_client::ProxyClientConfig;
+use bw_proxy_protocol::IdentityFingerprint;
 use bw_rat_client::{
     DefaultProxyClient, IdentityProvider, SessionStore, UserClient, UserClientEvent,
     UserClientResponse, UserCredentialData,
@@ -24,7 +25,7 @@ use super::tui::{App, AppAction, Message, MessageKind, Mode, init_terminal, rest
 use super::util::{format_listen_event, format_relative_time};
 use crate::storage::{FileIdentityStorage, FileSessionCache};
 
-const DEFAULT_PROXY_URL: &str = "ws://localhost:8080";
+use super::DEFAULT_PROXY_URL;
 
 /// Slash commands available in idle mode.
 const IDLE_COMMANDS: &[&str] = &["/pair [name]", "/bw-unlock", "/bw-session <key>", "/exit"];

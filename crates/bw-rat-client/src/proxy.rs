@@ -4,7 +4,8 @@
 //! enabling dependency injection and easier testing.
 
 use async_trait::async_trait;
-use bw_proxy::{IdentityFingerprint, IncomingMessage, RendevouzCode};
+use bw_proxy_protocol::IncomingMessage;
+use bw_proxy_protocol::{IdentityFingerprint, RendevouzCode};
 use tokio::sync::mpsc;
 
 use crate::error::RemoteClientError;
@@ -37,15 +38,15 @@ pub trait ProxyClient: Send + Sync {
 /// Default implementation using ProxyProtocolClient from bw-proxy
 #[cfg(feature = "native")]
 pub struct DefaultProxyClient {
-    inner: bw_proxy::ProxyProtocolClient,
+    inner: bw_proxy_client::ProxyProtocolClient,
 }
 
 #[cfg(feature = "native")]
 impl DefaultProxyClient {
     /// Create a new default proxy client with the given configuration.
-    pub fn new(config: bw_proxy::ProxyClientConfig) -> Self {
+    pub fn new(config: bw_proxy_client::ProxyClientConfig) -> Self {
         Self {
-            inner: bw_proxy::ProxyProtocolClient::new(config),
+            inner: bw_proxy_client::ProxyProtocolClient::new(config),
         }
     }
 }

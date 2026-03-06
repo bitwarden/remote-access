@@ -1,10 +1,9 @@
 # bw-proxy
 
-A WebSocket proxy client + server that can act as a transport for `bw-remote`.
+A WebSocket relay server for `bw-remote` that routes messages between authenticated clients without access to message contents.
 
-## Overview
-
-`bw-proxy` provides a relay server that enables secure peer-to-peer communication between clients without the server having access to message contents. It uses MlDsa65 post-quantum digital signatures for authentication and implements a rendezvous system for client discovery.
+For the client library, see [`bw-proxy-client`](../bw-proxy-client/).
+For shared protocol types, see [`bw-proxy-protocol`](../bw-proxy-protocol/).
 
 ## Quick Start
 
@@ -16,57 +15,17 @@ cargo run --bin bw-proxy
 
 The server will start listening on `ws://localhost:8080` by default.
 
-### Using as a Client Library
-
-Add to your `Cargo.toml`:
-
-```toml
-[dependencies]
-bw-proxy = "0.1.0"
-```
-
-Basic client example:
+### Embedding in Your Application
 
 ```rust
-use bw_proxy::{ProxyClientConfig, ProxyProtocolClient, IncomingMessage};
+use bw_proxy::server::ProxyServer;
+use std::net::SocketAddr;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create client configuration
-    let config = ProxyClientConfig {
-        proxy_url: "ws://localhost:8080".to_string(),
-        identity_keypair: None, // Generates a new identity
-    };
-
-    // Create and connect client
-    let mut client = ProxyProtocolClient::new(config);
-    let mut incoming = client.connect().await?;
-
-    println!("Connected! Fingerprint: {:?}", client.fingerprint());
-
-    // Handle incoming messages
-    tokio::spawn(async move {
-        while let Some(msg) = incoming.recv().await {
-            match msg {
-                IncomingMessage::Send { source, payload, .. } => {
-                    println!("Message from {:?}: {:?}", source, payload);
-                }
-                IncomingMessage::RendevouzInfo(code) => {
-                    println!("Your rendezvous code: {}", code.code());
-                }
-                IncomingMessage::IdentityInfo { identity, .. } => {
-                    println!("Found peer: {:?}", identity.fingerprint());
-                }
-            }
-        }
-    });
-
-    // Request a rendezvous code for others to find you
-    client.request_rendezvous().await?;
-
-    // Send a message to another client
-    client.send_to(target_fingerprint, payload).await?;
-
+    let addr: SocketAddr = "127.0.0.1:8080".parse()?;
+    let server = ProxyServer::new(addr);
+    server.run().await?;
     Ok(())
 }
 ```

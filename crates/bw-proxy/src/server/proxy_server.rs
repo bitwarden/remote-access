@@ -1,5 +1,7 @@
+use bw_proxy_protocol::{IdentityFingerprint, ProxyError};
+
+use crate::connection::AuthenticatedConnection;
 use crate::server::handler::ConnectionHandler;
-use crate::{auth::IdentityFingerprint, connection::AuthenticatedConnection, error::ProxyError};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;

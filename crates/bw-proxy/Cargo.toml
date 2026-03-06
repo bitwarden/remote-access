@@ -1,6 +1,6 @@
 [package]
 name = "bw-proxy"
-description = "Zero-knowledge WebSocket proxy for bw_remote"
+description = "Zero-knowledge WebSocket proxy server for bw_remote"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -9,7 +9,7 @@ license.workspace = true
 
 [features]
 default = ["native", "experimental-post-quantum-crypto"]
-experimental-post-quantum-crypto = []
+experimental-post-quantum-crypto = ["bw-proxy-protocol/experimental-post-quantum-crypto"]
 native = ["dep:tokio-tungstenite", "tokio/net", "tokio/signal", "tokio/time"]
 wasm = []
 
@@ -19,24 +19,18 @@ path = "src/main.rs"
 required-features = ["native"]
 
 [dependencies]
-bw-error = { workspace = true }
-chrono = "0.4"
-coset = "0.4.1"
-ed25519-dalek = "2.2.0"
+bw-proxy-protocol = { workspace = true }
 futures-util = { workspace = true }
-hex = "0.4.3"
-ml-dsa = "0.0.4"
-rand = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
-tokio = { version = "1.36.0", features = ["sync"] }
 tokio-tungstenite = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["net", "signal", "sync", "time"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
+bw-proxy-client = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [lints]

@@ -3,7 +3,7 @@
 //! This module contains internal types used by the proxy server to track authenticated
 //! client connections. These types are not part of the public API.
 
-use crate::auth::{Identity, IdentityFingerprint};
+use bw_proxy_protocol::{Identity, IdentityFingerprint};
 use std::time::SystemTime;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;

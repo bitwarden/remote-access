@@ -4,7 +4,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use bw_noise_protocol::{InitiatorHandshake, MultiDeviceTransport, Psk};
-use bw_proxy::{IdentityFingerprint, IncomingMessage, RendevouzCode};
+use bw_proxy_protocol::IncomingMessage;
+use bw_proxy_protocol::{IdentityFingerprint, RendevouzCode};
 use rand::RngCore;
 
 use crate::proxy::ProxyClient;
