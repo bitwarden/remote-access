@@ -41,11 +41,11 @@
 mod config;
 mod protocol_client;
 
-pub use config::{IncomingMessage, ProxyClientConfig};
+pub use config::ProxyClientConfig;
 pub use protocol_client::ProxyProtocolClient;
 
 // Re-export key types from bw-proxy-protocol for ergonomics
 pub use bw_proxy_protocol::{
-    Challenge, ChallengeResponse, Identity, IdentityFingerprint, IdentityKeyPair, Messages,
-    ProxyError, RendevouzCode, SignatureAlgorithm,
+    Challenge, ChallengeResponse, Identity, IdentityFingerprint, IdentityKeyPair, IncomingMessage,
+    Messages, ProxyError, RendevouzCode, SignatureAlgorithm,
 };

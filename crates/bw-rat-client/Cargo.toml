@@ -7,21 +7,25 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+default = ["native"]
+native = ["tokio/time", "tokio/rt", "bw-proxy-client"]
+wasm = ["bw-noise-protocol/wasm"]
+
 [dependencies]
 async-trait = "0.1"
 base64 = { workspace = true }
 bw-error = { workspace = true }
 bw-noise-protocol = { workspace = true }
-bw-proxy-client = { workspace = true }
+bw-proxy-client = { workspace = true, optional = true }
 bw-proxy-protocol = { workspace = true }
-dirs = { workspace = true }
 futures-util = { workspace = true }
 hex = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
+tokio = { version = "1.36.0", features = ["macros", "sync"] }
 tracing = { workspace = true }
 
 [dev-dependencies]

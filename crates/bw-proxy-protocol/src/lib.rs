@@ -5,6 +5,7 @@
 
 pub mod auth;
 pub mod error;
+pub mod incoming;
 pub mod messages;
 pub mod rendevouz;
 
@@ -13,5 +14,6 @@ pub use auth::{
     SignatureAlgorithm,
 };
 pub use error::ProxyError;
+pub use incoming::IncomingMessage;
 pub use messages::Messages;
 pub use rendevouz::RendevouzCode;

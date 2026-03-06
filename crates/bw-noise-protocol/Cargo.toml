@@ -10,9 +10,12 @@ license.workspace = true
 [features]
 default = []
 experimental-post-quantum-crypto = []
+wasm = ["getrandom/wasm_js", "dep:js-sys"]
 
 [dependencies]
 base64 = { workspace = true }
+getrandom = { version = "0.3", optional = true }
+js-sys = { version = "0.3", optional = true }
 bw-error = { workspace = true }
 chacha20poly1305 = { workspace = true }
 ciborium = { workspace = true }

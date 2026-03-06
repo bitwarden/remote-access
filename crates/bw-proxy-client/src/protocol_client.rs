@@ -7,7 +7,9 @@ use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::{WebSocketStream, connect_async, tungstenite::Message};
 
-use super::config::{ClientState, IncomingMessage, ProxyClientConfig};
+use bw_proxy_protocol::IncomingMessage;
+
+use super::config::{ClientState, ProxyClientConfig};
 
 /// Convert tungstenite errors into ProxyError (replaces the From impl that
 /// was removed from bw-proxy-protocol to keep it free of tungstenite deps).

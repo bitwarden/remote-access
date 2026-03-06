@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use bw_noise_protocol::{Ciphersuite, MultiDeviceTransport, Psk, ResponderHandshake};
-use bw_proxy_client::IncomingMessage;
+use bw_proxy_protocol::IncomingMessage;
 use bw_proxy_protocol::{IdentityFingerprint, RendevouzCode};
 
 use crate::proxy::ProxyClient;
@@ -458,13 +458,13 @@ impl UserClient {
         name: Option<String>,
         event_tx: &mpsc::Sender<UserClientEvent>,
     ) -> Result<(), RemoteClientError> {
-        let pending = self
-            .pending_verification
-            .take()
-            .ok_or(RemoteClientError::InvalidState {
-                expected: "pending verification".to_string(),
-                current: "no pending verification".to_string(),
-            })?;
+        let pending = match self.pending_verification.take() {
+            Some(p) => p,
+            None => {
+                warn!("VerifyFingerprint received but no pending verification — ignoring");
+                return Ok(());
+            }
+        };
 
         if approved {
             // Cache session and store transport
