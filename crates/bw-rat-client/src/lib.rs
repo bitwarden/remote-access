@@ -95,10 +95,10 @@ pub use types::CredentialData;
 pub use types::{ConnectionMode, CredentialData, RemoteClientEvent, RemoteClientResponse};
 
 // Re-export bw-proxy-protocol types
+pub use bw_proxy_protocol::IncomingMessage;
 pub use bw_proxy_protocol::{
     Challenge, ChallengeResponse, Identity, IdentityFingerprint, IdentityKeyPair, Messages,
     RendevouzCode,
 };
-pub use bw_proxy_protocol::IncomingMessage;
 // Re-export PSK type from noise protocol
 pub use bw_noise_protocol::{MultiDeviceTransport, Psk};
