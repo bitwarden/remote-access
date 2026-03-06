@@ -8,7 +8,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-async-trait = "0.1"
+async-trait = "=0.1.89"
 base64 = { workspace = true }
 bw-error = { workspace = true }
 bw-noise-protocol = { workspace = true }
