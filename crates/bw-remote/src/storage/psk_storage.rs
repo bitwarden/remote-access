@@ -1,10 +1,11 @@
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
 use bw_noise_protocol::Psk;
 use bw_rat_client::RemoteClientError;
 use tracing::{debug, info};
+
+use super::ensure_storage_dir;
 
 /// Manages persistent storage of reusable PSKs.
 ///
@@ -28,21 +29,19 @@ impl PskStorage {
     }
 
     /// Load all stored PSKs from `~/.bw-remote/psk_*.hex`.
-    ///
-    /// Returns a map of `psk_id` (first 4 bytes of SHA-256) to `Psk`.
-    pub fn load_all() -> Result<HashMap<[u8; 4], Psk>, RemoteClientError> {
-        let dir = Self::storage_dir()?;
-        let mut psks = HashMap::new();
+    pub fn load_all() -> Result<Vec<Psk>, RemoteClientError> {
+        let dir = ensure_storage_dir()?;
+        let mut psks = Vec::new();
 
-        if !dir.exists() {
-            return Ok(psks);
-        }
-
-        let entries = fs::read_dir(&dir).map_err(|e| {
-            RemoteClientError::IdentityStorageFailed(format!(
-                "Failed to read .bw-remote directory: {e}"
-            ))
-        })?;
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(psks),
+            Err(e) => {
+                return Err(RemoteClientError::IdentityStorageFailed(format!(
+                    "Failed to read .bw-remote directory: {e}"
+                )));
+            }
+        };
 
         for entry in entries {
             let entry = match entry {
@@ -59,7 +58,7 @@ impl PskStorage {
                 match Self::load_from_file(&path) {
                     Ok(psk) => {
                         debug!("Loaded PSK from {:?}", path);
-                        psks.insert(psk.id(), psk);
+                        psks.push(psk);
                     }
                     Err(e) => {
                         info!("Skipping invalid PSK file {:?}: {}", path, e);
@@ -75,22 +74,8 @@ impl PskStorage {
         Ok(psks)
     }
 
-    fn storage_dir() -> Result<PathBuf, RemoteClientError> {
-        let home_dir = dirs::home_dir().ok_or_else(|| {
-            RemoteClientError::IdentityStorageFailed("Could not find home directory".to_string())
-        })?;
-        Ok(home_dir.join(".bw-remote"))
-    }
-
     fn psk_path(name: &str) -> Result<PathBuf, RemoteClientError> {
-        let dir = Self::storage_dir()?;
-        if !dir.exists() {
-            fs::create_dir_all(&dir).map_err(|e| {
-                RemoteClientError::IdentityStorageFailed(format!(
-                    "Failed to create .bw-remote directory: {e}"
-                ))
-            })?;
-        }
+        let dir = ensure_storage_dir()?;
         Ok(dir.join(format!("psk_{name}.hex")))
     }
 

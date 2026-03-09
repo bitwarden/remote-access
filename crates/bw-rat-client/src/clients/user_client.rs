@@ -752,8 +752,10 @@ impl UserClient {
     /// Called on every startup to populate the keychain with stored PSKs.
     /// These PSKs are always accepted for incoming handshakes regardless of
     /// the current pairing mode (rendezvous, ephemeral PSK, or reusable PSK).
-    pub fn load_psks(&mut self, psks: HashMap<[u8; 4], Psk>) {
-        self.psks.extend(psks);
+    pub fn load_psks(&mut self, psks: impl IntoIterator<Item = Psk>) {
+        for psk in psks {
+            self.psks.insert(psk.id(), psk);
+        }
     }
 
     /// Set a friendly name to assign to the next newly-paired session

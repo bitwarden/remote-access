@@ -16,12 +16,8 @@ pub struct Psk([u8; PSK_LENGTH]);
 
 impl Debug for Psk {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use sha2::{Digest, Sha256 as Sha256Hash};
-        let hash = Sha256Hash::digest(self.0);
-        let preview = format!(
-            "{:02x}{:02x}{:02x}{:02x}...",
-            hash[0], hash[1], hash[2], hash[3]
-        );
+        let id = self.id();
+        let preview = format!("{:02x}{:02x}{:02x}{:02x}...", id[0], id[1], id[2], id[3]);
         write!(f, "Psk({preview})")
     }
 }

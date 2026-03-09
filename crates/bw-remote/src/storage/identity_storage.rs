@@ -66,22 +66,10 @@ impl FileIdentityStorage {
         }
     }
 
-    /// Get the default storage path (~/.bw-remote/identity.key)
+    /// Get the default storage path (~/.bw-remote/{name}.key)
     fn default_storage_path(storage_name: &str) -> Result<PathBuf, RemoteClientError> {
-        let home_dir = dirs::home_dir().ok_or_else(|| {
-            RemoteClientError::IdentityStorageFailed("Could not find home directory".to_string())
-        })?;
-
-        let bw_remote_dir = home_dir.join(".bw-remote");
-        if !bw_remote_dir.exists() {
-            fs::create_dir_all(&bw_remote_dir).map_err(|e| {
-                RemoteClientError::IdentityStorageFailed(format!(
-                    "Failed to create .bw-remote directory: {e}"
-                ))
-            })?;
-        }
-
-        Ok(bw_remote_dir.join(format!("{storage_name}.key")))
+        let dir = super::ensure_storage_dir()?;
+        Ok(dir.join(format!("{storage_name}.key")))
     }
 
     /// Load keypair from file
