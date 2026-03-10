@@ -49,10 +49,12 @@ pub enum IdentityKeyPair {
         public_key: VerifyingKey,
     },
     #[cfg(feature = "experimental-post-quantum-crypto")]
+    /// ML-DSA-65 keys are boxed because their in-memory representation is ~108KB,
+    /// which causes stack overflows on Windows when stored inline in the enum.
     MlDsa65 {
         private_key_encoded: [u8; 32],
-        private_key: ml_dsa::SigningKey<MlDsa65>,
-        public_key: ml_dsa::VerifyingKey<MlDsa65>,
+        private_key: Box<ml_dsa::SigningKey<MlDsa65>>,
+        public_key: Box<ml_dsa::VerifyingKey<MlDsa65>>,
     },
 }
 
@@ -88,8 +90,8 @@ impl IdentityKeyPair {
                 let public_key = keypair.verifying_key();
                 IdentityKeyPair::MlDsa65 {
                     private_key_encoded: seed,
-                    private_key: private_key.clone(),
-                    public_key: public_key.clone(),
+                    private_key: Box::new(private_key.clone()),
+                    public_key: Box::new(public_key.clone()),
                 }
             }
         }
@@ -218,8 +220,8 @@ impl IdentityKeyPair {
 
                 Ok(IdentityKeyPair::MlDsa65 {
                     private_key_encoded: seed,
-                    private_key: private_key.clone(),
-                    public_key: public_key.clone(),
+                    private_key: Box::new(private_key.clone()),
+                    public_key: Box::new(public_key.clone()),
                 })
             }
             _ => Err(ProxyError::InvalidMessage(
