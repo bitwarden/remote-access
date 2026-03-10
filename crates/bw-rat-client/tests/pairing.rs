@@ -246,7 +246,7 @@ impl ProxyClient for MockProxyClient {
         let code = self
             .rendezvous_code
             .clone()
-            .unwrap_or_else(|| RendevouzCode::from_string("TEST1234".to_string()));
+            .unwrap_or_else(|| RendevouzCode::from_string("TEST12345".to_string()));
         self.incoming_tx
             .send(IncomingMessage::RendevouzInfo(code))
             .map_err(|_| bw_rat_client::RemoteClientError::ChannelClosed)?;
@@ -510,7 +510,7 @@ async fn test_fingerprint_pairing() {
                 create_mock_proxy_pair(user_fingerprint, remote_fingerprint);
 
             // Set up rendezvous code
-            let rendezvous_code = RendevouzCode::from_string("ABCD1234".to_string());
+            let rendezvous_code = RendevouzCode::from_string("ABCDEF123".to_string());
             user_proxy.set_rendezvous_code(rendezvous_code.clone());
             remote_proxy.set_peer_fingerprint(user_fingerprint);
 
@@ -665,7 +665,7 @@ async fn test_fingerprint_pairing_both_sides_verify() {
                 create_mock_proxy_pair(user_fingerprint, remote_fingerprint);
 
             // Set up rendezvous code
-            let rendezvous_code = RendevouzCode::from_string("XYZW5678".to_string());
+            let rendezvous_code = RendevouzCode::from_string("XYZW56789".to_string());
             user_proxy.set_rendezvous_code(rendezvous_code.clone());
             remote_proxy.set_peer_fingerprint(user_fingerprint);
 

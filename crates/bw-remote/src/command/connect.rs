@@ -136,7 +136,7 @@ fn parse_token(token: &str) -> Result<TokenType> {
 
         Ok(TokenType::Psk { psk, fingerprint })
     } else {
-        // Rendezvous code (6 chars)
+        // Rendezvous code (9 chars)
         validate_rendezvous_code(token)?;
         Ok(TokenType::Rendezvous(token.to_string()))
     }
@@ -770,8 +770,8 @@ fn validate_rendezvous_code(code: &str) -> Result<()> {
     // Remove optional hyphen for validation
     let code_normalized = code.replace('-', "");
 
-    if code_normalized.len() != 6 {
-        bail!("Rendezvous code must be 6 characters (e.g., ABCD12 or ABCD-12)");
+    if code_normalized.len() != 9 {
+        bail!("Rendezvous code must be 9 characters (e.g., ABCDEF123 or ABC-DEF-123)");
     }
 
     if !code_normalized.chars().all(|c| c.is_ascii_alphanumeric()) {
@@ -937,9 +937,9 @@ mod tests {
 
     #[test]
     fn resolve_mode_rendezvous_token() {
-        let mode = resolve_connection_mode(Some("ABC123"), None, &[]).expect("should succeed");
+        let mode = resolve_connection_mode(Some("ABC123DEF"), None, &[]).expect("should succeed");
         assert!(
-            matches!(mode, ConnectionMode::New { rendezvous_code } if rendezvous_code == "ABC123")
+            matches!(mode, ConnectionMode::New { rendezvous_code } if rendezvous_code == "ABC123DEF")
         );
     }
 
@@ -961,9 +961,9 @@ mod tests {
     fn resolve_mode_token_takes_priority_over_single_cached() {
         let sessions = vec![session(0xcc)];
         let mode =
-            resolve_connection_mode(Some("XYZ789"), None, &sessions).expect("should succeed");
+            resolve_connection_mode(Some("XYZ789ABC"), None, &sessions).expect("should succeed");
         assert!(
-            matches!(mode, ConnectionMode::New { rendezvous_code } if rendezvous_code == "XYZ789")
+            matches!(mode, ConnectionMode::New { rendezvous_code } if rendezvous_code == "XYZ789ABC")
         );
     }
 
@@ -971,7 +971,7 @@ mod tests {
     fn resolve_mode_session_and_token_both_provided_errors() {
         let sessions = vec![session(0xaa), session(0xbb)];
         let prefix = &hex::encode([0xaa; 32])[..8];
-        let result = resolve_connection_mode(Some("ABC123"), Some(prefix), &sessions);
+        let result = resolve_connection_mode(Some("ABC123DEF"), Some(prefix), &sessions);
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
         assert!(msg.contains("mutually exclusive"));
@@ -1043,8 +1043,8 @@ mod tests {
 
     #[test]
     fn parse_token_rendezvous_code() {
-        let result = parse_token("ABC123").expect("should parse");
-        assert!(matches!(result, TokenType::Rendezvous(code) if code == "ABC123"));
+        let result = parse_token("ABC123DEF").expect("should parse");
+        assert!(matches!(result, TokenType::Rendezvous(code) if code == "ABC123DEF"));
     }
 
     #[test]
@@ -1067,12 +1067,12 @@ mod tests {
 
     #[test]
     fn rendezvous_valid_plain() {
-        assert!(validate_rendezvous_code("ABCD12").is_ok());
+        assert!(validate_rendezvous_code("ABCDEF123").is_ok());
     }
 
     #[test]
-    fn rendezvous_valid_with_hyphen() {
-        assert!(validate_rendezvous_code("ABC-D12").is_ok());
+    fn rendezvous_valid_with_hyphens() {
+        assert!(validate_rendezvous_code("ABC-DEF-123").is_ok());
     }
 
     #[test]
@@ -1088,12 +1088,12 @@ mod tests {
         let result = validate_rendezvous_code("AB");
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
-        assert!(msg.contains("6 characters"));
+        assert!(msg.contains("9 characters"));
     }
 
     #[test]
     fn rendezvous_non_alphanumeric_errors() {
-        let result = validate_rendezvous_code("ABC!@#");
+        let result = validate_rendezvous_code("ABCDEF!@#");
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
         assert!(msg.contains("letters and numbers"));

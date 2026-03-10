@@ -35,7 +35,7 @@
 //! ).await?;
 //!
 //! // Pair with rendezvous code
-//! client.pair_with_handshake("ABCD1234").await?;
+//! client.pair_with_handshake("ABCDEF123").await?;
 //!
 //! let credential = client.request_credential("example.com").await?;
 //! ```

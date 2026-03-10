@@ -22,9 +22,9 @@
 //!    |                             |<---(3) Signed Response------|
 //!    |                             |                             |
 //!    |---(4) Request Rendezvous--->|                             |
-//!    |<--(5) Code: "ABC-DEF"-------|                             |
+//!    |<--(5) Code: "ABC-DEF-GHI"---|                             |
 //!    |                             |                             |
-//!    |                             |<---(6) Lookup "ABC-DEF"-----|
+//!    |                             |<---(6) Lookup "ABC-DEF-GHI"-|
 //!    |                             |----(7) Identity of A------->|
 //!    |                             |                             |
 //!    |                             |<---(8) Encrypted Message----|
@@ -42,7 +42,7 @@
 //!
 //! ### Phase 2: Rendezvous (Optional)
 //!
-//! Clients can request temporary rendezvous codes (e.g., "ABC-DEF") that are valid for 5 minutes.
+//! Clients can request temporary rendezvous codes (e.g., "ABC-DEF-GHI") that are valid for 5 minutes.
 //! Other clients can look up an identity by providing the code, enabling peer discovery without
 //! exchanging long-lived identifiers. Codes are single-use and expire automatically.
 //!

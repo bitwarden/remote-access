@@ -44,7 +44,7 @@ The proxy implements a three-phase protocol:
 
 ### 2. Rendezvous Phase (Optional)
 
-- Clients can request temporary rendezvous codes (e.g., "ABC-DEF")
+- Clients can request temporary rendezvous codes (e.g., "ABC-DEF-GHI")
 - Other clients can look up an identity by providing the code
 - Enables peer discovery without sharing long-lived identifiers
 

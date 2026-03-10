@@ -10,7 +10,7 @@
 //!
 //! ## Phase 2: Rendezvous (Optional)
 //! 3. Client → Server: [`Messages::GetRendevouz`] - Request a temporary code
-//! 4. Server → Client: [`Messages::RendevouzInfo`] - The generated code (e.g., "ABC-DEF")
+//! 4. Server → Client: [`Messages::RendevouzInfo`] - The generated code (e.g., "ABC-DEF-GHI")
 //! 5. Client → Server: [`Messages::GetIdentity`] - Look up identity by code
 //! 6. Server → Client: [`Messages::IdentityInfo`] - The identity associated with the code
 //!
@@ -46,7 +46,7 @@ pub enum Messages {
 
     /// Client requests a temporary rendezvous code.
     ///
-    /// The server will generate a unique code (format: "ABC-DEF") and send it back
+    /// The server will generate a unique code (format: "ABC-DEF-GHI") and send it back
     /// via [`Messages::RendevouzInfo`]. The code expires after 5 minutes.
     GetRendevouz,
 

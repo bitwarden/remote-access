@@ -327,13 +327,13 @@ impl ProxyProtocolClient {
 
     /// Request a rendezvous code from the server.
     ///
-    /// The server will generate a temporary code (format: "ABC-DEF") that maps to your
+    /// The server will generate a temporary code (format: "ABC-DEF-GHI") that maps to your
     /// identity. The code will be delivered via [`IncomingMessage::RendevouzInfo`] on the
     /// channel returned by [`connect()`](ProxyProtocolClient::connect).
     ///
     /// # Rendezvous Code Properties
     ///
-    /// - Format: 6 alphanumeric characters (e.g., "ABC-DEF")
+    /// - Format: 9 alphanumeric characters (e.g., "ABC-DEF-GHI")
     /// - Lifetime: 5 minutes
     /// - Single-use: deleted after lookup
     /// - Enables peer discovery without sharing long-lived identifiers
@@ -436,7 +436,7 @@ impl ProxyProtocolClient {
     /// let mut incoming = client.connect().await?;
     ///
     /// // Get code from user (e.g., QR scan, text input)
-    /// let code = RendevouzCode::from_string("ABC-DEF".to_string());
+    /// let code = RendevouzCode::from_string("ABC-DEF-GHI".to_string());
     ///
     /// // Look up the identity
     /// client.request_identity(code).await?;

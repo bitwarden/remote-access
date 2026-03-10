@@ -149,7 +149,7 @@ async fn test_rendezvous_request() {
             .expect("should receive rendezvous info");
         match msg {
             IncomingMessage::RendevouzInfo(code) => {
-                assert_eq!(code.as_str().len(), 7); // Format is "ABC-DEF" (7 chars)
+                assert_eq!(code.as_str().len(), 11); // Format is "ABC-DEF-GHI" (11 chars)
             }
             _ => panic!("Expected RendevouzInfo"),
         }

@@ -5,7 +5,7 @@
 //!
 //! # Overview
 //! 1. Client requests a rendezvous code from the server
-//! 2. Server generates a unique code (e.g., "ABC-DEF") and maps it to the client's identity
+//! 2. Server generates a unique code (e.g., "ABC-DEF-GHI") and maps it to the client's identity
 //! 3. Peer uses the code to look up the client's identity
 //! 4. Server returns the identity and deletes the code (single-use)
 
@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 /// A temporary rendezvous code for peer discovery.
 ///
-/// Rendezvous codes are short, human-readable identifiers (format: "ABC-DEF") that
+/// Rendezvous codes are short, human-readable identifiers (format: "ABC-DEF-GHI") that
 /// temporarily map to a client's identity on the proxy server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RendevouzCode {
@@ -30,13 +30,13 @@ impl Default for RendevouzCode {
 impl RendevouzCode {
     /// Generate a new random rendezvous code.
     ///
-    /// Creates a 6-character code from the alphanumeric alphabet (A-Z, 0-9),
-    /// formatted with a hyphen separator (e.g., "ABC-DEF").
+    /// Creates a 9-character code from the alphanumeric alphabet (A-Z, 0-9),
+    /// formatted with hyphen separators (e.g., "ABC-DEF-GHI").
     ///
     /// # Entropy
     ///
-    /// With an alphabet of 36 characters and 6 positions:
-    /// - Total possibilities: 36^6 = 2,176,782,336
+    /// With an alphabet of 36 characters and 9 positions:
+    /// - Total possibilities: 36^9 = 101,559,956,668,416
     /// - Given the 5-minute lifetime, brute-force is impractical
     ///
     /// # Examples
@@ -50,22 +50,23 @@ impl RendevouzCode {
     /// // Each call generates a different random code
     /// assert_ne!(code1.as_str(), code2.as_str());
     ///
-    /// // Format is always ABC-DEF style
-    /// assert_eq!(code1.as_str().len(), 7); // 6 chars + 1 hyphen
+    /// // Format is always ABC-DEF-GHI style
+    /// assert_eq!(code1.as_str().len(), 11); // 9 chars + 2 hyphens
     /// assert_eq!(code1.as_str().chars().nth(3), Some('-'));
+    /// assert_eq!(code1.as_str().chars().nth(7), Some('-'));
     /// ```
     pub fn new() -> Self {
         let mut rng = rand::thread_rng();
 
-        // The code has an alphabet of size 36. With 6 characters, that's
-        // 36^6 = 2,176,782,336 possible codes. The codes are short-lived, and the connections to the relay are rate-limited,
+        // The code has an alphabet of size 36. With 9 characters, that's
+        // 36^9 = 101,559,956,668,416 possible codes. The codes are short-lived, and the connections to the relay are rate-limited,
         // which is why this is considered sufficient.
-        let code = Alphanumeric.sample_string(&mut rng, 6);
+        let code = Alphanumeric.sample_string(&mut rng, 9);
         let code = code.to_ascii_uppercase();
         // SAFETY: Alphanumeric + to_ascii_uppercase produces only ASCII characters,
         // so indexing at character boundaries is safe.
         #[allow(clippy::string_slice)]
-        let code = format!("{}-{}", &code[..3], &code[3..]);
+        let code = format!("{}-{}-{}", &code[..3], &code[3..6], &code[6..]);
 
         RendevouzCode { code }
     }
@@ -85,8 +86,8 @@ impl RendevouzCode {
     /// ```
     /// use bw_proxy_protocol::RendevouzCode;
     ///
-    /// let code = RendevouzCode::from_string("ABC-DEF".to_string());
-    /// assert_eq!(code.as_str(), "ABC-DEF");
+    /// let code = RendevouzCode::from_string("ABC-DEF-GHI".to_string());
+    /// assert_eq!(code.as_str(), "ABC-DEF-GHI");
     /// ```
     pub fn from_string(code: String) -> Self {
         RendevouzCode { code }
@@ -94,7 +95,7 @@ impl RendevouzCode {
 
     /// Get the code string.
     ///
-    /// Returns the formatted code (e.g., "ABC-DEF") that can be displayed to
+    /// Returns the formatted code (e.g., "ABC-DEF-GHI") that can be displayed to
     /// users or sent to the server.
     ///
     /// # Examples

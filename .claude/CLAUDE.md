@@ -73,7 +73,7 @@ bw-remote (CLI binary)
 ## Three-Phase Proxy Protocol
 
 1. **Authentication**: Server sends `AuthChallenge` (32-byte nonce) → client replies with `AuthResponse` (COSE_Sign1 signature + COSE public key identity) → server verifies and registers connection by `IdentityFingerprint`. 5-second timeout.
-2. **Rendezvous** (optional, new connections only): Client sends `GetRendevouz` → server generates 6-char code (5-minute TTL, single-use) → discovering client sends `GetIdentity(code)` → server returns target's `IdentityInfo`.
+2. **Rendezvous** (optional, new connections only): Client sends `GetRendevouz` → server generates 9-char code (5-minute TTL, single-use) → discovering client sends `GetIdentity(code)` → server returns target's `IdentityInfo`.
 3. **Messaging**: `Send { source, destination, payload }` — server replaces source with authenticated fingerprint, delivers to all connections matching destination fingerprint (supports multiple concurrent connections per identity).
 
 Noise handshake and encrypted credential payloads are layered on top as `ProtocolMessage` variants sent through the messaging phase.
@@ -133,7 +133,7 @@ cargo test --workspace             # Run all tests
 
 1. Start proxy: `cargo run --bin bw-proxy`
 2. Start user-client: `cargo run --bin bw-remote -- listen`
-3. Copy the rendezvous code (6-char code, e.g. `ABC-DEF`) from step 2, connect: `cargo run --bin bw-remote -- connect --token <CODE>`
+3. Copy the rendezvous code (9-char code, e.g. `ABC-DEF-GHI`) from step 2, connect: `cargo run --bin bw-remote -- connect --token <CODE>`
 4. Type domains on the connect side to request credentials; approve on the listen side
 
 Use `--psk` on the listen side for PSK mode instead of rendezvous codes.
