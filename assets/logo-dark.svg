@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 66" fill="none">
+  <!-- Dark mode: Lighter blue on dark backgrounds -->
+
+  <!-- Terminal rounded square -->
+  <rect x="3" y="8" width="50" height="50" rx="12" fill="#5B9BF3"/>
+  <path d="M17 26L25 33L17 40" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="27" y1="40" x2="37" y2="40" stroke="white" stroke-width="2.2" stroke-linecap="round"/>
+
+  <!-- Evenly spaced dots -->
+  <circle cx="80" cy="33" r="2.5" fill="#5B9BF3" opacity="0.2"/>
+  <circle cx="100" cy="33" r="2.5" fill="#5B9BF3" opacity="0.3"/>
+  <circle cx="120" cy="33" r="2.5" fill="#5B9BF3" opacity="0.42"/>
+  <circle cx="140" cy="33" r="2.5" fill="#5B9BF3" opacity="0.56"/>
+  <circle cx="160" cy="33" r="2.5" fill="#5B9BF3" opacity="0.7"/>
+  <circle cx="180" cy="33" r="2.5" fill="#5B9BF3" opacity="0.85"/>
+
+  <!-- Shield rounded square -->
+  <rect x="207" y="8" width="50" height="50" rx="12" fill="#5B9BF3"/>
+  <path d="M232 17L218 24V40C218 50 232 55 232 55C232 55 246 50 246 40V24L232 17Z"
+        fill="white" opacity="0.13"/>
+  <rect x="226" y="32" width="12" height="9" rx="1.5" fill="white"/>
+  <path d="M229 32V29C229 27.3 230.3 26 232 26C233.7 26 235 27.3 235 29V32"
+        stroke="white" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+  <circle cx="232" cy="36.5" r="1" fill="#5B9BF3"/>
+</svg>
