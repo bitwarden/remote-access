@@ -12,7 +12,7 @@
 </p>
 
 
-# Bitwarden Remote Access
+# Remote Access
 
 Remote Access allows users to access credentials from their password manager on remote systems, without exposing their entire vault.
 It creates an end-to-end encrypted tunnel between the remote system and the password manager.
@@ -63,7 +63,7 @@ curl -fsSL "https://raw.githubusercontent.com/bitwarden/remote-access/instructio
 Once you've installed the CLI tool, it can connect to your Bitwarden vault using the Bitwarden CLI.
 
 ```shell
-bw-remote listen
+agentaccess listen
 ```
 
 The interactive CLI will create a pairing code that you can use to establish a connection on the remote side.
