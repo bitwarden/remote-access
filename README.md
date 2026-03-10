@@ -63,7 +63,7 @@ curl -fsSL "https://raw.githubusercontent.com/bitwarden/remote-access/instructio
 Once you've installed the CLI tool, it can connect to your Bitwarden vault using the Bitwarden CLI.
 
 ```shell
-agentaccess listen
+bw-remote listen
 ```
 
 The interactive CLI will create a pairing code that you can use to establish a connection on the remote side.
