@@ -1,3 +1,17 @@
+<p align="center">
+  <br>
+  <br>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/logo-light.svg">
+    <img alt="Bitwarden Remote Access" src="assets/logo-light.svg" height="60">
+  </picture>
+  <br>
+  <br>
+  <br>
+</p>
+
+
 # Bitwarden Remote Access
 
 Remote Access allows users to access credentials from their password manager on remote systems, without exposing their entire vault.
@@ -40,7 +54,7 @@ curl -fsSL "https://raw.githubusercontent.com/bitwarden/remote-access/instructio
 
 ## Examples
 
-* OpenClaw skill
+* [OpenClaw skill](skills/remote-access/SKILL.md)
 * Automated script requesting an API-token.
 * Github Action
 
