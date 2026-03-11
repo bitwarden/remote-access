@@ -5,7 +5,7 @@
 
 use std::borrow::Cow;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Constraint, Layout},
@@ -705,4 +705,17 @@ pub fn init_terminal() -> DefaultTerminal {
 /// Restore the terminal to its original state.
 pub fn restore_terminal() {
     ratatui::restore();
+}
+
+/// Block until the user presses any key.
+///
+/// Useful for pausing the TUI so the user can read an error message
+/// before the terminal is restored.
+pub async fn wait_for_keypress(reader: &mut crossterm::event::EventStream) {
+    use futures_util::StreamExt;
+    while let Some(Ok(crossterm::event::Event::Key(key))) = reader.next().await {
+        if key.kind == KeyEventKind::Press {
+            break;
+        }
+    }
 }

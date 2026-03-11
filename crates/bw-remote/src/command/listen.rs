@@ -21,7 +21,9 @@ use serde::Deserialize;
 use tokio::sync::mpsc;
 use tracing::info;
 
-use super::tui::{App, AppAction, Message, MessageKind, Mode, init_terminal, restore_terminal};
+use super::tui::{
+    App, AppAction, Message, MessageKind, Mode, init_terminal, restore_terminal, wait_for_keypress,
+};
 use super::util::{format_listen_event, format_relative_time};
 use crate::storage::{FileIdentityStorage, FileSessionCache};
 
@@ -685,11 +687,7 @@ async fn run_event_loop(
                         app.push_msg(MessageKind::Info, "Press any key to exit");
                         term.draw(|frame| app.draw(frame))
                             .map_err(|e| color_eyre::eyre::eyre!("TUI draw error: {}", e))?;
-                        while let Some(Ok(Event::Key(key))) = reader.next().await {
-                            if key.kind == KeyEventKind::Press {
-                                break;
-                            }
-                        }
+                        wait_for_keypress(reader).await;
                         break EventLoopExit::Quit;
                     }
                 }

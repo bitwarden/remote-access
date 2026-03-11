@@ -21,7 +21,9 @@ use super::output::{
     OutputFormat, emit_json_error, emit_json_success, emit_text_credential, exit_code_for_error,
     exit_code_name,
 };
-use super::tui::{App, AppAction, MessageKind, Mode, init_terminal, restore_terminal};
+use super::tui::{
+    App, AppAction, MessageKind, Mode, init_terminal, restore_terminal, wait_for_keypress,
+};
 use super::util::{format_connect_event, format_relative_time};
 use crate::storage::{FileIdentityStorage, FileSessionCache, MemorySessionStore};
 
@@ -360,11 +362,7 @@ async fn run_interactive_session(
                                                 app.push_msg(MessageKind::Error, format!("Connection failed: {e}"));
                                                 app.push_msg(MessageKind::Info, "Press any key to exit");
                                                 term.draw(|frame| app.draw(frame)).ok();
-                                                while let Some(Ok(Event::Key(key))) = reader.next().await {
-                                                    if key.kind == KeyEventKind::Press {
-                                                        break;
-                                                    }
-                                                }
+                                                wait_for_keypress(&mut reader).await;
                                                 break;
                                             }
                                         }
@@ -417,11 +415,7 @@ async fn run_interactive_session(
                                                     app.push_msg(MessageKind::Error, format!("Connection failed: {e}"));
                                                     app.push_msg(MessageKind::Info, "Press any key to exit");
                                                     term.draw(|frame| app.draw(frame)).ok();
-                                                    while let Some(Ok(Event::Key(key))) = reader.next().await {
-                                                        if key.kind == KeyEventKind::Press {
-                                                            break;
-                                                        }
-                                                    }
+                                                    wait_for_keypress(&mut reader).await;
                                                     break;
                                                 }
                                             }
@@ -595,11 +589,7 @@ async fn run_interactive_session(
                         app.push_msg(MessageKind::Info, "Press any key to exit");
                         term.draw(|frame| app.draw(frame))
                             .map_err(|e| color_eyre::eyre::eyre!("TUI draw error: {}", e))?;
-                        while let Some(Ok(Event::Key(key))) = reader.next().await {
-                            if key.kind == KeyEventKind::Press {
-                                break;
-                            }
-                        }
+                        wait_for_keypress(&mut reader).await;
                         break;
                     }
                 }
