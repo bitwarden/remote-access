@@ -97,7 +97,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Connect to proxy and request credentials (default)
+    /// Connect to proxy and request credentials
     Connect(ConnectArgs),
     /// Listen for remote client connections (user-client mode)
     Listen(ListenArgs),
