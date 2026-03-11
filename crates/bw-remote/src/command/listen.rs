@@ -629,6 +629,14 @@ async fn run_event_loop(
                                         );
                                         app.push_msg(MessageKind::Info, found_msg);
                                         app.commands = &[];
+                                        let device_label = sessions.iter()
+                                            .find(|(fp, _, _, _)| session_id.contains(&hex::encode(fp.0)))
+                                            .map(|(fp, name, _, _)| {
+                                                name.clone().unwrap_or_else(|| {
+                                                    hex::encode(fp.0).chars().take(12).collect::<String>()
+                                                })
+                                            })
+                                            .unwrap_or_else(|| "unknown device".to_string());
                                         phase = Phase::CredentialApproval {
                                             domain: domain.clone(),
                                             request_id,
@@ -636,8 +644,8 @@ async fn run_event_loop(
                                             credential,
                                         };
                                         app.set_mode(Mode::Confirm {
-                                            title: format!("Send credential for {domain}?"),
-                                            description: Line::from("Approve sending the credential to the remote device"),
+                                            title: format!("Send credential for {domain} to {device_label}?"),
+                                            description: Line::from(""),
                                         });
                                         app.footer = Line::from(
                                             Span::styled(
