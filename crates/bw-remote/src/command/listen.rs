@@ -275,18 +275,11 @@ fn check_bw_status(session: Option<&str>) -> BwStatus {
     }
 }
 
-/// Apply vault status information to the TUI header and log a warning when
-/// the vault is not unlocked.
-fn apply_bw_status(app: &mut App, status: &BwStatus) {
-    app.vault_status = Some(status.status_spans.clone());
-    if let Some(ref email) = status.user_email {
-        app.account_name = Some(email.clone());
-    }
-    if !status.is_unlocked {
-        app.push_msg(
-            MessageKind::Warning,
-            "Bitwarden vault is not unlocked — credential lookups will fail. Use /bw-unlock or /bw-session <key>",
-        );
+/// Apply vault status information to the TUI header.
+fn apply_bw_status(app: &mut App, status: BwStatus) {
+    app.vault_status = Some(status.status_spans);
+    if let Some(email) = status.user_email {
+        app.account_name = Some(email);
     }
 }
 
@@ -438,7 +431,7 @@ async fn run_event_loop(
                                     } else {
                                         let status = check_bw_status(Some(&key));
                                         let unlocked = status.is_unlocked;
-                                        apply_bw_status(app, &status);
+                                        apply_bw_status(app, status);
                                         if unlocked {
                                             *bw_session = Some(key);
                                             app.push_msg(MessageKind::Success, "Session key accepted — vault unlocked");
@@ -654,7 +647,13 @@ async fn run_event_loop(
                                         );
                                     }
                                     None => {
-                                        if bw_session.is_none() && !check_bw_status(None).is_unlocked {
+                                        let is_unlocked = bw_session.is_some()
+                                            || tokio::task::spawn_blocking(|| {
+                                                check_bw_status(None).is_unlocked
+                                            })
+                                            .await
+                                            .unwrap_or(false);
+                                        if !is_unlocked {
                                             app.push_msg(MessageKind::Warning, format!("Vault is locked — cannot look up credential for {domain}"));
                                         } else {
                                             app.push_msg(MessageKind::Error, format!("No credential found in vault for {domain}"));
@@ -743,7 +742,14 @@ async fn run_user_client_session(
             let mut app = App::new();
             app.client_label = "User client";
             let mut bw_session: Option<String> = None;
-            apply_bw_status(&mut app, &check_bw_status(None));
+            let initial_status = check_bw_status(None);
+            if !initial_status.is_unlocked {
+                app.push_msg(
+                    MessageKind::Warning,
+                    "Bitwarden vault is not unlocked — credential lookups will fail. Use /bw-unlock or /bw-session <key>",
+                );
+            }
+            apply_bw_status(&mut app, initial_status);
             let mut term = init_terminal();
             let mut reader = EventStream::new();
 
