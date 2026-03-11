@@ -40,10 +40,7 @@ impl SessionStore for MemorySessionStore {
         self.sessions.contains_key(fingerprint)
     }
 
-    fn cache_session(
-        &mut self,
-        fingerprint: IdentityFingerprint,
-    ) -> Result<(), RemoteClientError> {
+    fn cache_session(&mut self, fingerprint: IdentityFingerprint) -> Result<(), RemoteClientError> {
         let now = now_seconds();
         self.sessions
             .entry(fingerprint)
@@ -74,7 +71,14 @@ impl SessionStore for MemorySessionStore {
     fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64, u64)> {
         self.sessions
             .values()
-            .map(|s| (s.fingerprint, s.name.clone(), s.cached_at, s.last_connected_at))
+            .map(|s| {
+                (
+                    s.fingerprint,
+                    s.name.clone(),
+                    s.cached_at,
+                    s.last_connected_at,
+                )
+            })
             .collect()
     }
 

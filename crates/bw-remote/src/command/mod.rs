@@ -3,8 +3,8 @@
 //! This module organizes all CLI commands into separate submodules,
 //! following the pattern used in the main Bitwarden CLI.
 
-mod connections;
 mod connect;
+mod connections;
 mod listen;
 mod output;
 pub(crate) mod tui;
@@ -15,8 +15,8 @@ use color_eyre::eyre::Result;
 
 use output::OutputFormat;
 
-pub use connections::ConnectionsArgs;
 pub use connect::ConnectArgs;
+pub use connections::ConnectionsArgs;
 pub use listen::ListenArgs;
 
 const DEFAULT_PROXY_URL: &str = "wss://rat1.lesspassword.dev";
