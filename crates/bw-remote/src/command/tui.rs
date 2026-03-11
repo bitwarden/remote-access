@@ -29,6 +29,8 @@ pub enum MessageKind {
     Error,
     /// Prompt / request for user attention.
     Prompt,
+    /// Warning that something may not work as expected.
+    Warning,
     /// Informational text.
     Info,
     /// Animated listening indicator (dot pulses).
@@ -100,6 +102,13 @@ impl Message {
                 Style::default()
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD),
+            ),
+            MessageKind::Warning => (
+                "⚠ ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Yellow),
             ),
             MessageKind::Info => (
                 "  ",
