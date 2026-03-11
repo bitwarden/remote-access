@@ -1,8 +1,8 @@
-//! Cache management commands
+//! Connection management commands
 //!
-//! Commands for managing the session cache and identity keys:
-//! - `cache list`: List cached sessions and identity fingerprints
-//! - `cache clear [sessions|all]`: Clear cached sessions and/or identity keys
+//! Commands for managing connections and identity keys:
+//! - `connections list`: List cached sessions and identity fingerprints
+//! - `connections clear [sessions|all]`: Clear cached sessions and/or identity keys
 
 use bw_rat_client::SessionStore;
 use clap::{Args, Subcommand, ValueEnum};
@@ -30,11 +30,11 @@ pub enum ClearScope {
     All,
 }
 
-/// Manage the session cache
+/// Manage connections
 #[derive(Args)]
-pub struct CacheArgs {
+pub struct ConnectionsArgs {
     #[command(subcommand)]
-    command: CacheCommands,
+    command: ConnectionsCommands,
 
     /// Limit to a specific client type (omit for both)
     #[arg(long, global = true)]
@@ -42,7 +42,7 @@ pub struct CacheArgs {
 }
 
 #[derive(Subcommand)]
-enum CacheCommands {
+enum ConnectionsCommands {
     /// Clear cached sessions and/or identity keys
     Clear {
         /// What to clear: "sessions" (keep identity key) or "all" (sessions + identity key)
@@ -53,11 +53,11 @@ enum CacheCommands {
     List,
 }
 
-impl CacheArgs {
+impl ConnectionsArgs {
     pub fn run(self) -> Result<()> {
         match self.command {
-            CacheCommands::Clear { scope } => clear_cache(self.client_type, scope),
-            CacheCommands::List => list_cache(self.client_type),
+            ConnectionsCommands::Clear { scope } => clear_cache(self.client_type, scope),
+            ConnectionsCommands::List => list_cache(self.client_type),
         }
     }
 }

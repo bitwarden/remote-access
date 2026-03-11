@@ -3,8 +3,8 @@
 //! This module organizes all CLI commands into separate submodules,
 //! following the pattern used in the main Bitwarden CLI.
 
-mod cache;
 mod connect;
+mod connections;
 mod listen;
 mod output;
 pub(crate) mod tui;
@@ -16,8 +16,8 @@ use color_eyre::eyre::Result;
 
 use output::OutputFormat;
 
-pub use cache::CacheArgs;
 pub use connect::ConnectArgs;
+pub use connections::ConnectionsArgs;
 pub use listen::ListenArgs;
 
 const DEFAULT_PROXY_URL: &str = "wss://rat1.lesspassword.dev";
@@ -52,7 +52,7 @@ const STYLES: Styles = Styles::styled()
 AUTOMATION / AGENT / LLM USE:
   For non-interactive (single-shot) credential retrieval:
 
-    1. List cached sessions:  bw-remote cache list
+    1. List cached sessions:  bw-remote connections list
     2. Request a credential:  bw-remote --domain <DOMAIN> --session <HEX> --output json
 
   --session accepts a full 64-char hex fingerprint or any unique prefix from cache list.
@@ -74,9 +74,9 @@ pub struct Cli {
     #[arg(long)]
     pub session: Option<String>,
 
-    /// Disable session caching
+    /// Don't save this connection for future use
     #[arg(long)]
-    pub no_cache: bool,
+    pub ephemeral_connection: bool,
 
     /// Require fingerprint verification on the connect side
     #[arg(long)]
@@ -101,14 +101,14 @@ pub enum Commands {
     Connect(ConnectArgs),
     /// Listen for remote client connections (user-client mode)
     Listen(ListenArgs),
-    /// Manage the session cache
-    Cache(CacheArgs),
+    /// Manage connections
+    Connections(ConnectionsArgs),
 }
 
 /// Process the parsed command and execute the appropriate handler
 pub async fn process_command(cli: Cli) -> Result<()> {
     match cli.command {
-        Some(Commands::Cache(args)) => args.run(),
+        Some(Commands::Connections(args)) => args.run(),
         Some(Commands::Connect(args)) => args.run().await,
         Some(Commands::Listen(args)) => args.run().await,
         None if cli.domain.is_some() || cli.token.is_some() || cli.session.is_some() => {
@@ -117,7 +117,7 @@ pub async fn process_command(cli: Cli) -> Result<()> {
                 proxy_url: cli.proxy_url,
                 token: cli.token,
                 session: cli.session,
-                no_cache: cli.no_cache,
+                ephemeral_connection: cli.ephemeral_connection,
                 verify_fingerprint: cli.verify_fingerprint,
                 domain: cli.domain,
                 output: cli.output,
