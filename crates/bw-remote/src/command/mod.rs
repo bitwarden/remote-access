@@ -46,7 +46,7 @@ const STYLES: Styles = Styles::styled()
 /// Bitwarden Remote Client CLI
 #[derive(Parser)]
 #[command(name = "bw-remote")]
-#[command(author, version, about = "Connect to a user-client through a proxy to request credentials over a secure channel", long_about = None)]
+#[command(author, version, about = "Retrieve credentials from your password manager over a secure channel", long_about = None)]
 #[command(styles = STYLES)]
 #[command(after_help = "\
 AUTOMATION / AGENT / LLM USE:
