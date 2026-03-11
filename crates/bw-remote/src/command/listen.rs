@@ -506,12 +506,12 @@ async fn run_event_loop(
                                         // No name pre-set — prompt user for one
                                         app.push_msg(MessageKind::Success, "Fingerprint approved");
                                         phase = Phase::NameInput;
-                                        app.input_title = " Name this device (Enter to skip) ";
+                                        app.input_title = " Name this connection (Enter to skip) ";
                                         app.set_mode(Mode::TextInput);
                                         app.commands = &[];
                                         app.footer = Line::from(vec![
                                             Span::styled(
-                                                " Type a friendly name for this device, or press Enter to skip",
+                                                " Type a friendly name for this connection, or press Enter to skip",
                                                 Style::default().fg(Color::Yellow),
                                             ),
                                         ]);
