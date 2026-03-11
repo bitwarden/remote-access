@@ -7,9 +7,49 @@
 use bw_rat_client::SessionStore;
 use clap::{Args, Subcommand, ValueEnum};
 use color_eyre::eyre::Result;
+use crossterm::style::Stylize;
 
+use super::color_choice;
 use super::util::format_relative_time;
 use crate::storage::{FileIdentityStorage, FileSessionCache};
+
+/// Returns true when colored output is allowed.
+fn use_color() -> bool {
+    !matches!(color_choice(), clap::ColorChoice::Never)
+}
+
+/// Apply a style function only when color is enabled, otherwise return the plain string.
+fn styled(s: &str, style_fn: impl FnOnce(&str) -> crossterm::style::StyledContent<&str>) -> String {
+    if use_color() {
+        format!("{}", style_fn(s))
+    } else {
+        s.to_string()
+    }
+}
+
+/// Convenience: bold
+fn bold(s: &str) -> String {
+    styled(s, |s| s.bold())
+}
+
+/// Convenience: grey
+fn grey(s: &str) -> String {
+    styled(s, |s| s.grey())
+}
+
+/// Convenience: cyan
+fn cyan(s: &str) -> String {
+    styled(s, |s| s.cyan())
+}
+
+/// Convenience: cyan + bold
+fn cyan_bold(s: &str) -> String {
+    if use_color() {
+        format!("{}", s.cyan().bold())
+    } else {
+        s.to_string()
+    }
+}
 
 /// Which client type to operate on
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -70,13 +110,13 @@ struct CacheSide {
 }
 
 const REMOTE_SIDE: CacheSide = CacheSide {
-    label: "Remote",
+    label: "Remote Client",
     description: "connect",
     storage_name: "remote_client",
 };
 
 const USER_SIDE: CacheSide = CacheSide {
-    label: "User",
+    label: "User Client",
     description: "listen",
     storage_name: "user_client",
 };
@@ -121,34 +161,63 @@ fn list_cache(client_type: Option<ClientType>) -> Result<()> {
             println!();
         }
 
+        // Section header
+        println!(
+            "{}",
+            bold(&format!(
+                "── {} (bw-remote {}) ──",
+                side.label, side.description
+            ))
+        );
+
         // Load identity fingerprint (if key exists)
         let fingerprint = FileIdentityStorage::load_fingerprint(side.storage_name)?;
-        let fp_display = match &fingerprint {
-            Some(fp) => hex::encode(fp.0),
-            None => "no identity key".to_string(),
+        match &fingerprint {
+            Some(fp) => println!("  {}: {}", grey("Your identity"), cyan(&hex::encode(fp.0))),
+            None => println!(
+                "  {}: {}",
+                grey("Your identity"),
+                grey("(none — no keypair generated yet)")
+            ),
         };
-
-        println!(
-            "{} ({}) \u{2014} identity: {}",
-            side.label, side.description, fp_display
-        );
 
         // Load and display sessions
         let cache = FileSessionCache::load_or_create(side.storage_name)?;
         let mut sessions = cache.list_sessions();
 
         if sessions.is_empty() {
-            println!("  No cached sessions.");
+            println!("  {}: {}", grey("Connections"), grey("(none)"));
         } else {
             sessions.sort_by(|a, b| b.3.cmp(&a.3));
-            for (session_fp, name, _cached_at, last_connected) in &sessions {
+            println!(
+                "  {}: ({} peer{})",
+                grey("Connections"),
+                sessions.len(),
+                if sessions.len() == 1 { "" } else { "s" }
+            );
+            for (session_fp, name, cached_at, last_connected) in &sessions {
                 let hex = hex::encode(session_fp.0);
-                let relative = format_relative_time(*last_connected);
+                let short_fp: String = hex.chars().take(16).collect();
+                let paired_ago = format_relative_time(*cached_at);
+                let used_ago = format_relative_time(*last_connected);
                 if let Some(name) = name {
-                    println!("  {name}  {hex}  (last used: {relative})");
+                    println!(
+                        "    {} {} {}",
+                        grey("-"),
+                        cyan_bold(name),
+                        grey(&format!("{short_fp}..."))
+                    );
                 } else {
-                    println!("  {hex}  (last used: {relative})");
+                    println!("    {} {}", grey("-"), cyan(&format!("{short_fp}...")));
                 }
+                println!(
+                    "      {} {}  {}  {} {}",
+                    grey("Paired:"),
+                    paired_ago,
+                    grey("|"),
+                    grey("Last used:"),
+                    used_ago
+                );
             }
         }
     }
