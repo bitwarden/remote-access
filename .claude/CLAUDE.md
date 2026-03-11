@@ -11,7 +11,7 @@ Bitwarden Remote Access SDK — a Rust workspace implementing secure peer-to-pee
 ```bash
 cargo build                        # Build all crates (debug)
 cargo build --release              # Build all crates (release)
-cargo run --bin bw-remote          # Run the CLI application
+cargo run --bin aac                # Run the CLI application
 cargo run --bin bw-proxy           # Run the WebSocket proxy server
 ```
 
@@ -60,7 +60,7 @@ bw-remote (CLI binary)
 - **bw-noise-protocol** — Noise NNpsk2 handshake, `MultiDeviceTransport` for encrypted messaging, XChaCha20-Poly1305 transport encryption, session state persistence for resumption.
 - **bw-proxy** — WebSocket relay server (`bw-proxy` binary) and `ProxyProtocolClient` library. Three-phase protocol: authentication, rendezvous, messaging. Default listen address: `ws://localhost:8080`.
 - **bw-rat-client** — `RemoteClient` (untrusted device requesting credentials) and `UserClient` (trusted device serving credentials). Uses trait abstractions (`SessionStore`, `IdentityProvider`, `ProxyClient`) and async event/response channels.
-- **bw-remote** — CLI driver with interactive TUI (ratatui + crossterm) and non-interactive single-shot mode. Subcommands: `connect`, `listen`, `cache` (with `clear`/`list`), `list-devices`, `clear-keypairs`. Integrates with `bw` CLI for credential lookup via `bw get item`.
+- **bw-remote** (`aac` binary) — CLI driver with interactive TUI (ratatui + crossterm) and non-interactive single-shot mode. Subcommands: `connect`, `listen`, `cache` (with `clear`/`list`), `list-devices`, `clear-keypairs`. Integrates with `bw` CLI for credential lookup via `bw get item`.
 - **bw-error / bw-error-macro** — Error handling utilities ported from Bitwarden's `sdk-internal`.
 
 ## Key Design Patterns
@@ -91,7 +91,7 @@ Noise handshake and encrypted credential payloads are layered on top as `Protoco
 
 ## Single-Shot Non-Interactive Mode
 
-For agent/LLM integration: `bw-remote connect --domain example.com [--output json|text]`
+For agent/LLM integration: `aac connect --domain example.com [--output json|text]`
 
 - No TUI — status to stderr, credential output to stdout
 - If exactly one cached session exists, it is used automatically (no `--token` or `--session` needed)
@@ -132,8 +132,8 @@ cargo test --workspace             # Run all tests
 ## Demo Flow
 
 1. Start proxy: `cargo run --bin bw-proxy`
-2. Start user-client: `cargo run --bin bw-remote -- listen`
-3. Copy the rendezvous code (9-char code, e.g. `ABC-DEF-GHI`) from step 2, connect: `cargo run --bin bw-remote -- connect --token <CODE>`
+2. Start user-client: `cargo run --bin aac -- listen`
+3. Copy the rendezvous code (9-char code, e.g. `ABC-DEF-GHI`) from step 2, connect: `cargo run --bin aac -- connect --token <CODE>`
 4. Type domains on the connect side to request credentials; approve on the listen side
 
 Use `--psk` on the listen side for PSK mode instead of rendezvous codes.

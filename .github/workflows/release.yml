@@ -63,20 +63,20 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: Build bw-remote
+      - name: Build aac
         run: cargo build --release --target ${{ matrix.target }} -p bw-remote
 
       - name: Package (tar.gz)
         if: matrix.archive == 'tar.gz'
         shell: bash
         run: |
-          tar -czf "bw-remote-${{ matrix.name }}.tar.gz" -C "target/${{ matrix.target }}/release" bw-remote
+          tar -czf "aac-${{ matrix.name }}.tar.gz" -C "target/${{ matrix.target }}/release" aac
 
       - name: Package (zip)
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          Compress-Archive -Path "target\${{ matrix.target }}\release\bw-remote.exe" -DestinationPath "bw-remote-${{ matrix.name }}.zip"
+          Compress-Archive -Path "target\${{ matrix.target }}\release\aac.exe" -DestinationPath "aac-${{ matrix.name }}.zip"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

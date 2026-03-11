@@ -27,12 +27,12 @@ The proxy binds to `127.0.0.1:8080` by default. Set the `BIND_ADDR` environment 
 
 ### CLI
 
-Run `bw-remote` to use the demo CLI. This top-level driver command lets you explore the functionality of the SDK:
+Run `aac` to use the demo CLI. This top-level driver command lets you explore the functionality of the SDK:
 
 ```
 Connect to a user-client through a proxy to request credentials over a secure channel
 
-Usage: bw-remote [OPTIONS] [COMMAND]
+Usage: aac [OPTIONS] [COMMAND]
 
 Commands:
   cache    Manage the session cache
@@ -53,7 +53,7 @@ Options:
 ### Demo Flow
 
 1. Start the proxy server with `cargo run -p bw-proxy`
-2. Start the user-client side with `cargo run -p bw-remote -- listen`
-3. Enter the outputted PSK from step 2 into the `--pair-code` argument of `bw-remote connect` and type a client ID
-4. Now `bw-remote`, taking the role of the remote client, will let you type in domains to request credentials for, and you will approve them on the `listen` side from step 2
+2. Start the user-client side with `cargo run --bin aac -- listen`
+3. Enter the outputted PSK from step 2 into the `--pair-code` argument of `aac connect` and type a client ID
+4. Now `aac`, taking the role of the remote client, will let you type in domains to request credentials for, and you will approve them on the `listen` side from step 2
 5. Observe that the credential was sent to the remote side

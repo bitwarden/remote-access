@@ -47,15 +47,15 @@ const STYLES: Styles = Styles::styled()
 
 /// Bitwarden Remote Client CLI
 #[derive(Parser)]
-#[command(name = "bw-remote")]
+#[command(name = "aac")]
 #[command(author, version, about = "Retrieve credentials from your password manager over a secure channel", long_about = None)]
 #[command(styles = STYLES)]
 #[command(after_help = "\
 AUTOMATION / AGENT / LLM USE:
   For non-interactive (single-shot) credential retrieval:
 
-    1. List cached sessions:  bw-remote connections list
-    2. Request a credential:  bw-remote --domain <DOMAIN> --session <HEX> --output json
+    1. List cached sessions:  aac connections list
+    2. Request a credential:  aac --domain <DOMAIN> --session <HEX> --output json
 
   --session accepts a full 64-char hex fingerprint or any unique prefix from cache list.
   --output json returns structured JSON to stdout (status to stderr).

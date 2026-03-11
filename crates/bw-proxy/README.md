@@ -1,6 +1,6 @@
 # bw-proxy
 
-A WebSocket relay server for `bw-remote` that routes messages between authenticated clients without access to message contents.
+A WebSocket relay server for `aac` (bw-remote) that routes messages between authenticated clients without access to message contents.
 
 For the client library, see [`bw-proxy-client`](../bw-proxy-client/).
 For shared protocol types, see [`bw-proxy-protocol`](../bw-proxy-protocol/).

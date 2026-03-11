@@ -1,4 +1,4 @@
-//! bw-remote CLI
+//! aac CLI
 //!
 //! A CLI interface for connecting to a user-client through a proxy
 //! to request credentials over a secure Noise Protocol channel.
