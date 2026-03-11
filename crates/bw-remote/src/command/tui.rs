@@ -5,7 +5,7 @@
 
 use std::borrow::Cow;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Constraint, Layout},
@@ -29,6 +29,8 @@ pub enum MessageKind {
     Error,
     /// Prompt / request for user attention.
     Prompt,
+    /// Warning that something may not work as expected.
+    Warning,
     /// Informational text.
     Info,
     /// Animated listening indicator (dot pulses).
@@ -100,6 +102,13 @@ impl Message {
                 Style::default()
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD),
+            ),
+            MessageKind::Warning => (
+                "⚠ ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Yellow),
             ),
             MessageKind::Info => (
                 "  ",
@@ -705,4 +714,17 @@ pub fn init_terminal() -> DefaultTerminal {
 /// Restore the terminal to its original state.
 pub fn restore_terminal() {
     ratatui::restore();
+}
+
+/// Block until the user presses any key.
+///
+/// Useful for pausing the TUI so the user can read an error message
+/// before the terminal is restored.
+pub async fn wait_for_keypress(reader: &mut crossterm::event::EventStream) {
+    use futures_util::StreamExt;
+    while let Some(Ok(crossterm::event::Event::Key(key))) = reader.next().await {
+        if key.kind == KeyEventKind::Press {
+            break;
+        }
+    }
 }

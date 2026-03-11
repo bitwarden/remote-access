@@ -6,7 +6,7 @@ use bw_noise_protocol::{MultiDeviceTransport, PersistentTransportState};
 use bw_proxy_protocol::IdentityFingerprint;
 use bw_rat_client::{RemoteClientError, SessionStore};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::debug;
 
 /// Session record stored in cache
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,7 +99,7 @@ impl SessionStore for FileSessionCache {
     fn clear(&mut self) -> Result<(), RemoteClientError> {
         self.data.sessions.clear();
         self.save()?;
-        info!("Cleared all session cache entries");
+        debug!("Cleared all session cache entries");
         Ok(())
     }
 
@@ -225,10 +225,10 @@ impl FileSessionCache {
         let cache_path = Self::default_cache_path(cache_name)?;
 
         let data = if cache_path.exists() {
-            info!("Loading session cache from {:?}", cache_path);
+            debug!("Loading session cache from {:?}", cache_path);
             Self::load_from_file(&cache_path)?
         } else {
-            info!("Creating new session cache");
+            debug!("Creating new session cache");
             SessionCacheData {
                 sessions: Vec::new(),
             }

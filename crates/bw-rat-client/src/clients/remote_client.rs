@@ -13,7 +13,7 @@ use tokio::{
     sync::{Mutex, mpsc, oneshot},
     time::timeout,
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 use crate::traits::{IdentityProvider, SessionStore};
 use crate::{
@@ -66,7 +66,7 @@ impl RemoteClient {
     ) -> Result<Self, RemoteClientError> {
         let identity = identity_provider.identity().to_owned();
 
-        info!(
+        debug!(
             "Connecting to proxy with identity {:?}",
             identity.identity().fingerprint()
         );
@@ -87,7 +87,7 @@ impl RemoteClient {
             .await
             .ok();
 
-        info!("Connected to proxy successfully");
+        debug!("Connected to proxy successfully");
 
         Ok(Self {
             session_store,
@@ -362,7 +362,7 @@ impl RemoteClient {
             Self::message_loop(incoming_rx, event_tx, transport, pending_requests_clone).await;
         });
 
-        info!("Connection established successfully");
+        debug!("Connection established successfully");
         Ok(())
     }
 
@@ -384,7 +384,7 @@ impl RemoteClient {
         #[allow(clippy::string_slice)]
         let request_id = format!("req-{}-{}", now_millis(), &uuid_v4()[..8]);
 
-        info!("Requesting credential for domain: {}", domain);
+        debug!("Requesting credential for domain: {}", domain);
 
         // Create and encrypt request
         let request = CredentialRequestPayload {
@@ -432,7 +432,7 @@ impl RemoteClient {
         match timeout(DEFAULT_TIMEOUT, response_rx).await {
             Ok(Ok(Ok(credential))) => {
                 // Success - sender already removed by handler
-                info!("Received credential for domain: {}", domain);
+                debug!("Received credential for domain: {}", domain);
                 Ok(credential)
             }
             Ok(Ok(Err(e))) => {
@@ -471,7 +471,7 @@ impl RemoteClient {
         self.remote_fingerprint = None;
         self.incoming_rx = None;
         self.response_rx = None;
-        info!("Connection closed");
+        debug!("Connection closed");
     }
 
     /// Get the session store for management operations

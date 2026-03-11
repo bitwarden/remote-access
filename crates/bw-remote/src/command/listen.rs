@@ -21,7 +21,9 @@ use serde::Deserialize;
 use tokio::sync::mpsc;
 use tracing::info;
 
-use super::tui::{App, AppAction, Message, MessageKind, Mode, init_terminal, restore_terminal};
+use super::tui::{
+    App, AppAction, Message, MessageKind, Mode, init_terminal, restore_terminal, wait_for_keypress,
+};
 use super::util::{format_listen_event, format_relative_time};
 use crate::storage::{FileIdentityStorage, FileSessionCache};
 
@@ -44,8 +46,8 @@ pub struct ListenArgs {
 
 impl ListenArgs {
     /// Execute the listen command
-    pub async fn run(self) -> Result<()> {
-        run_user_client_session(self.proxy_url, self.psk).await
+    pub async fn run(self, log_rx: Option<super::tui_tracing::LogReceiver>) -> Result<()> {
+        run_user_client_session(self.proxy_url, self.psk, log_rx).await
     }
 }
 
@@ -373,8 +375,11 @@ async fn run_event_loop(
     response_tx: mpsc::Sender<UserClientResponse>,
     sessions: &[SessionInfo],
     pending_session_name: &Option<String>,
-    client_handle: tokio::task::JoinHandle<Result<(), bw_rat_client::RemoteClientError>>,
+    mut client_handle: Option<
+        tokio::task::JoinHandle<Result<(), bw_rat_client::RemoteClientError>>,
+    >,
     bw_session: &mut Option<String>,
+    log_rx: &mut Option<super::tui_tracing::LogReceiver>,
 ) -> Result<EventLoopExit> {
     let mut phase = Phase::Idle;
 
@@ -642,7 +647,17 @@ async fn run_event_loop(
                                         );
                                     }
                                     None => {
-                                        app.push_msg(MessageKind::Error, format!("No credential found in vault for {domain}"));
+                                        let is_unlocked = bw_session.is_some()
+                                            || tokio::task::spawn_blocking(|| {
+                                                check_bw_status(None).is_unlocked
+                                            })
+                                            .await
+                                            .unwrap_or(false);
+                                        if !is_unlocked {
+                                            app.push_msg(MessageKind::Warning, format!("Vault is locked — cannot look up credential for {domain}"));
+                                        } else {
+                                            app.push_msg(MessageKind::Error, format!("No credential found in vault for {domain}"));
+                                        }
                                         response_tx
                                             .send(UserClientResponse::RespondCredential {
                                                 request_id,
@@ -670,22 +685,50 @@ async fn run_event_loop(
                         }
                     }
                     None => {
-                        app.push_msg(MessageKind::Error, "Connection closed");
+                        let error_msg = match client_handle.take() {
+                            Some(handle) => match handle.await {
+                                Ok(Err(e)) => format!("Connection failed: {e}"),
+                                Err(e) if e.is_panic() => "Client task panicked".to_string(),
+                                _ => "Connection closed".to_string(),
+                            },
+                            None => "Connection closed".to_string(),
+                        };
+                        app.push_msg(MessageKind::Error, &error_msg);
+                        app.push_msg(MessageKind::Info, "Press any key to exit");
                         term.draw(|frame| app.draw(frame))
                             .map_err(|e| color_eyre::eyre::eyre!("TUI draw error: {}", e))?;
+                        wait_for_keypress(reader).await;
                         break EventLoopExit::Quit;
                     }
+                }
+            }
+
+            // Handle tracing log entries routed into the TUI
+            log_entry = async {
+                match log_rx.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if let Some(entry) = log_entry {
+                    super::tui_tracing::push_log_entry(app, entry);
                 }
             }
         }
     };
 
-    client_handle.abort();
+    if let Some(handle) = client_handle {
+        handle.abort();
+    }
     Ok(exit)
 }
 
 /// Run the user client interactive session
-async fn run_user_client_session(proxy_url: String, psk_mode: bool) -> Result<()> {
+async fn run_user_client_session(
+    proxy_url: String,
+    psk_mode: bool,
+    mut log_rx: Option<super::tui_tracing::LogReceiver>,
+) -> Result<()> {
     let local = tokio::task::LocalSet::new();
 
     local
@@ -699,7 +742,14 @@ async fn run_user_client_session(proxy_url: String, psk_mode: bool) -> Result<()
             let mut app = App::new();
             app.client_label = "User client";
             let mut bw_session: Option<String> = None;
-            apply_bw_status(&mut app, check_bw_status(None));
+            let initial_status = check_bw_status(None);
+            if !initial_status.is_unlocked {
+                app.push_msg(
+                    MessageKind::Warning,
+                    "Bitwarden vault is not unlocked — credential lookups will fail. Use /bw-unlock or /bw-session <key>",
+                );
+            }
+            apply_bw_status(&mut app, initial_status);
             let mut term = init_terminal();
             let mut reader = EventStream::new();
 
@@ -752,8 +802,9 @@ async fn run_user_client_session(proxy_url: String, psk_mode: bool) -> Result<()
                     response_tx,
                     &sessions,
                     &pending_session_name,
-                    client_handle,
+                    Some(client_handle),
                     &mut bw_session,
+                    &mut log_rx,
                 )
                 .await?
                 {

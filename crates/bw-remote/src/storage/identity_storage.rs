@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use bw_proxy_protocol::{IdentityFingerprint, IdentityKeyPair};
 use bw_rat_client::{IdentityProvider, RemoteClientError};
-use tracing::{debug, info};
+use tracing::debug;
 
 /// Manages persistent storage identity key pairs to a file
 pub struct FileIdentityStorage {
@@ -23,10 +23,10 @@ impl FileIdentityStorage {
         let storage_path = Self::default_storage_path(storage_name)?;
 
         let keypair = if storage_path.exists() {
-            info!("Loading existing identity from {:?}", storage_path);
+            debug!("Loading existing identity from {:?}", storage_path);
             Self::load_from_file(&storage_path)?
         } else {
-            info!("Generating new identity and saving to {:?}", storage_path);
+            debug!("Generating new identity and saving to {:?}", storage_path);
             let keypair = IdentityKeyPair::generate();
             Self::save_to_file(&storage_path, &keypair)?;
             keypair
@@ -56,7 +56,7 @@ impl FileIdentityStorage {
         let storage_path = Self::default_storage_path(storage_name)?;
         match fs::remove_file(&storage_path) {
             Ok(()) => {
-                info!("Deleted identity key file: {:?}", storage_path);
+                debug!("Deleted identity key file: {:?}", storage_path);
                 Ok(())
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),

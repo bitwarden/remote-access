@@ -21,7 +21,9 @@ use super::output::{
     OutputFormat, emit_json_error, emit_json_success, emit_text_credential, exit_code_for_error,
     exit_code_name,
 };
-use super::tui::{App, AppAction, MessageKind, Mode, init_terminal, restore_terminal};
+use super::tui::{
+    App, AppAction, MessageKind, Mode, init_terminal, restore_terminal, wait_for_keypress,
+};
 use super::util::{format_connect_event, format_relative_time};
 use crate::storage::{FileIdentityStorage, FileSessionCache, MemorySessionStore};
 
@@ -72,7 +74,7 @@ pub struct ConnectArgs {
 
 impl ConnectArgs {
     /// Execute the connect command
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(self, log_rx: Option<super::tui_tracing::LogReceiver>) -> Result<()> {
         if let Some(domain) = self.domain {
             run_single_shot(
                 self.proxy_url,
@@ -90,6 +92,7 @@ impl ConnectArgs {
                 self.session,
                 self.ephemeral_connection,
                 self.verify_fingerprint,
+                log_rx,
             )
             .await
         }
@@ -207,6 +210,7 @@ async fn run_interactive_session(
     session_fingerprint: Option<String>,
     ephemeral_connection: bool,
     verify_fingerprint: bool,
+    mut log_rx: Option<super::tui_tracing::LogReceiver>,
 ) -> Result<()> {
     // Create identity provider and session store first
     let identity_provider: Box<dyn IdentityProvider> =
@@ -250,7 +254,6 @@ async fn run_interactive_session(
         if ephemeral_connection {
             app.push_msg(MessageKind::Info, EPHEMERAL_MSG);
         }
-        app.push_msg(MessageKind::Status, "Connecting to proxy...");
         app.input_title = " Domain ";
         app.footer = connecting_footer();
 
@@ -337,7 +340,6 @@ async fn run_interactive_session(
                                         };
 
                                         // Start connecting
-                                        app.push_msg(MessageKind::Status, "Connecting to proxy...");
                                         app.set_mode(Mode::TextInput);
                                         app.input_title = " Domain ";
                                         app.footer = connecting_footer();
@@ -358,6 +360,9 @@ async fn run_interactive_session(
                                             }
                                             Err(e) => {
                                                 app.push_msg(MessageKind::Error, format!("Connection failed: {e}"));
+                                                app.push_msg(MessageKind::Info, "Press any key to exit");
+                                                term.draw(|frame| app.draw(frame)).ok();
+                                                wait_for_keypress(&mut reader).await;
                                                 break;
                                             }
                                         }
@@ -389,7 +394,6 @@ async fn run_interactive_session(
                                                 },
                                             };
 
-                                            app.push_msg(MessageKind::Status, "Connecting to proxy...");
                                             app.input_title = " Domain ";
                                             app.footer = connecting_footer();
 
@@ -409,6 +413,9 @@ async fn run_interactive_session(
                                                 }
                                                 Err(e) => {
                                                     app.push_msg(MessageKind::Error, format!("Connection failed: {e}"));
+                                                    app.push_msg(MessageKind::Info, "Press any key to exit");
+                                                    term.draw(|frame| app.draw(frame)).ok();
+                                                    wait_for_keypress(&mut reader).await;
                                                     break;
                                                 }
                                             }
@@ -579,10 +586,24 @@ async fn run_interactive_session(
                     }
                     None => {
                         app.push_msg(MessageKind::Error, "Connection closed by remote");
+                        app.push_msg(MessageKind::Info, "Press any key to exit");
                         term.draw(|frame| app.draw(frame))
                             .map_err(|e| color_eyre::eyre::eyre!("TUI draw error: {}", e))?;
+                        wait_for_keypress(&mut reader).await;
                         break;
                     }
+                }
+            }
+
+            // Handle tracing log entries routed into the TUI
+            log_entry = async {
+                match log_rx.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if let Some(entry) = log_entry {
+                    super::tui_tracing::push_log_entry(&mut app, entry);
                 }
             }
         }
@@ -593,8 +614,8 @@ async fn run_interactive_session(
     if let Some(mut c) = client {
         println!("Closing connection...");
         c.close().await;
+        println!("Connection closed. Goodbye!");
     }
-    println!("Connection closed. Goodbye!");
     Ok(())
 }
 

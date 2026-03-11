@@ -8,6 +8,7 @@ mod connections;
 mod listen;
 mod output;
 pub(crate) mod tui;
+pub(crate) mod tui_tracing;
 mod util;
 
 use clap::builder::styling::{AnsiColor, Effects, Styles};
@@ -15,6 +16,7 @@ use clap::{ColorChoice, CommandFactory, Parser, Subcommand};
 use color_eyre::eyre::Result;
 
 use output::OutputFormat;
+use tui_tracing::LogReceiver;
 
 pub use connect::ConnectArgs;
 pub use connections::ConnectionsArgs;
@@ -106,11 +108,11 @@ pub enum Commands {
 }
 
 /// Process the parsed command and execute the appropriate handler
-pub async fn process_command(cli: Cli) -> Result<()> {
+pub async fn process_command(cli: Cli, log_rx: Option<LogReceiver>) -> Result<()> {
     match cli.command {
         Some(Commands::Connections(args)) => args.run(),
-        Some(Commands::Connect(args)) => args.run().await,
-        Some(Commands::Listen(args)) => args.run().await,
+        Some(Commands::Connect(args)) => args.run(log_rx).await,
+        Some(Commands::Listen(args)) => args.run(log_rx).await,
         None if cli.domain.is_some() || cli.token.is_some() || cli.session.is_some() => {
             // Single-shot / shorthand connect with top-level args
             let args = ConnectArgs {
@@ -122,7 +124,7 @@ pub async fn process_command(cli: Cli) -> Result<()> {
                 domain: cli.domain,
                 output: cli.output,
             };
-            args.run().await
+            args.run(log_rx).await
         }
         None => {
             // No subcommand and no shorthand args — print help

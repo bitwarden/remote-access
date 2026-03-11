@@ -8,7 +8,7 @@ use bw_proxy_protocol::{IdentityFingerprint, RendevouzCode};
 use crate::proxy::ProxyClient;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 /// Holds the state of a handshake pending fingerprint verification
 struct PendingHandshakeVerification {
@@ -215,7 +215,7 @@ impl UserClient {
         event_tx: mpsc::Sender<UserClientEvent>,
         response_rx: mpsc::Receiver<UserClientResponse>,
     ) -> Result<(), RemoteClientError> {
-        info!("User client listening for cached sessions only (no new pairing code)");
+        debug!("User client listening for cached sessions only (no new pairing code)");
 
         // Emit Listening event
         event_tx.send(UserClientEvent::Listening {}).await.ok();
@@ -244,7 +244,7 @@ impl UserClient {
             .await
             .ok();
 
-        info!("User client listening in PSK mode");
+        debug!("User client listening in PSK mode");
 
         // Emit Listening event
         event_tx.send(UserClientEvent::Listening {}).await.ok();
@@ -290,7 +290,7 @@ impl UserClient {
             .await
             .ok();
 
-        info!("User client listening with rendezvous code: {}", code);
+        debug!("User client listening with rendezvous code: {}", code);
 
         // Emit Listening event
         event_tx.send(UserClientEvent::Listening {}).await.ok();
@@ -501,7 +501,7 @@ impl UserClient {
         event_tx: &mpsc::Sender<UserClientEvent>,
     ) -> Result<(), RemoteClientError> {
         if !self.transports.contains_key(&source) {
-            info!("Loading transport state for source: {:?}", source);
+            debug!("Loading transport state for source: {:?}", source);
             let session = self
                 .session_store
                 .load_transport_state(&source)?
