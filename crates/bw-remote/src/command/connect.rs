@@ -72,10 +72,7 @@ pub struct ConnectArgs {
 
 impl ConnectArgs {
     /// Execute the connect command
-    pub async fn run(
-        self,
-        log_rx: Option<tokio::sync::mpsc::UnboundedReceiver<super::tui_tracing::TuiLogEntry>>,
-    ) -> Result<()> {
+    pub async fn run(self, log_rx: Option<super::tui_tracing::LogReceiver>) -> Result<()> {
         if let Some(domain) = self.domain {
             run_single_shot(
                 self.proxy_url,
@@ -211,7 +208,7 @@ async fn run_interactive_session(
     session_fingerprint: Option<String>,
     ephemeral_connection: bool,
     verify_fingerprint: bool,
-    mut log_rx: Option<tokio::sync::mpsc::UnboundedReceiver<super::tui_tracing::TuiLogEntry>>,
+    mut log_rx: Option<super::tui_tracing::LogReceiver>,
 ) -> Result<()> {
     // Create identity provider and session store first
     let identity_provider: Box<dyn IdentityProvider> =
@@ -596,12 +593,7 @@ async fn run_interactive_session(
                 }
             } => {
                 if let Some(entry) = log_entry {
-                    let kind = match entry.level {
-                        tracing::Level::ERROR | tracing::Level::WARN => MessageKind::Error,
-                        _ => MessageKind::Info,
-                    };
-                    let short_target = entry.target.rsplit("::").next().unwrap_or(&entry.target);
-                    app.push_msg(kind, format!("[{short_target}] {}", entry.message));
+                    super::tui_tracing::push_log_entry(&mut app, entry);
                 }
             }
         }

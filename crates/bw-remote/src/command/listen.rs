@@ -44,10 +44,7 @@ pub struct ListenArgs {
 
 impl ListenArgs {
     /// Execute the listen command
-    pub async fn run(
-        self,
-        log_rx: Option<tokio::sync::mpsc::UnboundedReceiver<super::tui_tracing::TuiLogEntry>>,
-    ) -> Result<()> {
+    pub async fn run(self, log_rx: Option<super::tui_tracing::LogReceiver>) -> Result<()> {
         run_user_client_session(self.proxy_url, self.psk, log_rx).await
     }
 }
@@ -378,7 +375,7 @@ async fn run_event_loop(
     pending_session_name: &Option<String>,
     client_handle: tokio::task::JoinHandle<Result<(), bw_rat_client::RemoteClientError>>,
     bw_session: &mut Option<String>,
-    log_rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<super::tui_tracing::TuiLogEntry>>,
+    log_rx: &mut Option<super::tui_tracing::LogReceiver>,
 ) -> Result<EventLoopExit> {
     let mut phase = Phase::Idle;
 
@@ -690,12 +687,7 @@ async fn run_event_loop(
                 }
             } => {
                 if let Some(entry) = log_entry {
-                    let kind = match entry.level {
-                        tracing::Level::ERROR | tracing::Level::WARN => MessageKind::Error,
-                        _ => MessageKind::Info,
-                    };
-                    let short_target = entry.target.rsplit("::").next().unwrap_or(&entry.target);
-                    app.push_msg(kind, format!("[{short_target}] {}", entry.message));
+                    super::tui_tracing::push_log_entry(app, entry);
                 }
             }
         }
@@ -709,7 +701,7 @@ async fn run_event_loop(
 async fn run_user_client_session(
     proxy_url: String,
     psk_mode: bool,
-    mut log_rx: Option<tokio::sync::mpsc::UnboundedReceiver<super::tui_tracing::TuiLogEntry>>,
+    mut log_rx: Option<super::tui_tracing::LogReceiver>,
 ) -> Result<()> {
     let local = tokio::task::LocalSet::new();
 

@@ -14,10 +14,9 @@ mod util;
 use clap::builder::styling::{AnsiColor, Effects, Styles};
 use clap::{ColorChoice, CommandFactory, Parser, Subcommand};
 use color_eyre::eyre::Result;
-use tokio::sync::mpsc;
 
 use output::OutputFormat;
-use tui_tracing::TuiLogEntry;
+use tui_tracing::LogReceiver;
 
 pub use connect::ConnectArgs;
 pub use connections::ConnectionsArgs;
@@ -109,10 +108,7 @@ pub enum Commands {
 }
 
 /// Process the parsed command and execute the appropriate handler
-pub async fn process_command(
-    cli: Cli,
-    log_rx: Option<mpsc::UnboundedReceiver<TuiLogEntry>>,
-) -> Result<()> {
+pub async fn process_command(cli: Cli, log_rx: Option<LogReceiver>) -> Result<()> {
     match cli.command {
         Some(Commands::Connections(args)) => args.run(),
         Some(Commands::Connect(args)) => args.run(log_rx).await,
