@@ -23,7 +23,7 @@ use super::output::{
 };
 use super::tui::{App, AppAction, MessageKind, Mode, init_terminal, restore_terminal};
 use super::util::{format_connect_event, format_relative_time};
-use crate::storage::{FileIdentityStorage, FileSessionCache};
+use crate::storage::{FileIdentityStorage, FileSessionCache, MemorySessionStore};
 
 use super::DEFAULT_PROXY_URL;
 
@@ -95,6 +95,8 @@ impl ConnectArgs {
         }
     }
 }
+
+const EPHEMERAL_MSG: &str = "Ephemeral connection (won't be saved)";
 
 /// Token type parsed from user input
 enum TokenType {
@@ -246,7 +248,7 @@ async fn run_interactive_session(
     let mut phase = if let Some(mode) = cli_connection_mode {
         // CLI flags provided — go straight to connecting
         if ephemeral_connection {
-            app.push_msg(MessageKind::Info, "Ephemeral connection (won't be saved)");
+            app.push_msg(MessageKind::Info, EPHEMERAL_MSG);
         }
         app.push_msg(MessageKind::Status, "Connecting to proxy...");
         app.input_title = " Domain ";
@@ -561,7 +563,7 @@ async fn run_interactive_session(
                         if matches!(event, RemoteClientEvent::Ready { .. }) {
                             app.push_msg(MessageKind::Success, "Connection established");
                             if ephemeral_connection {
-                                app.push_msg(MessageKind::Info, "Ephemeral connection (won't be saved)");
+                                app.push_msg(MessageKind::Info, EPHEMERAL_MSG);
                             } else {
                                 app.push_msg(MessageKind::Info, "Connection will be saved (use --ephemeral-connection to disable)");
                             }
@@ -615,8 +617,7 @@ async fn run_single_shot(
         Box::new(FileIdentityStorage::load_or_generate("remote_client")?);
 
     let session_store: Box<dyn SessionStore> = if ephemeral_connection {
-        // Create a fresh, empty cache that won't be persisted
-        Box::new(FileSessionCache::load_or_create("remote_client")?)
+        Box::new(MemorySessionStore::new())
     } else {
         Box::new(FileSessionCache::load_or_create("remote_client")?)
     };
