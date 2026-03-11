@@ -7,12 +7,16 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+default = ["native-websocket"]
+native-websocket = ["bw-proxy-client/native-websocket"]
+
 [dependencies]
 async-trait = "0.1"
 base64 = { workspace = true }
 bw-error = { workspace = true }
 bw-noise-protocol = { workspace = true }
-bw-proxy-client = { workspace = true }
+bw-proxy-client = { workspace = true, default-features = false }
 bw-proxy-protocol = { workspace = true }
 dirs = { workspace = true }
 futures-util = { workspace = true }
@@ -21,7 +25,7 @@ rand = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
+tokio = { version = "1.36.0", default-features = false, features = ["sync", "macros"] }
 tracing = { workspace = true }
 
 [dev-dependencies]

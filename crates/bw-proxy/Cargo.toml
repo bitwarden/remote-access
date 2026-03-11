@@ -25,7 +25,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
-bw-proxy-client = { workspace = true }
+bw-proxy-client = { workspace = true, features = ["native-websocket"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [lints]

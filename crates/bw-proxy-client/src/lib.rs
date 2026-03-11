@@ -39,9 +39,11 @@
 //! ```
 
 mod config;
+#[cfg(feature = "native-websocket")]
 mod protocol_client;
 
 pub use config::{IncomingMessage, ProxyClientConfig};
+#[cfg(feature = "native-websocket")]
 pub use protocol_client::ProxyProtocolClient;
 
 // Re-export key types from bw-proxy-protocol for ergonomics
