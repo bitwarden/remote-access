@@ -372,6 +372,10 @@ impl UserClient {
                 // Only RemoteClient needs this
                 debug!("Received unexpected IdentityInfo message");
             }
+            IncomingMessage::RendezvousError(reason) => {
+                // Only RemoteClient needs this
+                debug!("Received unexpected RendezvousError: {}", reason);
+            }
         }
         Ok(())
     }

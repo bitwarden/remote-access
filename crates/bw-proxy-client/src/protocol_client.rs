@@ -704,6 +704,11 @@ impl ProxyProtocolClient {
                                 })
                                 .ok();
                         }
+                        Messages::RendezvousError(reason) => {
+                            incoming_tx
+                                .send(IncomingMessage::RendezvousError(reason))
+                                .ok();
+                        }
                         Messages::GetIdentity(_) => {
                             tracing::warn!("Received GetIdentity (client should not receive this)");
                         }

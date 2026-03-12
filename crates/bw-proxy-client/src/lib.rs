@@ -29,6 +29,9 @@
 //!             IncomingMessage::IdentityInfo { identity, .. } => {
 //!                 println!("Found peer: {:?}", identity.fingerprint());
 //!             }
+//!             IncomingMessage::RendezvousError(reason) => {
+//!                 eprintln!("Rendezvous failed: {}", reason);
+//!             }
 //!         }
 //!     }
 //! });

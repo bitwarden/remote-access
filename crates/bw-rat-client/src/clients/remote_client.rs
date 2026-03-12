@@ -500,18 +500,22 @@ impl RemoteClient {
         let timeout_duration = tokio::time::Duration::from_secs(10);
         match tokio::time::timeout(timeout_duration, async {
             while let Some(msg) = incoming_rx.recv().await {
-                if let IncomingMessage::IdentityInfo { fingerprint, .. } = msg {
-                    return Some(fingerprint);
+                match msg {
+                    IncomingMessage::IdentityInfo { fingerprint, .. } => {
+                        return Ok(fingerprint);
+                    }
+                    IncomingMessage::RendezvousError(reason) => {
+                        return Err(reason);
+                    }
+                    _ => {}
                 }
             }
-            None
+            Err("Connection closed while waiting for identity response".to_string())
         })
         .await
         {
-            Ok(Some(fingerprint)) => Ok(fingerprint),
-            Ok(None) => Err(RemoteClientError::RendevouzResolutionFailed(
-                "Connection closed while waiting for identity response".to_string(),
-            )),
+            Ok(Ok(fingerprint)) => Ok(fingerprint),
+            Ok(Err(reason)) => Err(RemoteClientError::RendevouzResolutionFailed(reason)),
             Err(_) => Err(RemoteClientError::RendevouzResolutionFailed(
                 "Timeout waiting for identity response. The rendezvous code may be invalid, expired, or the target client may be disconnected.".to_string(),
             )),
@@ -633,6 +637,9 @@ impl RemoteClient {
                 IncomingMessage::IdentityInfo { .. } => {
                     // Consumed during resolve_rendezvous(), but handle here for race conditions
                     debug!("Received IdentityInfo message");
+                }
+                IncomingMessage::RendezvousError(reason) => {
+                    debug!("Received RendezvousError: {}", reason);
                 }
             }
         }

@@ -75,6 +75,9 @@ pub struct ProxyClientConfig {
 ///         IncomingMessage::IdentityInfo { identity, .. } => {
 ///             println!("Found peer: {:?}", identity.fingerprint());
 ///         }
+///         IncomingMessage::RendezvousError(reason) => {
+///             eprintln!("Rendezvous failed: {}", reason);
+///         }
 ///     }
 /// }
 /// # Ok(())
@@ -102,6 +105,12 @@ pub enum IncomingMessage {
         /// The peer's full public identity
         identity: Identity,
     },
+
+    /// Server responded with an error for a rendezvous code lookup.
+    ///
+    /// Received in response to [`ProxyProtocolClient::request_identity()`](crate::ProxyProtocolClient::request_identity)
+    /// when the code is invalid, expired, already used, or the target has disconnected.
+    RendezvousError(String),
 
     /// Received a message from another client.
     ///

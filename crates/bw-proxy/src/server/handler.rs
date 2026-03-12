@@ -250,6 +250,12 @@ impl ConnectionHandler {
                         conn_id
                     );
                 }
+                Messages::RendezvousError(_) => {
+                    tracing::warn!(
+                        "Connection #{}: Received RendezvousError (server-only message)",
+                        conn_id
+                    );
+                }
                 Messages::GetIdentity(code) => {
                     // Lookup and validate rendezvous code
                     let target_fingerprint = {
@@ -329,6 +335,32 @@ impl ConnectionHandler {
                                 conn_id,
                                 code.as_str()
                             );
+                            // Send error back to requester
+                            let error_msg = Messages::RendezvousError(
+                                "Target client has disconnected".to_string(),
+                            );
+                            let error_response = serde_json::to_string(&error_msg)?;
+                            if let Some(requester_conns) = connections.get(&fingerprint) {
+                                for requester_conn in requester_conns.iter() {
+                                    let _ = requester_conn
+                                        .tx
+                                        .send(Message::Text(error_response.clone()));
+                                }
+                            }
+                        }
+                    } else {
+                        // Code was invalid, expired, or already used — send error back
+                        let error_msg = Messages::RendezvousError(
+                            "Invalid or expired rendezvous code".to_string(),
+                        );
+                        let error_response = serde_json::to_string(&error_msg)?;
+                        let connections = state.connections.read().await;
+                        if let Some(requester_conns) = connections.get(&fingerprint) {
+                            for requester_conn in requester_conns.iter() {
+                                let _ = requester_conn
+                                    .tx
+                                    .send(Message::Text(error_response.clone()));
+                            }
                         }
                     }
                 }

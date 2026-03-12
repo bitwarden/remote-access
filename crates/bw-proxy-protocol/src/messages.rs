@@ -73,6 +73,12 @@ pub enum Messages {
         identity: Identity,
     },
 
+    /// Server responds with an error when a rendezvous code lookup fails.
+    ///
+    /// Sent in response to [`Messages::GetIdentity`] when the code is invalid,
+    /// expired, already used, or the target client has disconnected.
+    RendezvousError(String),
+
     /// A message routed from one client to another through the proxy.
     ///
     /// When sent by clients, only contains destination and payload. The source is
