@@ -572,6 +572,10 @@ impl RemoteClient {
         .map_err(|_| RemoteClientError::Timeout("Waiting for handshake response".to_string()))??;
 
         // Decode and process response
+        debug!(
+            "Received handshake response ({} base64 chars)",
+            response.len()
+        );
         let response_bytes = STANDARD
             .decode(&response)
             .map_err(|e| RemoteClientError::Serialization(format!("Invalid base64: {e}")))?;

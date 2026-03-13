@@ -9,6 +9,7 @@ members = [
     "crates/bw-proxy-client",
     "crates/bw-proxy-protocol",
     "crates/bw-remote",
+    "examples/python",
 ]
 
 [workspace.package]
