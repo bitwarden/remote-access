@@ -67,7 +67,7 @@ bw-remote (CLI binary)
 
 - **Trait-based abstractions**: `SessionStore`, `IdentityProvider`, `ProxyClient` decouple protocol logic from storage/transport implementations
 - **Event-response model**: Clients communicate via `tokio::sync::mpsc` channels — clients emit events, callers send responses
-- **Connection modes**: `ConnectionMode::New` (rendezvous code), `ConnectionMode::NewPsk`, `ConnectionMode::Existing` (cached session)
+- **Connection modes**: `ConnectionMode::New` (rendezvous pairing token), `ConnectionMode::NewPsk`, `ConnectionMode::Existing` (cached session)
 - **Fingerprint verification**: 6-character hex handshake fingerprints (SHA256 of transport keys, first 3 bytes) for out-of-band verification between peers
 
 ## Three-Phase Proxy Protocol
@@ -133,7 +133,7 @@ cargo test --workspace             # Run all tests
 
 1. Start proxy: `cargo run --bin bw-proxy`
 2. Start user-client: `cargo run --bin aac -- listen`
-3. Copy the rendezvous code (9-char code, e.g. `ABC-DEF-GHI`) from step 2, connect: `cargo run --bin aac -- connect --token <CODE>`
+3. Copy the pairing token (9-char code, e.g. `ABC-DEF-GHI`) from step 2, connect: `cargo run --bin aac -- connect --token <CODE>`
 4. Type domains on the connect side to request credentials; approve on the listen side
 
-Use `--psk` on the listen side for PSK mode instead of rendezvous codes.
+Use `--psk` on the listen side for PSK mode instead of rendezvous pairing tokens.
