@@ -260,6 +260,21 @@ mod tests {
     }
 
     #[test]
+    fn build_env_vars_env_all_empty_credential() {
+        let cred = CredentialData {
+            username: None,
+            password: None,
+            totp: None,
+            uri: None,
+            notes: None,
+        };
+        let env_vars = build_env_vars(&cred, "example.com", true, &[]);
+
+        assert_eq!(env_vars.len(), 1);
+        assert_eq!(env_vars.get("AAC_DOMAIN").expect("domain"), "example.com");
+    }
+
+    #[test]
     fn is_valid_field_accepts_known_rejects_unknown() {
         assert!(is_valid_field("username"));
         assert!(is_valid_field("domain"));
