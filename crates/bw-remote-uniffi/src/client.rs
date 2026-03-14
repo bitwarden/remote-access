@@ -13,6 +13,12 @@ use crate::types::{RemoteCredentialData, SessionInfo};
 ///
 /// Wraps the full Rust crypto/protocol stack behind a synchronous FFI-safe API.
 /// Internally owns a Tokio runtime and blocks on async operations.
+///
+/// Fingerprint verification is not performed in headless mode — the returned
+/// handshake fingerprint from `connect()` can be verified out-of-band by callers.
+///
+/// Implements `Drop` to ensure the underlying connection is closed if the caller
+/// forgets to call `close()`.
 #[derive(uniffi::Object)]
 pub struct RemoteAccessClient {
     runtime: tokio::runtime::Runtime,
@@ -63,6 +69,12 @@ impl RemoteAccessClient {
         token: Option<String>,
         session: Option<String>,
     ) -> Result<Option<String>, RemoteAccessError> {
+        // Close any existing connection before creating a new one
+        // (avoids duplicate proxy registrations with the same identity)
+        if let Ok(mut inner) = self.inner.lock() {
+            *inner = None;
+        }
+
         let identity = FileIdentityStorage::load_or_generate(&self.identity_name)
             .map_err(RemoteAccessError::from)?;
 
@@ -156,10 +168,14 @@ impl RemoteAccessClient {
             }
         })?;
 
-        // Store the client
-        if let Ok(mut inner) = self.inner.lock() {
-            *inner = Some(client);
-        }
+        // Store the connected client
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| RemoteAccessError::SessionError {
+                message: "Failed to acquire client lock".to_string(),
+            })?;
+        *inner = Some(client);
 
         Ok(handshake_fingerprint)
     }
@@ -238,6 +254,12 @@ impl RemoteAccessClient {
             // Drop the client handle, which shuts down the event loop
             *inner = None;
         }
+    }
+}
+
+impl Drop for RemoteAccessClient {
+    fn drop(&mut self) {
+        self.close();
     }
 }
 
