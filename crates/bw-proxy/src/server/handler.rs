@@ -108,7 +108,8 @@ impl ConnectionHandler {
         tracing::info!("Connection #{}: Added to connection map", conn_id);
 
         let result =
-            Self::handle_authenticated_messages(&state, &mut ws_read, fingerprint, conn_id).await;
+            Self::handle_authenticated_messages(&state, &mut ws_read, fingerprint, conn_id, &tx)
+                .await;
 
         {
             let mut connections = state.connections.write().await;
@@ -133,16 +134,29 @@ impl ConnectionHandler {
         ws_read: &mut futures_util::stream::SplitStream<WebSocketStream<TcpStream>>,
         fingerprint: IdentityFingerprint,
         conn_id: u64,
+        tx: &mpsc::UnboundedSender<Message>,
     ) -> Result<(), ProxyError> {
-        while let Some(msg_result) = ws_read.next().await {
-            let msg = match msg_result {
-                Ok(Message::Text(text)) => text,
-                Ok(Message::Close(_)) => {
-                    tracing::info!("Connection #{}: Client closed connection", conn_id);
-                    return Ok(());
+        let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(45));
+        ping_interval.tick().await; // consume the immediate first tick
+
+        loop {
+            let msg = tokio::select! {
+                msg_result = ws_read.next() => {
+                    match msg_result {
+                        Some(Ok(Message::Text(text))) => text,
+                        Some(Ok(Message::Close(_))) => {
+                            tracing::info!("Connection #{}: Client closed connection", conn_id);
+                            return Ok(());
+                        }
+                        Some(Ok(_)) => continue,
+                        Some(Err(e)) => return Err(ws_err(e)),
+                        None => return Ok(()),
+                    }
                 }
-                Ok(_) => continue,
-                Err(e) => return Err(ws_err(e)),
+                _ = ping_interval.tick() => {
+                    let _ = tx.send(Message::Ping(vec![]));
+                    continue;
+                }
             };
 
             let parsed_msg: Messages = match serde_json::from_str(&msg) {
@@ -334,7 +348,5 @@ impl ConnectionHandler {
                 }
             }
         }
-
-        Ok(())
     }
 }

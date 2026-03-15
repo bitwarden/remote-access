@@ -84,8 +84,15 @@ pub enum UserClientEvent {
         /// The remote device's identity fingerprint
         fingerprint: IdentityFingerprint,
     },
-    /// Client disconnected
+    /// Client disconnected from proxy
     ClientDisconnected {},
+    /// Attempting to reconnect to proxy
+    Reconnecting {
+        /// Current reconnection attempt number
+        attempt: u32,
+    },
+    /// Successfully reconnected to proxy
+    Reconnected {},
     /// An error occurred
     Error {
         /// Error message
@@ -313,13 +320,31 @@ impl UserClient {
 
         loop {
             tokio::select! {
-                Some(msg) = incoming_rx.recv() => {
-                    if let Err(e) = self.handle_incoming(msg, &event_tx).await {
-                        warn!("Error handling incoming message: {}", e);
-                        event_tx.send(UserClientEvent::Error {
-                            message: e.to_string(),
-                            context: Some("handle_incoming".to_string()),
-                        }).await.ok();
+                msg = incoming_rx.recv() => {
+                    match msg {
+                        Some(msg) => {
+                            if let Err(e) = self.handle_incoming(msg, &event_tx).await {
+                                warn!("Error handling incoming message: {}", e);
+                                event_tx.send(UserClientEvent::Error {
+                                    message: e.to_string(),
+                                    context: Some("handle_incoming".to_string()),
+                                }).await.ok();
+                            }
+                        }
+                        None => {
+                            // Incoming channel closed — proxy connection lost
+                            event_tx.send(UserClientEvent::ClientDisconnected {}).await.ok();
+                            match self.attempt_reconnection(&event_tx).await {
+                                Ok(new_rx) => {
+                                    incoming_rx = new_rx;
+                                    event_tx.send(UserClientEvent::Reconnected {}).await.ok();
+                                }
+                                Err(e) => {
+                                    warn!("Reconnection failed permanently: {}", e);
+                                    return Err(e);
+                                }
+                            }
+                        }
                     }
                 }
                 Some(response) = response_rx.recv() => {
@@ -330,6 +355,61 @@ impl UserClient {
                             context: Some("handle_response".to_string()),
                         }).await.ok();
                     }
+                }
+            }
+        }
+    }
+
+    /// Attempt to reconnect to the proxy server with exponential backoff.
+    ///
+    /// Base delay: 2s, multiplier: 2x, max delay: 15 minutes, with jitter.
+    /// Retries indefinitely until successful.
+    async fn attempt_reconnection(
+        &mut self,
+        event_tx: &mpsc::Sender<UserClientEvent>,
+    ) -> Result<mpsc::UnboundedReceiver<IncomingMessage>, RemoteClientError> {
+        use rand::Rng;
+
+        let base_delay = std::time::Duration::from_secs(2);
+        let max_delay = std::time::Duration::from_secs(15 * 60);
+        let mut attempt: u32 = 0;
+
+        loop {
+            attempt = attempt.saturating_add(1);
+
+            let proxy_client = self
+                .proxy_client
+                .as_mut()
+                .ok_or(RemoteClientError::NotInitialized)?;
+
+            // Disconnect (ignore errors — connection may already be dead)
+            let _ = proxy_client.disconnect().await;
+
+            match proxy_client.connect().await {
+                Ok(new_rx) => {
+                    debug!("Reconnected to proxy on attempt {}", attempt);
+                    return Ok(new_rx);
+                }
+                Err(e) => {
+                    debug!("Reconnection attempt {} failed: {}", attempt, e);
+                    event_tx
+                        .send(UserClientEvent::Reconnecting { attempt })
+                        .await
+                        .ok();
+
+                    // Exponential backoff with jitter
+                    let exp_delay =
+                        base_delay.saturating_mul(2u32.saturating_pow(attempt.saturating_sub(1)));
+                    let delay = exp_delay.min(max_delay);
+                    let jitter_max = (delay.as_millis() as u64) / 4;
+                    let jitter = if jitter_max > 0 {
+                        rand::thread_rng().gen_range(0..=jitter_max)
+                    } else {
+                        0
+                    };
+                    let total_delay = delay + std::time::Duration::from_millis(jitter);
+
+                    tokio::time::sleep(total_delay).await;
                 }
             }
         }
@@ -613,14 +693,38 @@ impl UserClient {
 
         let msg_json = serde_json::to_string(&msg)?;
 
-        let proxy_client = self
-            .proxy_client
-            .as_ref()
-            .ok_or(RemoteClientError::NotInitialized)?;
+        // Try to send, reconnect once on connection failure
+        let send_result = {
+            let proxy_client = self
+                .proxy_client
+                .as_ref()
+                .ok_or(RemoteClientError::NotInitialized)?;
 
-        proxy_client
-            .send_to(fingerprint, msg_json.into_bytes())
-            .await?;
+            proxy_client
+                .send_to(fingerprint, msg_json.clone().into_bytes())
+                .await
+        };
+
+        if let Err(e) = send_result {
+            warn!("Send failed, attempting reconnection: {}", e);
+            event_tx
+                .send(UserClientEvent::ClientDisconnected {})
+                .await
+                .ok();
+            let new_rx = self.attempt_reconnection(event_tx).await?;
+            self.incoming_rx = Some(new_rx);
+            event_tx.send(UserClientEvent::Reconnected {}).await.ok();
+
+            // Retry once after reconnect
+            let proxy_client = self
+                .proxy_client
+                .as_ref()
+                .ok_or(RemoteClientError::NotInitialized)?;
+
+            proxy_client
+                .send_to(fingerprint, msg_json.into_bytes())
+                .await?;
+        }
 
         // Send event
         if approved {
