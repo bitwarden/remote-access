@@ -12,7 +12,7 @@ default = ["native-websocket"]
 native-websocket = ["bw-proxy-client/native-websocket"]
 
 [dependencies]
-async-trait = "0.1"
+async-trait = "=0.1.89"
 base64 = { workspace = true }
 bw-error = { workspace = true }
 bw-noise-protocol = { workspace = true }
@@ -25,7 +25,7 @@ rand = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { version = "1.36.0", default-features = false, features = ["sync", "macros"] }
+tokio = { version = "=1.36.0", default-features = false, features = ["sync", "macros"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
