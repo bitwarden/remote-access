@@ -723,6 +723,7 @@ impl UserClient {
                     domain: &domain,
                     remote_identity: &fingerprint,
                     request_id: &request_id,
+                    credential_id: credential_id.as_deref(),
                     fields,
                 })
                 .await;
@@ -740,6 +741,7 @@ impl UserClient {
                     domain: &domain,
                     remote_identity: &fingerprint,
                     request_id: &request_id,
+                    credential_id: credential_id.as_deref(),
                 })
                 .await;
 
