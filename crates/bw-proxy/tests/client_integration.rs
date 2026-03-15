@@ -2,6 +2,12 @@ use bw_proxy::server::ProxyServer;
 use bw_proxy_client::{IdentityKeyPair, IncomingMessage, ProxyClientConfig, ProxyProtocolClient};
 use std::net::SocketAddr;
 
+/// Small delay to allow the server to finish registering a connection after
+/// the client's `connect()` returns. The server doesn't send an auth
+/// confirmation, so there's a brief window where the client considers itself
+/// authenticated but the server hasn't inserted it into the connection map yet.
+const POST_CONNECT_DELAY: tokio::time::Duration = tokio::time::Duration::from_millis(50);
+
 async fn start_test_server() -> SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -54,6 +60,7 @@ async fn test_two_clients_messaging() {
 
     let mut incoming_a = client_a.connect().await.expect("client A should connect");
     let mut incoming_b = client_b.connect().await.expect("client B should connect");
+    tokio::time::sleep(POST_CONNECT_DELAY).await;
 
     let fingerprint_a = client_a.fingerprint();
     let fingerprint_b = client_b.fingerprint();
@@ -195,6 +202,7 @@ async fn test_multiple_messages() {
 
     let _incoming_a = client_a.connect().await.expect("client A should connect");
     let mut incoming_b = client_b.connect().await.expect("client B should connect");
+    tokio::time::sleep(POST_CONNECT_DELAY).await;
 
     let fingerprint_a = client_a.fingerprint();
     let fingerprint_b = client_b.fingerprint();
@@ -322,6 +330,7 @@ async fn test_messages_broadcast_to_all_same_identity_connections() {
         .connect()
         .await
         .expect("sender should connect");
+    tokio::time::sleep(POST_CONNECT_DELAY).await;
 
     let user_fingerprint = user_client_a.fingerprint();
 
@@ -428,6 +437,7 @@ async fn test_cleanup_when_one_connection_disconnects() {
         .connect()
         .await
         .expect("sender should connect");
+    tokio::time::sleep(POST_CONNECT_DELAY).await;
 
     let user_fingerprint = user_client_a.fingerprint();
 
