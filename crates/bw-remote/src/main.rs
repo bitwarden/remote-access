@@ -19,7 +19,7 @@ fn is_tui_mode(cli: &Cli) -> bool {
     match &cli.command {
         Some(Commands::Listen(_)) => true,
         Some(Commands::Connect(args)) => args.domain.is_none(),
-        Some(Commands::Connections(_)) => false,
+        Some(Commands::Connections(_)) | Some(Commands::Run(_)) => false,
         // Default (no subcommand) behaves like `connect`
         None => cli.domain.is_none(),
     }

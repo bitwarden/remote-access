@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("Message from {:?}: {:?}", source, payload);
                 }
                 IncomingMessage::RendevouzInfo(code) => {
-                    println!("Your rendezvous code: {}", code.as_str());
+                    println!("Your pairing token: {}", code.as_str());
                 }
                 IncomingMessage::IdentityInfo { identity, .. } => {
                     println!("Found peer: {:?}", identity.fingerprint());
@@ -49,7 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Request a rendezvous code for others to find you
+    // Request a pairing token for others to find you
     client.request_rendezvous().await?;
 
     Ok(())

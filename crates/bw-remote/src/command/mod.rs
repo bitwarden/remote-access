@@ -7,6 +7,7 @@ mod connect;
 mod connections;
 mod listen;
 mod output;
+mod run;
 pub(crate) mod tui;
 pub(crate) mod tui_tracing;
 mod util;
@@ -23,6 +24,7 @@ use tui_tracing::LogReceiver;
 pub use connect::ConnectArgs;
 pub use connections::ConnectionsArgs;
 pub use listen::ListenArgs;
+pub use run::RunArgs;
 
 const DEFAULT_PROXY_URL: &str = "wss://rat1.lesspassword.dev";
 
@@ -111,6 +113,8 @@ pub enum Commands {
     Listen(ListenArgs),
     /// Manage connections
     Connections(ConnectionsArgs),
+    /// Fetch a credential and run a command with it injected as env vars
+    Run(RunArgs),
 }
 
 /// Process the parsed command and execute the appropriate handler
@@ -119,6 +123,7 @@ pub async fn process_command(cli: Cli, log_rx: Option<LogReceiver>) -> Result<()
         Some(Commands::Connections(args)) => args.run(),
         Some(Commands::Connect(args)) => args.run(log_rx).await,
         Some(Commands::Listen(args)) => args.run(log_rx).await,
+        Some(Commands::Run(args)) => args.run().await,
         None if cli.domain.is_some() || cli.token.is_some() || cli.session.is_some() => {
             // Single-shot / shorthand connect with top-level args
             let args = ConnectArgs {

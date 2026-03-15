@@ -19,7 +19,6 @@ use tokio::sync::mpsc;
 
 use super::output::{
     OutputFormat, emit_json_error, emit_json_success, emit_text_credential, exit_code_for_error,
-    exit_code_name,
 };
 use super::tui::{
     App, AppAction, MessageKind, Mode, init_terminal, restore_terminal, wait_for_keypress,
@@ -624,16 +623,17 @@ async fn run_interactive_session(
 /// This is the agent/LLM-friendly code path. It never initializes ratatui,
 /// prints structured output to stdout, status to stderr, and exits with a
 /// well-defined exit code.
-async fn run_single_shot(
-    proxy_url: String,
-    token: Option<String>,
-    session_fingerprint: Option<String>,
+/// Connect to the proxy, fetch a single credential, and return it.
+///
+/// Shared by `run_single_shot` and the `run` subcommand. Returns the
+/// credential on success, or an error that the caller can format/handle.
+pub(super) async fn fetch_credential(
+    proxy_url: &str,
+    token: Option<&str>,
+    session_fingerprint: Option<&str>,
     ephemeral_connection: bool,
-    domain: String,
-    output: OutputFormat,
-) -> Result<()> {
-    use super::output::exit_code;
-
+    domain: &str,
+) -> Result<bw_rat_client::CredentialData> {
     let identity_provider: Box<dyn IdentityProvider> =
         Box::new(FileIdentityStorage::load_or_generate("remote_client")?);
 
@@ -643,74 +643,68 @@ async fn run_single_shot(
         Box::new(FileSessionCache::load_or_create("remote_client")?)
     };
 
-    // Determine connection mode from flags (no interactive prompts)
     let cached_sessions = session_store.list_sessions();
-    let mode = match resolve_connection_mode(
-        token.as_deref(),
-        session_fingerprint.as_deref(),
-        &cached_sessions,
-    ) {
-        Ok(m) => m,
-        Err(e) => {
-            let msg = format!("{e}");
-            match output {
-                OutputFormat::Json => emit_json_error(&msg, "general_error"),
-                OutputFormat::Text => eprintln!("Error: {msg}"),
-            }
-            std::process::exit(exit_code::GENERAL_ERROR);
-        }
-    };
+    let mode = resolve_connection_mode(token, session_fingerprint, &cached_sessions)?;
 
     eprintln!("Connecting to proxy...");
 
-    // Connect — never verify fingerprint in single-shot mode (no human present)
     let (mut event_rx, _response_tx, mut client) =
-        match start_connection(identity_provider, session_store, &proxy_url, &mode, false).await {
-            Ok(result) => result,
-            Err(e) => {
-                let msg = format!("{e}");
-                match output {
-                    OutputFormat::Json => {
-                        emit_json_error(&msg, exit_code_name(exit_code::CONNECTION_FAILED))
-                    }
-                    OutputFormat::Text => eprintln!("Error: {msg}"),
-                }
-                std::process::exit(exit_code::CONNECTION_FAILED);
-            }
-        };
+        start_connection(identity_provider, session_store, proxy_url, &mode, false).await?;
 
     // Drain events in background (prevents channel backpressure)
-    tokio::spawn(async move {
-        while event_rx.recv().await.is_some() {
-            // Events are silently consumed — the single-shot path
-            // only cares about the credential response.
-        }
-    });
+    tokio::spawn(async move { while event_rx.recv().await.is_some() {} });
 
-    // Wait for the connection to be ready by giving the handshake a moment
-    // The start_connection call initiates pairing but the Ready event
-    // arrives asynchronously. request_credential will fail if the secure
-    // channel isn't established yet, so we just call it and let the client
-    // handle the internal state.
     eprintln!("Requesting credential for: {domain}");
 
-    match client.request_credential(&domain).await {
+    match client.request_credential(domain).await {
+        Ok(credential) => {
+            client.close().await;
+            Ok(credential)
+        }
+        Err(e) => {
+            client.close().await;
+            Err(color_eyre::eyre::eyre!(e))
+        }
+    }
+}
+
+async fn run_single_shot(
+    proxy_url: String,
+    token: Option<String>,
+    session_fingerprint: Option<String>,
+    ephemeral_connection: bool,
+    domain: String,
+    output: OutputFormat,
+) -> Result<()> {
+    use super::output::{exit_code, exit_code_name};
+
+    match fetch_credential(
+        &proxy_url,
+        token.as_deref(),
+        session_fingerprint.as_deref(),
+        ephemeral_connection,
+        &domain,
+    )
+    .await
+    {
         Ok(credential) => {
             match output {
                 OutputFormat::Json => emit_json_success(&domain, &credential),
                 OutputFormat::Text => emit_text_credential(&domain, &credential),
             }
-            client.close().await;
             std::process::exit(exit_code::SUCCESS);
         }
         Err(e) => {
-            let code = exit_code_for_error(&e);
+            // Try to extract a RemoteClientError for specific exit codes
+            let code = e
+                .downcast_ref::<bw_rat_client::RemoteClientError>()
+                .map(exit_code_for_error)
+                .unwrap_or(exit_code::GENERAL_ERROR);
             let msg = format!("{e}");
             match output {
                 OutputFormat::Json => emit_json_error(&msg, exit_code_name(code)),
                 OutputFormat::Text => eprintln!("Error: {msg}"),
             }
-            client.close().await;
             std::process::exit(code);
         }
     }

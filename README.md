@@ -1,59 +1,115 @@
-# Bitwarden Remote Access
+<p align="center">
+  <br>
+  <br>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/logo-light.svg">
+    <img alt="Bitwarden Remote Access" src="assets/logo-light.svg" height="60">
+  </picture>
+  <br>
+  <br>
+  <br>
+</p>
 
-## Crate Structure
 
-* `bw-error` - Error handling utilities for bw_remote. Re-exports the `bw_error` proc macro and provides the `FlatError` trait.
-* `bw-error-macro` - Proc macro for generating error types with `FlatError` trait implementation. Simplified version of `bitwarden-error-macro` that only supports the `flat` error type for CLI use.
-* `bw-noise-protocol` - Multi-device Noise-based Protocol implementation using the NNpsk2 pattern for secure channel establishment with PSK-based authentication. 
-* `bw-proxy` - Zero-knowledge WebSocket proxy server enabling secure rendezvous between remote and user clients. Runs as a standalone binary with environment-based configuration.
-* `bw-rat-client` - Remote and user client implementations for connecting through the proxy using the Noise Protocol.
-* `bw-remote` - CLI interface for connecting to a user-client through a proxy to request credentials over a secure Noise Protocol channel. Manages session caching and device keypair storage.
+# Remote Access
 
-## Building
+Remote Access allows users to access credentials from their password manager on remote systems, without exposing their entire vault.
+It creates an end-to-end encrypted tunnel between the remote system and the password manager.
 
-Run `cargo build` in this directory. This is a standalone workspace and has no dependencies on any other Bitwarden components. Requires Rust 1.85+.
+Remote Access is an open protocol, CLI tool, and Rust SDK that you can use to implement it directly into agents or custom software. While we at Bitwarden have built it, it's open for any password manager to leverage to further support agentic or automation use cases without exposing your entire vault.
 
-## Running
+## Installation
 
-### Proxy Server
+### macOS (Apple Silicon)
 
-Run the `bw-proxy` binary to start the WebSocket proxy server:
-
-```
-cargo run -p bw-proxy
-```
-
-The proxy binds to `127.0.0.1:8080` by default. Set the `BIND_ADDR` environment variable to override.
-
-### CLI
-
-Run `aac` to use the demo CLI. This top-level driver command lets you explore the functionality of the SDK:
-
-```
-Connect to a user-client through a proxy to request credentials over a secure channel
-
-Usage: aac [OPTIONS] [COMMAND]
-
-Commands:
-  cache    Manage the session cache
-  connect  Connect to proxy and request credentials (default)
-  listen   Listen for remote client connections (user-client mode)
-  help         Print this message or the help of the given subcommand(s)
-
-Options:
-      --proxy-url <PROXY_URL>  Proxy server URL [default: ws://localhost:8080]
-      --token <TOKEN>          Token (rendezvous code or PSK token)
-      --session <SESSION>      Session fingerprint to reconnect to (hex string)
-      --no-cache               Disable session caching
-      --debug-log              Enable debug logging for the multi-device Noise protocol
-  -h, --help                   Print help
-  -V, --version                Print version
+```shell
+curl -L https://github.com/bitwarden/remote-access/releases/latest/download/aac-macos-aarch64.tar.gz | tar xz
+sudo mv aac /usr/local/bin/ # Makes it available on PATH
 ```
 
-### Demo Flow
+### macOS (Intel)
 
-1. Start the proxy server with `cargo run -p bw-proxy`
-2. Start the user-client side with `cargo run --bin aac -- listen`
-3. Enter the outputted PSK from step 2 into the `--pair-code` argument of `aac connect` and type a client ID
-4. Now `aac`, taking the role of the remote client, will let you type in domains to request credentials for, and you will approve them on the `listen` side from step 2
-5. Observe that the credential was sent to the remote side
+```shell
+curl -L https://github.com/bitwarden/remote-access/releases/latest/download/aac-macos-x86_64.tar.gz | tar xz
+sudo mv aac /usr/local/bin/ # Makes it available on PATH
+```
+
+### Linux (x86_64)
+
+```shell
+curl -L https://github.com/bitwarden/remote-access/releases/latest/download/aac-linux-x86_64.tar.gz | tar xz
+sudo mv aac /usr/local/bin/ # Makes it available on PATH
+```
+
+### Windows (x86_64)
+
+Download [aac-windows-x86_64.zip](https://github.com/bitwarden/remote-access/releases/latest/download/aac-windows-x86_64.zip) from the [latest release](https://github.com/bitwarden/remote-access/releases/latest) and extract it to a directory on your PATH.
+
+### OpenClaw skill
+
+```shell
+curl -fsSL "https://raw.githubusercontent.com/bitwarden/remote-access/main/examples/skills/remote-access/SKILL.md" -o ~/.openclaw/skills/remote-access/SKILL.md --create-dirs
+```
+
+## Examples
+
+* [OpenClaw skill](examples/skills/remote-access/SKILL.md)
+* Automated script requesting an API-token.
+* Github Action
+
+## Getting started (Bitwarden CLI)
+
+In this short guide we'll walk you through setting up Remote Access on your local machine and connect it to the bitwarden CLI.
+
+**Prerequisites**
+
+- [Bitwarden CLI](https://bitwarden.com/help/cli/) (`bw`) installed and available on your PATH
+
+**Enabling Remote Access for Bitwarden**
+
+The `aac` CLI tool has built-in support for connecting to the Bitwarden CLI. The interactive CLI can be used to unlock your vault (`/bw-unlock`) and create a pairing token that the remote side can use to connect.
+
+```shell
+aac listen
+```
+
+The interactive CLI will create a pairing token that you can use to establish a connection on the remote side.
+
+**Setting up the remote side**
+
+You can run the remote side interactively (Useful for testing/demonstration) or without interactivity which is useful for agents and automation.
+
+```shell
+# interactive mode
+aac connect
+```
+
+```shell
+# Pairing (without interactivity)
+aac connect --token <pairing-token> --output json
+
+# Fetching credentials (without interactivity)
+aac connect --domain example.com --output json
+aac connect --domain github.com --output json
+
+# Pair + Fetch in one command (without interactivity)
+aac connect --token <pairing-token> --domain example.com --output json
+
+# Output:
+{"credential":{"notes":null,"password":"alligator5","totp":null,"uri":"https://github.com","username":"example"},"domain":"github.com","success":true}
+
+```
+
+## Contributing
+
+This repo contains multiple building blocks that power Remote Access.
+
+It contains:
+
+* An end-to-end encrypted tunnel, using Noise
+* A Rust SDK for establishing a tunnel, sending requests, and responding to them
+* A CLI tool for requesting / releasing credentials
+* A proxy server for demo/development purposes
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, crate structure, and how to run the project.
