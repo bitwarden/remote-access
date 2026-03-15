@@ -57,6 +57,7 @@ pub fn emit_json_success(domain: &str, credential: &CredentialData) {
             "totp": credential.totp,
             "uri": credential.uri,
             "notes": credential.notes,
+            "credential_id": credential.credential_id,
         }
     });
     println!("{obj}");
@@ -103,5 +104,8 @@ pub fn emit_text_credential(domain: &str, credential: &CredentialData) {
     }
     if let Some(notes) = &credential.notes {
         println!("notes: {notes}");
+    }
+    if let Some(credential_id) = &credential.credential_id {
+        println!("credential_id: {credential_id}");
     }
 }
