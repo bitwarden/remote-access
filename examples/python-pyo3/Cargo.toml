@@ -1,6 +1,8 @@
 [package]
 name = "bw-remote-python"
+description = "PyO3 Python bindings for Bitwarden Remote Access"
 version = "0.1.0"
+authors = ["Bitwarden Inc"]
 edition = "2024"
 rust-version = "1.85"
 license = "GPL-3.0"

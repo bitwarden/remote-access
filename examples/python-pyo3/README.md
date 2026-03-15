@@ -75,7 +75,7 @@ The API is **synchronous** — all async Rust operations are handled internally.
 | `pair.py` | Pair with a listening peer (clears and replaces cached session) |
 | `get.py` | Request a credential using the cached session |
 | `src/lib.rs` | PyO3 module definition, `connect_and_request()` one-shot helper |
-| `src/client.rs` | `PyRemoteClient` — wraps Rust `RemoteClient` with an internal Tokio runtime |
+| `src/client.rs` | `PyRemoteClient` — wraps Rust `RemoteClient` with a synchronous Python API |
 | `src/storage.rs` | `FileIdentityStorage` + `FileSessionCache` — file-based identity and session persistence |
 | `src/types.rs` | `PyCredentialData` + `RemoteAccessError` — Python-facing types |
 
