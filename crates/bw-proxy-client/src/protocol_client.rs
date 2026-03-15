@@ -3,9 +3,16 @@ use bw_proxy_protocol::{
 };
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
+use tokio::time::Instant;
 use tokio_tungstenite::{WebSocketStream, connect_async, tungstenite::Message};
+
+/// Interval between client-side WebSocket pings.
+const PING_INTERVAL: Duration = Duration::from_secs(30);
+/// Maximum time without a pong before the connection is considered dead.
+const PONG_TIMEOUT: Duration = Duration::from_secs(60);
 
 use super::config::{ClientState, IncomingMessage, ProxyClientConfig};
 
@@ -208,8 +215,15 @@ impl ProxyProtocolClient {
         let (incoming_tx, incoming_rx) = mpsc::unbounded_channel::<IncomingMessage>();
         let (auth_tx, mut auth_rx) = mpsc::unbounded_channel::<Result<(), ProxyError>>();
 
+        // Shared pong tracker for keep-alive
+        let last_pong = Arc::new(Mutex::new(Instant::now()));
+
         // Spawn write task
-        let write_handle = tokio::spawn(Self::write_task(ws_sink, outgoing_rx));
+        let write_handle = tokio::spawn(Self::write_task(
+            ws_sink,
+            outgoing_rx,
+            Arc::clone(&last_pong),
+        ));
 
         // Spawn read task (handles auth + message routing)
         let read_handle = tokio::spawn(Self::read_task(
@@ -219,6 +233,7 @@ impl ProxyProtocolClient {
             Arc::clone(&self.identity),
             self.state.clone(),
             auth_tx,
+            last_pong,
         ));
 
         // Wait for authentication to complete
@@ -583,11 +598,38 @@ impl ProxyProtocolClient {
         Ok(())
     }
 
-    /// Write task: sends messages from channel to WebSocket
-    async fn write_task(mut ws_sink: WsSink, mut outgoing_rx: mpsc::UnboundedReceiver<Message>) {
-        while let Some(msg) = outgoing_rx.recv().await {
-            if ws_sink.send(msg).await.is_err() {
-                break;
+    /// Write task: sends messages from channel to WebSocket, with keep-alive pings
+    async fn write_task(
+        mut ws_sink: WsSink,
+        mut outgoing_rx: mpsc::UnboundedReceiver<Message>,
+        last_pong: Arc<Mutex<Instant>>,
+    ) {
+        let mut ping_interval = tokio::time::interval(PING_INTERVAL);
+        ping_interval.tick().await; // consume the immediate first tick
+
+        loop {
+            tokio::select! {
+                msg = outgoing_rx.recv() => {
+                    match msg {
+                        Some(msg) => {
+                            if ws_sink.send(msg).await.is_err() {
+                                break;
+                            }
+                        }
+                        None => break,
+                    }
+                }
+                _ = ping_interval.tick() => {
+                    // Check if we received a pong recently
+                    let elapsed = last_pong.lock().await.elapsed();
+                    if elapsed > PONG_TIMEOUT {
+                        tracing::warn!("No pong received in {:?}, closing connection", elapsed);
+                        break;
+                    }
+                    if ws_sink.send(Message::Ping(vec![])).await.is_err() {
+                        break;
+                    }
+                }
             }
         }
     }
@@ -600,6 +642,7 @@ impl ProxyProtocolClient {
         identity: Arc<IdentityKeyPair>,
         state: Arc<Mutex<ClientState>>,
         auth_tx: mpsc::UnboundedSender<Result<(), ProxyError>>,
+        last_pong: Arc<Mutex<Instant>>,
     ) {
         // Handle authentication
         match Self::handle_authentication(&mut ws_source, &outgoing_tx, &identity).await {
@@ -618,7 +661,7 @@ impl ProxyProtocolClient {
         }
 
         // Enter message loop
-        if let Err(e) = Self::message_loop(ws_source, incoming_tx).await {
+        if let Err(e) = Self::message_loop(ws_source, incoming_tx, last_pong).await {
             tracing::error!("Message loop error: {}", e);
         }
 
@@ -664,6 +707,7 @@ impl ProxyProtocolClient {
     async fn message_loop(
         mut ws_source: WsSource,
         incoming_tx: mpsc::UnboundedSender<IncomingMessage>,
+        last_pong: Arc<Mutex<Instant>>,
     ) -> Result<(), ProxyError> {
         while let Some(msg_result) = ws_source.next().await {
             let msg = msg_result.map_err(ws_err)?;
@@ -709,6 +753,9 @@ impl ProxyProtocolClient {
                         }
                         _ => tracing::warn!("Unexpected message type: {:?}", parsed),
                     }
+                }
+                Message::Pong(_) => {
+                    *last_pong.lock().await = Instant::now();
                 }
                 Message::Close(_) => break,
                 _ => {}

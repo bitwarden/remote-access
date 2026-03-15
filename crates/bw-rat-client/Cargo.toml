@@ -25,12 +25,12 @@ rand = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { version = "1.36.0", default-features = false, features = ["sync", "macros"] }
+tokio = { version = "1.36.0", default-features = false, features = ["sync", "macros", "time"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
 bw-proxy = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "test-util"] }
 
 [lints]
 workspace = true

@@ -2,16 +2,20 @@ use bw_proxy::server::ProxyServer;
 use bw_proxy_client::{IdentityKeyPair, IncomingMessage, ProxyClientConfig, ProxyProtocolClient};
 use std::net::SocketAddr;
 
+/// Small delay to allow the server to finish registering a connection after
+/// the client's `connect()` returns. The server doesn't send an auth
+/// confirmation, so there's a brief window where the client considers itself
+/// authenticated but the server hasn't inserted it into the connection map yet.
+const POST_CONNECT_DELAY: tokio::time::Duration = tokio::time::Duration::from_millis(50);
+
 async fn start_test_server() -> SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("should bind to localhost");
     let addr = listener.local_addr().expect("should get local address");
-    drop(listener);
 
     let server = ProxyServer::new(addr);
-    tokio::spawn(async move { server.run().await.ok() });
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    tokio::spawn(async move { server.run_with_listener(listener).await.ok() });
 
     addr
 }
@@ -56,6 +60,7 @@ async fn test_two_clients_messaging() {
 
     let mut incoming_a = client_a.connect().await.expect("client A should connect");
     let mut incoming_b = client_b.connect().await.expect("client B should connect");
+    tokio::time::sleep(POST_CONNECT_DELAY).await;
 
     let fingerprint_a = client_a.fingerprint();
     let fingerprint_b = client_b.fingerprint();
@@ -68,7 +73,7 @@ async fn test_two_clients_messaging() {
         .expect("client A should send message");
 
     // B receives message
-    tokio::time::timeout(tokio::time::Duration::from_secs(1), async {
+    tokio::time::timeout(tokio::time::Duration::from_secs(5), async {
         let msg = incoming_b
             .recv()
             .await
@@ -96,7 +101,7 @@ async fn test_two_clients_messaging() {
         .expect("client B should send message");
 
     // A receives message
-    tokio::time::timeout(tokio::time::Duration::from_secs(1), async {
+    tokio::time::timeout(tokio::time::Duration::from_secs(5), async {
         let msg = incoming_a
             .recv()
             .await
@@ -142,7 +147,7 @@ async fn test_rendezvous_request() {
     client.request_rendezvous().await.ok(); // Sends GetRendevouz
 
     // Receive RendevouzInfo through incoming channel
-    tokio::time::timeout(tokio::time::Duration::from_secs(1), async {
+    tokio::time::timeout(tokio::time::Duration::from_secs(5), async {
         let msg = incoming
             .recv()
             .await
@@ -197,6 +202,7 @@ async fn test_multiple_messages() {
 
     let _incoming_a = client_a.connect().await.expect("client A should connect");
     let mut incoming_b = client_b.connect().await.expect("client B should connect");
+    tokio::time::sleep(POST_CONNECT_DELAY).await;
 
     let fingerprint_a = client_a.fingerprint();
     let fingerprint_b = client_b.fingerprint();
@@ -210,7 +216,7 @@ async fn test_multiple_messages() {
             .expect("client A should send message");
 
         // B receives message
-        tokio::time::timeout(tokio::time::Duration::from_secs(1), async {
+        tokio::time::timeout(tokio::time::Duration::from_secs(5), async {
             let msg = incoming_b
                 .recv()
                 .await
@@ -324,6 +330,7 @@ async fn test_messages_broadcast_to_all_same_identity_connections() {
         .connect()
         .await
         .expect("sender should connect");
+    tokio::time::sleep(POST_CONNECT_DELAY).await;
 
     let user_fingerprint = user_client_a.fingerprint();
 
@@ -335,7 +342,7 @@ async fn test_messages_broadcast_to_all_same_identity_connections() {
         .expect("sender should send message");
 
     // Both user clients should receive the message
-    let recv_a = tokio::time::timeout(tokio::time::Duration::from_secs(1), async {
+    let recv_a = tokio::time::timeout(tokio::time::Duration::from_secs(5), async {
         let msg = incoming_user_a
             .recv()
             .await
@@ -354,7 +361,7 @@ async fn test_messages_broadcast_to_all_same_identity_connections() {
     })
     .await;
 
-    let recv_b = tokio::time::timeout(tokio::time::Duration::from_secs(1), async {
+    let recv_b = tokio::time::timeout(tokio::time::Duration::from_secs(5), async {
         let msg = incoming_user_b
             .recv()
             .await
@@ -430,6 +437,7 @@ async fn test_cleanup_when_one_connection_disconnects() {
         .connect()
         .await
         .expect("sender should connect");
+    tokio::time::sleep(POST_CONNECT_DELAY).await;
 
     let user_fingerprint = user_client_a.fingerprint();
 
@@ -450,7 +458,7 @@ async fn test_cleanup_when_one_connection_disconnects() {
         .expect("sender should send message");
 
     // User B should still receive the message
-    tokio::time::timeout(tokio::time::Duration::from_secs(1), async {
+    tokio::time::timeout(tokio::time::Duration::from_secs(5), async {
         let msg = incoming_user_b
             .recv()
             .await

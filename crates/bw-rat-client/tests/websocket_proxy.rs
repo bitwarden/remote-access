@@ -279,11 +279,9 @@ async fn start_test_server() -> SocketAddr {
         .await
         .expect("should bind to localhost");
     let addr = listener.local_addr().expect("should get local address");
-    drop(listener);
 
     let server = ProxyServer::new(addr);
-    tokio::spawn(async move { server.run().await.ok() });
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::spawn(async move { server.run_with_listener(listener).await.ok() });
 
     addr
 }
