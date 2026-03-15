@@ -104,8 +104,6 @@ pub enum RemoteClientEvent {
         domain: String,
         /// The credential data
         credential: CredentialData,
-        /// Vault item ID (if provided by the user-client)
-        credential_id: Option<String>,
     },
     /// An error occurred
     Error {

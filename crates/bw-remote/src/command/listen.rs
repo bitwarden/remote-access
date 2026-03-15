@@ -542,8 +542,8 @@ async fn run_event_loop(
                                     let approved = *approved;
                                     let old_phase = std::mem::replace(&mut phase, Phase::Idle);
                                     if let Phase::CredentialApproval { domain, request_id, session_id, credential } = old_phase {
-                                        let cred_id = credential.credential_id.clone();
                                         if approved {
+                                            let cred_id = credential.credential_id.clone();
                                             response_tx
                                                 .send(UserClientResponse::RespondCredential {
                                                     request_id,
@@ -564,7 +564,7 @@ async fn run_event_loop(
                                                     domain: domain.clone(),
                                                     approved: false,
                                                     credential: None,
-                                                    credential_id: cred_id,
+                                                    credential_id: credential.credential_id,
                                                 })
                                                 .await
                                                 .ok();
