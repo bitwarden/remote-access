@@ -87,7 +87,10 @@ pub use error::RemoteClientError;
 #[cfg(feature = "native-websocket")]
 pub use proxy::DefaultProxyClient;
 pub use proxy::ProxyClient;
-pub use traits::{IdentityProvider, SessionStore};
+pub use traits::{
+    AuditConnectionType, AuditEvent, AuditLog, CredentialFieldSet, IdentityProvider, NoOpAuditLog,
+    SessionStore,
+};
 pub use types::{ConnectionMode, CredentialData, RemoteClientEvent, RemoteClientResponse};
 
 // Re-export bw-proxy-protocol types

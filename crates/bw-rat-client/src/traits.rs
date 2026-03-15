@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use bw_noise_protocol::MultiDeviceTransport;
 use bw_proxy_protocol::{IdentityFingerprint, IdentityKeyPair};
 
@@ -73,4 +74,85 @@ pub trait IdentityProvider: Send + Sync {
     fn fingerprint(&self) -> IdentityFingerprint {
         self.identity().identity().fingerprint()
     }
+}
+
+/// How a connection was established
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditConnectionType {
+    /// Rendezvous code pairing
+    Rendezvous,
+    /// Pre-shared key pairing
+    Psk,
+}
+
+/// Which credential fields were included in an approved response.
+/// Contains only presence flags, never actual values.
+#[derive(Debug, Clone)]
+pub struct CredentialFieldSet {
+    pub has_username: bool,
+    pub has_password: bool,
+    pub has_totp: bool,
+    pub has_uri: bool,
+    pub has_notes: bool,
+}
+
+/// Audit events for security-relevant actions on the UserClient
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum AuditEvent<'a> {
+    /// A new device completed handshake and was accepted
+    ConnectionEstablished {
+        fingerprint: &'a IdentityFingerprint,
+        session_name: Option<&'a str>,
+        connection_type: AuditConnectionType,
+    },
+    /// A cached/known device reconnected (transport keys refreshed)
+    SessionRefreshed {
+        fingerprint: &'a IdentityFingerprint,
+    },
+    /// A new connection was rejected during fingerprint verification
+    ConnectionRejected {
+        fingerprint: &'a IdentityFingerprint,
+    },
+    /// A remote device requested a credential
+    CredentialRequested {
+        domain: &'a str,
+        fingerprint: &'a IdentityFingerprint,
+        request_id: &'a str,
+    },
+    /// A credential was approved and sent
+    CredentialApproved {
+        domain: &'a str,
+        fingerprint: &'a IdentityFingerprint,
+        request_id: &'a str,
+        fields: CredentialFieldSet,
+    },
+    /// A credential request was denied
+    CredentialDenied {
+        domain: &'a str,
+        fingerprint: &'a IdentityFingerprint,
+        request_id: &'a str,
+    },
+}
+
+/// Persistent audit logging for security-relevant events on the UserClient.
+///
+/// Implementations may write to files, databases, or external services.
+/// All methods receive `&self` (interior mutability is the implementor's
+/// responsibility). Implementations should handle errors internally
+/// (e.g., log a warning via `tracing`). Timestamps are the implementor's
+/// responsibility.
+#[async_trait]
+pub trait AuditLog: Send + Sync {
+    /// Write an audit event
+    async fn write(&self, event: AuditEvent<'_>);
+}
+
+/// No-op audit logger that discards all events.
+/// Used as the default when no audit logging is configured.
+pub struct NoOpAuditLog;
+
+#[async_trait]
+impl AuditLog for NoOpAuditLog {
+    async fn write(&self, _event: AuditEvent<'_>) {}
 }

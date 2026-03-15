@@ -20,7 +20,10 @@ struct PendingHandshakeVerification {
 
 use crate::{
     error::RemoteClientError,
-    traits::{IdentityProvider, SessionStore},
+    traits::{
+        AuditConnectionType, AuditEvent, AuditLog, CredentialFieldSet, IdentityProvider,
+        NoOpAuditLog, SessionStore,
+    },
     types::ProtocolMessage,
 };
 
@@ -177,6 +180,8 @@ pub struct UserClient {
     pending_verification: Option<PendingHandshakeVerification>,
     /// Name to assign to the next newly-paired session
     pending_session_name: Option<String>,
+    /// Audit logger for security-relevant events
+    audit_log: Box<dyn AuditLog>,
 }
 
 impl UserClient {
@@ -203,7 +208,14 @@ impl UserClient {
             incoming_rx: Some(incoming_rx),
             pending_verification: None,
             pending_session_name: None,
+            audit_log: Box::new(NoOpAuditLog),
         })
+    }
+
+    /// Set a custom audit logger. If not called, a no-op logger is used.
+    pub fn with_audit_log(mut self, audit_log: Box<dyn AuditLog>) -> Self {
+        self.audit_log = audit_log;
+        self
     }
 
     /// Listen for cached sessions only (no new pairing code generated)
@@ -424,6 +436,12 @@ impl UserClient {
             self.session_store
                 .save_transport_state(&source, transport)?;
 
+            self.audit_log
+                .write(AuditEvent::SessionRefreshed {
+                    fingerprint: &source,
+                })
+                .await;
+
             event_tx
                 .send(UserClientEvent::SessionRefreshed {
                     fingerprint: source,
@@ -434,11 +452,20 @@ impl UserClient {
             // PSK connection: trust established via pre-shared key, no verification needed
             self.transports.insert(source, transport.clone());
             self.session_store.cache_session(source)?;
-            if let Some(name) = self.pending_session_name.take() {
-                self.session_store.set_session_name(&source, name)?;
+            let session_name = self.pending_session_name.take();
+            if let Some(ref name) = session_name {
+                self.session_store.set_session_name(&source, name.clone())?;
             }
             self.session_store
                 .save_transport_state(&source, transport)?;
+
+            self.audit_log
+                .write(AuditEvent::ConnectionEstablished {
+                    fingerprint: &source,
+                    session_name: session_name.as_deref(),
+                    connection_type: AuditConnectionType::Psk,
+                })
+                .await;
 
             event_tx
                 .send(UserClientEvent::HandshakeFingerprint {
@@ -471,17 +498,33 @@ impl UserClient {
             self.transports
                 .insert(pending.source, pending.transport.clone());
             self.session_store.cache_session(pending.source)?;
-            if let Some(name) = name.or(self.pending_session_name.take()) {
-                self.session_store.set_session_name(&pending.source, name)?;
+            let session_name = name.or(self.pending_session_name.take());
+            if let Some(ref name) = session_name {
+                self.session_store
+                    .set_session_name(&pending.source, name.clone())?;
             }
             self.session_store
                 .save_transport_state(&pending.source, pending.transport)?;
+
+            self.audit_log
+                .write(AuditEvent::ConnectionEstablished {
+                    fingerprint: &pending.source,
+                    session_name: session_name.as_deref(),
+                    connection_type: AuditConnectionType::Rendezvous,
+                })
+                .await;
 
             event_tx
                 .send(UserClientEvent::FingerprintVerified {})
                 .await
                 .ok();
         } else {
+            self.audit_log
+                .write(AuditEvent::ConnectionRejected {
+                    fingerprint: &pending.source,
+                })
+                .await;
+
             event_tx
                 .send(UserClientEvent::FingerprintRejected {
                     reason: "User rejected fingerprint verification".to_string(),
@@ -528,6 +571,14 @@ impl UserClient {
             .map_err(|e| RemoteClientError::NoiseProtocol(e.to_string()))?;
 
         let request: CredentialRequestPayload = serde_json::from_slice(&decrypted)?;
+
+        self.audit_log
+            .write(AuditEvent::CredentialRequested {
+                domain: &request.domain,
+                fingerprint: &source,
+                request_id: &request.request_id,
+            })
+            .await;
 
         // Send credential request event
         event_tx
@@ -624,6 +675,32 @@ impl UserClient {
 
         // Send event
         if approved {
+            let fields = credential.as_ref().map_or(
+                CredentialFieldSet {
+                    has_username: false,
+                    has_password: false,
+                    has_totp: false,
+                    has_uri: false,
+                    has_notes: false,
+                },
+                |c| CredentialFieldSet {
+                    has_username: c.username.is_some(),
+                    has_password: c.password.is_some(),
+                    has_totp: c.totp.is_some(),
+                    has_uri: c.uri.is_some(),
+                    has_notes: c.notes.is_some(),
+                },
+            );
+
+            self.audit_log
+                .write(AuditEvent::CredentialApproved {
+                    domain: "unknown", // TODO: Track domain from request
+                    fingerprint: &fingerprint,
+                    request_id: &request_id,
+                    fields,
+                })
+                .await;
+
             event_tx
                 .send(UserClientEvent::CredentialApproved {
                     domain: "unknown".to_string(), // TODO: Track domain from request
@@ -631,6 +708,14 @@ impl UserClient {
                 .await
                 .ok();
         } else {
+            self.audit_log
+                .write(AuditEvent::CredentialDenied {
+                    domain: "unknown", // TODO: Track domain from request
+                    fingerprint: &fingerprint,
+                    request_id: &request_id,
+                })
+                .await;
+
             event_tx
                 .send(UserClientEvent::CredentialDenied {
                     domain: "unknown".to_string(),
