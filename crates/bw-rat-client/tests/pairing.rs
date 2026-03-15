@@ -4,15 +4,16 @@
 //! using mock implementations of the identity provider, session store, and proxy.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use bw_noise_protocol::{MultiDeviceTransport, PersistentTransportState};
 use bw_proxy_client::IncomingMessage;
 use bw_proxy_protocol::{IdentityFingerprint, IdentityKeyPair, RendevouzCode};
 use bw_rat_client::{
-    IdentityProvider, ProxyClient, Psk, RemoteClient, RemoteClientEvent, RemoteClientResponse,
-    SessionStore, UserClient, UserClientEvent, UserClientResponse,
+    IdentityProvider, ProxyClient, Psk, RemoteClient, RemoteClientError, RemoteClientEvent,
+    RemoteClientResponse, SessionStore, UserClient, UserClientEvent, UserClientResponse,
 };
 use tokio::sync::mpsc;
 use tokio::time::{Duration, timeout};
@@ -641,6 +642,193 @@ async fn test_fingerprint_pairing() {
             // Cleanup
             remote_client.close().await;
             user_task.abort();
+        })
+        .await;
+}
+
+// ============================================================================
+// Reconnecting Mock Proxy Client
+// ============================================================================
+
+/// A mock proxy client that simulates connection drops and reconnections.
+///
+/// - First `connect()` succeeds normally.
+/// - The incoming channel is closed after a configurable delay to simulate a drop.
+/// - Subsequent `connect()` calls fail `fail_count` times, then succeed.
+struct ReconnectingMockProxyClient {
+    /// How many reconnection attempts should fail before succeeding
+    fail_count: u32,
+    /// Tracks total connect() calls (including the initial one)
+    connect_calls: Arc<AtomicU32>,
+    /// Channel for pushing incoming messages after reconnection
+    incoming_tx: Option<mpsc::UnboundedSender<IncomingMessage>>,
+    /// Delay before closing the first incoming channel (simulates proxy drop)
+    drop_delay: Duration,
+}
+
+impl ReconnectingMockProxyClient {
+    fn new(fail_count: u32, drop_delay: Duration) -> Self {
+        Self {
+            fail_count,
+            connect_calls: Arc::new(AtomicU32::new(0)),
+            incoming_tx: None,
+            drop_delay,
+        }
+    }
+}
+
+#[async_trait]
+impl ProxyClient for ReconnectingMockProxyClient {
+    async fn connect(
+        &mut self,
+    ) -> Result<mpsc::UnboundedReceiver<IncomingMessage>, RemoteClientError> {
+        let call_num = self.connect_calls.fetch_add(1, Ordering::SeqCst) + 1;
+
+        if call_num == 1 {
+            // First connect: succeed but drop the channel after a delay
+            let (tx, rx) = mpsc::unbounded_channel();
+            let drop_delay = self.drop_delay;
+            tokio::spawn(async move {
+                tokio::time::sleep(drop_delay).await;
+                drop(tx); // Closes the receiver, simulating proxy drop
+            });
+            return Ok(rx);
+        }
+
+        // Subsequent connects: fail `fail_count` times, then succeed
+        let reconnect_attempt = call_num - 1; // 1-based reconnection attempts
+        if reconnect_attempt <= self.fail_count {
+            return Err(RemoteClientError::ChannelClosed);
+        }
+
+        // Success: create a new channel that stays open
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.incoming_tx = Some(tx);
+        Ok(rx)
+    }
+
+    async fn request_rendezvous(&self) -> Result<(), RemoteClientError> {
+        Ok(())
+    }
+
+    async fn request_identity(&self, _code: RendevouzCode) -> Result<(), RemoteClientError> {
+        Ok(())
+    }
+
+    async fn send_to(
+        &self,
+        _fingerprint: IdentityFingerprint,
+        _data: Vec<u8>,
+    ) -> Result<(), RemoteClientError> {
+        Ok(())
+    }
+
+    async fn disconnect(&mut self) -> Result<(), RemoteClientError> {
+        self.incoming_tx = None;
+        Ok(())
+    }
+}
+
+// ============================================================================
+// Test: Reconnection on channel close
+// ============================================================================
+
+/// Test that UserClient reconnects when the incoming channel closes.
+///
+/// Verifies: ClientDisconnected → Reconnecting(1) → Reconnecting(2) → Reconnected
+#[tokio::test(flavor = "current_thread")]
+async fn test_user_client_reconnects_on_channel_close() {
+    use tokio::task::LocalSet;
+
+    let local = LocalSet::new();
+    local
+        .run_until(async {
+            let identity = MockIdentityProvider::new();
+            let session_store = MockSessionStore::new();
+
+            // Fail 2 reconnection attempts, then succeed on the 3rd
+            let proxy = ReconnectingMockProxyClient::new(2, Duration::from_millis(50));
+            let connect_calls = Arc::clone(&proxy.connect_calls);
+
+            let (event_tx, mut event_rx) = mpsc::channel::<UserClientEvent>(32);
+            let (_response_tx, response_rx) = mpsc::channel::<UserClientResponse>(32);
+
+            let mut client = UserClient::listen(
+                Box::new(identity),
+                Box::new(session_store),
+                Box::new(proxy),
+            )
+            .await
+            .expect("Initial connect should succeed");
+
+            // Run event loop in background
+            let client_task = tokio::task::spawn_local(async move {
+                client.listen_cached_only(event_tx, response_rx).await
+            });
+
+            // Collect events with a timeout
+            let events = timeout(Duration::from_secs(10), async {
+                let mut collected = Vec::new();
+                while let Some(event) = event_rx.recv().await {
+                    match &event {
+                        UserClientEvent::Listening {} => {}
+                        UserClientEvent::ClientDisconnected {}
+                        | UserClientEvent::Reconnecting { .. }
+                        | UserClientEvent::Reconnected {} => {
+                            collected.push(event.clone());
+                        }
+                        _ => {}
+                    }
+                    // Stop after seeing Reconnected
+                    if matches!(collected.last(), Some(UserClientEvent::Reconnected {})) {
+                        break;
+                    }
+                }
+                collected
+            })
+            .await
+            .expect("Should receive reconnection events within timeout");
+
+            // Verify the event sequence
+            assert!(
+                events.len() >= 4,
+                "Expected at least 4 events (Disconnected, Reconnecting x2, Reconnected), got {}: {:?}",
+                events.len(),
+                events
+            );
+
+            assert!(
+                matches!(events[0], UserClientEvent::ClientDisconnected {}),
+                "First event should be ClientDisconnected, got {:?}",
+                events[0]
+            );
+            assert!(
+                matches!(events[1], UserClientEvent::Reconnecting { attempt: 1 }),
+                "Second event should be Reconnecting(1), got {:?}",
+                events[1]
+            );
+            assert!(
+                matches!(events[2], UserClientEvent::Reconnecting { attempt: 2 }),
+                "Third event should be Reconnecting(2), got {:?}",
+                events[2]
+            );
+            assert!(
+                matches!(
+                    events[events.len() - 1],
+                    UserClientEvent::Reconnected {}
+                ),
+                "Last event should be Reconnected, got {:?}",
+                events.last()
+            );
+
+            // Verify connect was called: 1 initial + 3 reconnect attempts (2 fail + 1 success)
+            assert_eq!(
+                connect_calls.load(Ordering::SeqCst),
+                4,
+                "Should have called connect() 4 times total"
+            );
+
+            client_task.abort();
         })
         .await;
 }
