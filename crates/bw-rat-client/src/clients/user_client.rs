@@ -76,11 +76,15 @@ pub enum UserClientEvent {
     CredentialApproved {
         /// Domain
         domain: String,
+        /// Vault item ID
+        credential_id: Option<String>,
     },
     /// Credential was denied
     CredentialDenied {
         /// Domain
         domain: String,
+        /// Vault item ID
+        credential_id: Option<String>,
     },
     /// A known/cached device reconnected — transport keys refreshed, no re-verification needed
     SessionRefreshed {
@@ -100,6 +104,7 @@ pub enum UserClientEvent {
 
 /// Response actions for events requiring user decision
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum UserClientResponse {
     /// Respond to fingerprint verification prompt
     VerifyFingerprint {
@@ -114,10 +119,14 @@ pub enum UserClientResponse {
         request_id: String,
         /// Session ID for routing to correct transport (fingerprint)
         session_id: String,
+        /// The requested domain
+        domain: String,
         /// Whether approved
         approved: bool,
         /// The credential to send (if approved)
         credential: Option<CredentialData>,
+        /// Vault item ID (for audit logging)
+        credential_id: Option<String>,
     },
 }
 
@@ -139,6 +148,9 @@ pub struct CredentialData {
     /// Additional notes
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+    /// Vault item ID
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_id: Option<String>,
 }
 
 /// Credential request payload (decrypted)
@@ -616,11 +628,19 @@ impl UserClient {
             UserClientResponse::RespondCredential {
                 request_id,
                 session_id,
+                domain,
                 approved,
                 credential,
+                credential_id,
             } => {
                 self.handle_credential_response(
-                    request_id, session_id, approved, credential, event_tx,
+                    request_id,
+                    session_id,
+                    domain,
+                    approved,
+                    credential,
+                    credential_id,
+                    event_tx,
                 )
                 .await?;
             }
@@ -629,12 +649,15 @@ impl UserClient {
     }
 
     /// Handle credential response
+    #[allow(clippy::too_many_arguments)]
     async fn handle_credential_response(
         &mut self,
         request_id: String,
         session_id: String,
+        domain: String,
         approved: bool,
         credential: Option<CredentialData>,
+        credential_id: Option<String>,
         event_tx: &mpsc::Sender<UserClientEvent>,
     ) -> Result<(), RemoteClientError> {
         // Parse session_id as fingerprint
@@ -650,9 +673,20 @@ impl UserClient {
             .get_mut(&fingerprint)
             .ok_or(RemoteClientError::SecureChannelNotEstablished)?;
 
+        // Compute audit fields before credential is moved into the response payload
+        let fields = credential
+            .as_ref()
+            .map_or_else(CredentialFieldSet::default, |c| CredentialFieldSet {
+                has_username: c.username.is_some(),
+                has_password: c.password.is_some(),
+                has_totp: c.totp.is_some(),
+                has_uri: c.uri.is_some(),
+                has_notes: c.notes.is_some(),
+            });
+
         // Create response payload
         let response_payload = CredentialResponsePayload {
-            credential: if approved { credential.clone() } else { None },
+            credential: if approved { credential } else { None },
             error: if !approved {
                 Some("Request denied".to_string())
             } else {
@@ -684,43 +718,37 @@ impl UserClient {
 
         // Send event
         if approved {
-            let fields = credential
-                .as_ref()
-                .map_or_else(CredentialFieldSet::default, |c| CredentialFieldSet {
-                    has_username: c.username.is_some(),
-                    has_password: c.password.is_some(),
-                    has_totp: c.totp.is_some(),
-                    has_uri: c.uri.is_some(),
-                    has_notes: c.notes.is_some(),
-                });
-
             self.audit_log
                 .write(AuditEvent::CredentialApproved {
-                    domain: "unknown", // TODO: Track domain from request
+                    domain: &domain,
                     remote_identity: &fingerprint,
                     request_id: &request_id,
+                    credential_id: credential_id.as_deref(),
                     fields,
                 })
                 .await;
 
             event_tx
                 .send(UserClientEvent::CredentialApproved {
-                    domain: "unknown".to_string(), // TODO: Track domain from request
+                    domain,
+                    credential_id,
                 })
                 .await
                 .ok();
         } else {
             self.audit_log
                 .write(AuditEvent::CredentialDenied {
-                    domain: "unknown", // TODO: Track domain from request
+                    domain: &domain,
                     remote_identity: &fingerprint,
                     request_id: &request_id,
+                    credential_id: credential_id.as_deref(),
                 })
                 .await;
 
             event_tx
                 .send(UserClientEvent::CredentialDenied {
-                    domain: "unknown".to_string(),
+                    domain,
+                    credential_id,
                 })
                 .await
                 .ok();

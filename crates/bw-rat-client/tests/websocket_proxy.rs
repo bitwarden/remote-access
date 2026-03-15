@@ -304,6 +304,7 @@ fn test_credential() -> UserCredentialData {
         totp: Some("123456".to_string()),
         uri: Some("https://example.com".to_string()),
         notes: Some("Test credential notes".to_string()),
+        credential_id: Some("test-item-id".to_string()),
     }
 }
 
@@ -447,8 +448,10 @@ async fn test_e2e_psk_pairing_and_credential_request() {
                             .send(UserClientResponse::RespondCredential {
                                 request_id,
                                 session_id,
+                                domain,
                                 approved: true,
                                 credential: Some(test_credential()),
+                                credential_id: Some("test-item-id".to_string()),
                             })
                             .await
                             .expect("Should send response");
@@ -624,8 +627,10 @@ async fn test_e2e_fingerprint_pairing_and_credential_request() {
                             .send(UserClientResponse::RespondCredential {
                                 request_id,
                                 session_id,
+                                domain,
                                 approved: true,
                                 credential: Some(test_credential()),
+                                credential_id: Some("test-item-id".to_string()),
                             })
                             .await
                             .expect("Should send response");
@@ -754,7 +759,7 @@ async fn test_e2e_credential_request_denied() {
                     if let UserClientEvent::CredentialRequest {
                         request_id,
                         session_id,
-                        ..
+                        domain,
                     } = event
                     {
                         // Deny the credential request
@@ -762,8 +767,10 @@ async fn test_e2e_credential_request_denied() {
                             .send(UserClientResponse::RespondCredential {
                                 request_id,
                                 session_id,
+                                domain,
                                 approved: false,
                                 credential: None,
+                                credential_id: None,
                             })
                             .await
                             .expect("Should send denial response");
@@ -903,14 +910,17 @@ async fn test_e2e_multiple_credential_requests() {
                             totp: None,
                             uri: Some(format!("https://{domain}")),
                             notes: Some(format!("Request #{request_count}")),
+                            credential_id: None,
                         };
 
                         user_response_tx
                             .send(UserClientResponse::RespondCredential {
                                 request_id,
                                 session_id,
+                                domain,
                                 approved: true,
                                 credential: Some(credential),
+                                credential_id: None,
                             })
                             .await
                             .expect("Should send response");
@@ -1352,7 +1362,7 @@ async fn test_e2e_multi_device_credential_response() {
                     if let UserClientEvent::CredentialRequest {
                         request_id,
                         session_id,
-                        ..
+                        domain,
                     } = event
                     {
                         if should_device1_handle(&request_id) {
@@ -1360,6 +1370,7 @@ async fn test_e2e_multi_device_credential_response() {
                                 .send(UserClientResponse::RespondCredential {
                                     request_id,
                                     session_id,
+                                    domain,
                                     approved: true,
                                     credential: Some(UserCredentialData {
                                         username: Some("device1_user".into()),
@@ -1367,7 +1378,9 @@ async fn test_e2e_multi_device_credential_response() {
                                         totp: None,
                                         uri: None,
                                         notes: None,
+                                        credential_id: None,
                                     }),
+                                    credential_id: None,
                                 })
                                 .await
                                 .ok();
@@ -1382,7 +1395,7 @@ async fn test_e2e_multi_device_credential_response() {
                     if let UserClientEvent::CredentialRequest {
                         request_id,
                         session_id,
-                        ..
+                        domain,
                     } = event
                     {
                         if !should_device1_handle(&request_id) {
@@ -1390,6 +1403,7 @@ async fn test_e2e_multi_device_credential_response() {
                                 .send(UserClientResponse::RespondCredential {
                                     request_id,
                                     session_id,
+                                    domain,
                                     approved: true,
                                     credential: Some(UserCredentialData {
                                         username: Some("device2_user".into()),
@@ -1397,7 +1411,9 @@ async fn test_e2e_multi_device_credential_response() {
                                         totp: None,
                                         uri: None,
                                         notes: None,
+                                        credential_id: None,
                                     }),
+                                    credential_id: None,
                                 })
                                 .await
                                 .ok();

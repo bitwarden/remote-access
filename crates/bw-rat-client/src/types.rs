@@ -137,6 +137,9 @@ pub struct CredentialData {
     /// Additional notes
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+    /// Vault item ID
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_id: Option<String>,
 }
 
 /// Internal protocol messages sent over WebSocket
