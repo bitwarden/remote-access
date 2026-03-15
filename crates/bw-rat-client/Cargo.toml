@@ -30,7 +30,7 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 bw-proxy = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "test-util"] }
 
 [lints]
 workspace = true

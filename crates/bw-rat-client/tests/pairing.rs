@@ -733,12 +733,15 @@ impl ProxyClient for ReconnectingMockProxyClient {
 // Test: Reconnection on channel close
 // ============================================================================
 
-/// Test that UserClient reconnects when the incoming channel closes.
+/// Helper: run a reconnection test with the given `fail_count` and verify
+/// the expected event sequence and connect-call count.
 ///
-/// Verifies: ClientDisconnected → Reconnecting(1) → Reconnecting(2) → Reconnected
-#[tokio::test(flavor = "current_thread")]
-async fn test_user_client_reconnects_on_channel_close() {
+/// Uses `tokio::time::pause()` so backoff delays resolve instantly.
+async fn run_reconnection_test(fail_count: u32) -> (Vec<UserClientEvent>, u32) {
     use tokio::task::LocalSet;
+
+    // Pause time so exponential backoff sleeps resolve instantly
+    tokio::time::pause();
 
     let local = LocalSet::new();
     local
@@ -746,20 +749,16 @@ async fn test_user_client_reconnects_on_channel_close() {
             let identity = MockIdentityProvider::new();
             let session_store = MockSessionStore::new();
 
-            // Fail 2 reconnection attempts, then succeed on the 3rd
-            let proxy = ReconnectingMockProxyClient::new(2, Duration::from_millis(50));
+            let proxy = ReconnectingMockProxyClient::new(fail_count, Duration::from_millis(10));
             let connect_calls = Arc::clone(&proxy.connect_calls);
 
             let (event_tx, mut event_rx) = mpsc::channel::<UserClientEvent>(32);
             let (_response_tx, response_rx) = mpsc::channel::<UserClientResponse>(32);
 
-            let mut client = UserClient::listen(
-                Box::new(identity),
-                Box::new(session_store),
-                Box::new(proxy),
-            )
-            .await
-            .expect("Initial connect should succeed");
+            let mut client =
+                UserClient::listen(Box::new(identity), Box::new(session_store), Box::new(proxy))
+                    .await
+                    .expect("Initial connect should succeed");
 
             // Run event loop in background
             let client_task = tokio::task::spawn_local(async move {
@@ -767,17 +766,17 @@ async fn test_user_client_reconnects_on_channel_close() {
             });
 
             // Collect events with a timeout
-            let events = timeout(Duration::from_secs(10), async {
+            let events = timeout(Duration::from_secs(60), async {
                 let mut collected = Vec::new();
                 while let Some(event) = event_rx.recv().await {
                     match &event {
                         UserClientEvent::Listening {} => {}
-                        UserClientEvent::ClientDisconnected {}
-                        | UserClientEvent::Reconnecting { .. }
-                        | UserClientEvent::Reconnected {} => {
+                        UserClientEvent::Error { .. } => {
+                            panic!("Unexpected error event: {:?}", event);
+                        }
+                        _ => {
                             collected.push(event.clone());
                         }
-                        _ => {}
                     }
                     // Stop after seeing Reconnected
                     if matches!(collected.last(), Some(UserClientEvent::Reconnected {})) {
@@ -789,48 +788,71 @@ async fn test_user_client_reconnects_on_channel_close() {
             .await
             .expect("Should receive reconnection events within timeout");
 
-            // Verify the event sequence
-            assert!(
-                events.len() >= 4,
-                "Expected at least 4 events (Disconnected, Reconnecting x2, Reconnected), got {}: {:?}",
-                events.len(),
-                events
-            );
-
-            assert!(
-                matches!(events[0], UserClientEvent::ClientDisconnected {}),
-                "First event should be ClientDisconnected, got {:?}",
-                events[0]
-            );
-            assert!(
-                matches!(events[1], UserClientEvent::Reconnecting { attempt: 1 }),
-                "Second event should be Reconnecting(1), got {:?}",
-                events[1]
-            );
-            assert!(
-                matches!(events[2], UserClientEvent::Reconnecting { attempt: 2 }),
-                "Third event should be Reconnecting(2), got {:?}",
-                events[2]
-            );
-            assert!(
-                matches!(
-                    events[events.len() - 1],
-                    UserClientEvent::Reconnected {}
-                ),
-                "Last event should be Reconnected, got {:?}",
-                events.last()
-            );
-
-            // Verify connect was called: 1 initial + 3 reconnect attempts (2 fail + 1 success)
-            assert_eq!(
-                connect_calls.load(Ordering::SeqCst),
-                4,
-                "Should have called connect() 4 times total"
-            );
-
+            let calls = connect_calls.load(Ordering::SeqCst);
             client_task.abort();
+            (events, calls)
         })
-        .await;
+        .await
+}
+
+/// Test that UserClient reconnects immediately when proxy drops and first retry succeeds.
+///
+/// Verifies: ClientDisconnected → Reconnected (no Reconnecting events)
+#[tokio::test(flavor = "current_thread")]
+async fn test_user_client_reconnects_immediately() {
+    let (events, connect_calls) = run_reconnection_test(0).await;
+
+    assert_eq!(
+        events.len(),
+        2,
+        "Expected [Disconnected, Reconnected], got: {events:?}"
+    );
+    assert!(
+        matches!(events[0], UserClientEvent::ClientDisconnected {}),
+        "First event should be ClientDisconnected, got {:?}",
+        events[0]
+    );
+    assert!(
+        matches!(events[1], UserClientEvent::Reconnected {}),
+        "Second event should be Reconnected, got {:?}",
+        events[1]
+    );
+
+    // 1 initial connect + 1 reconnect (success)
+    assert_eq!(
+        connect_calls, 2,
+        "Should have called connect() 2 times total"
+    );
+}
+
+/// Test that UserClient retries with backoff when reconnection fails multiple times.
+///
+/// Verifies: ClientDisconnected → Reconnecting(1) → Reconnecting(2) → Reconnected
+#[tokio::test(flavor = "current_thread")]
+async fn test_user_client_reconnects_after_failures() {
+    let (events, connect_calls) = run_reconnection_test(2).await;
+
+    assert_eq!(
+        events.len(),
+        4,
+        "Expected [Disconnected, Reconnecting(1), Reconnecting(2), Reconnected], got: {events:?}"
+    );
+    assert!(matches!(events[0], UserClientEvent::ClientDisconnected {}));
+    assert!(matches!(
+        events[1],
+        UserClientEvent::Reconnecting { attempt: 1 }
+    ));
+    assert!(matches!(
+        events[2],
+        UserClientEvent::Reconnecting { attempt: 2 }
+    ));
+    assert!(matches!(events[3], UserClientEvent::Reconnected {}));
+
+    // 1 initial + 3 reconnect attempts (2 fail + 1 success)
+    assert_eq!(
+        connect_calls, 4,
+        "Should have called connect() 4 times total"
+    );
 }
 
 /// Test rendezvous pairing with fingerprint verification on BOTH sides
