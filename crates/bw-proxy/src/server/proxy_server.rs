@@ -169,7 +169,14 @@ impl ProxyServer {
     pub async fn run(&self) -> Result<(), ProxyError> {
         let listener = TcpListener::bind(self.bind_addr).await?;
         tracing::info!("Proxy server listening on {}", self.bind_addr);
+        self.run_with_listener(listener).await
+    }
 
+    /// Run the proxy server using an already-bound `TcpListener`.
+    ///
+    /// This is useful in tests to avoid the race condition of binding a port,
+    /// dropping the listener, and re-binding.
+    pub async fn run_with_listener(&self, listener: TcpListener) -> Result<(), ProxyError> {
         // Spawn background cleanup task for expired rendezvous codes
         let cleanup_state = Arc::clone(&self.state);
         tokio::spawn(async move {

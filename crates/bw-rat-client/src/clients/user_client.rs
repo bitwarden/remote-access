@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use bw_noise_protocol::{Ciphersuite, MultiDeviceTransport, Psk, ResponderHandshake};
@@ -9,6 +10,11 @@ use crate::proxy::ProxyClient;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
+
+/// Base delay for reconnection backoff.
+const RECONNECT_BASE_DELAY: Duration = Duration::from_secs(2);
+/// Maximum delay between reconnection attempts (15 minutes).
+const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(15 * 60);
 
 /// Holds the state of a handshake pending fingerprint verification
 struct PendingHandshakeVerification {
@@ -87,8 +93,15 @@ pub enum UserClientEvent {
         /// The remote device's identity fingerprint
         fingerprint: IdentityFingerprint,
     },
-    /// Client disconnected
+    /// Client disconnected from proxy
     ClientDisconnected {},
+    /// Attempting to reconnect to proxy
+    Reconnecting {
+        /// Current reconnection attempt number
+        attempt: u32,
+    },
+    /// Successfully reconnected to proxy
+    Reconnected {},
     /// An error occurred
     Error {
         /// Error message
@@ -325,13 +338,31 @@ impl UserClient {
 
         loop {
             tokio::select! {
-                Some(msg) = incoming_rx.recv() => {
-                    if let Err(e) = self.handle_incoming(msg, &event_tx).await {
-                        warn!("Error handling incoming message: {}", e);
-                        event_tx.send(UserClientEvent::Error {
-                            message: e.to_string(),
-                            context: Some("handle_incoming".to_string()),
-                        }).await.ok();
+                msg = incoming_rx.recv() => {
+                    match msg {
+                        Some(msg) => {
+                            if let Err(e) = self.handle_incoming(msg, &event_tx).await {
+                                warn!("Error handling incoming message: {}", e);
+                                event_tx.send(UserClientEvent::Error {
+                                    message: e.to_string(),
+                                    context: Some("handle_incoming".to_string()),
+                                }).await.ok();
+                            }
+                        }
+                        None => {
+                            // Incoming channel closed — proxy connection lost
+                            event_tx.send(UserClientEvent::ClientDisconnected {}).await.ok();
+                            match self.attempt_reconnection(&event_tx).await {
+                                Ok(new_rx) => {
+                                    incoming_rx = new_rx;
+                                    event_tx.send(UserClientEvent::Reconnected {}).await.ok();
+                                }
+                                Err(e) => {
+                                    warn!("Reconnection failed permanently: {}", e);
+                                    return Err(e);
+                                }
+                            }
+                        }
                     }
                 }
                 Some(response) = response_rx.recv() => {
@@ -342,6 +373,60 @@ impl UserClient {
                             context: Some("handle_response".to_string()),
                         }).await.ok();
                     }
+                }
+            }
+        }
+    }
+
+    /// Attempt to reconnect to the proxy server with exponential backoff.
+    ///
+    /// Base delay: 2s, multiplier: 2x, max delay: 15 minutes, with jitter.
+    /// Retries indefinitely until successful.
+    async fn attempt_reconnection(
+        &mut self,
+        event_tx: &mpsc::Sender<UserClientEvent>,
+    ) -> Result<mpsc::UnboundedReceiver<IncomingMessage>, RemoteClientError> {
+        use rand::Rng;
+
+        let mut rng = rand::thread_rng();
+        let mut attempt: u32 = 0;
+
+        loop {
+            attempt = attempt.saturating_add(1);
+
+            let proxy_client = self
+                .proxy_client
+                .as_mut()
+                .ok_or(RemoteClientError::NotInitialized)?;
+
+            // Disconnect (ignore errors — connection may already be dead)
+            let _ = proxy_client.disconnect().await;
+
+            match proxy_client.connect().await {
+                Ok(new_rx) => {
+                    debug!("Reconnected to proxy on attempt {}", attempt);
+                    return Ok(new_rx);
+                }
+                Err(e) => {
+                    debug!("Reconnection attempt {} failed: {}", attempt, e);
+                    event_tx
+                        .send(UserClientEvent::Reconnecting { attempt })
+                        .await
+                        .ok();
+
+                    // Exponential backoff with jitter
+                    let exp_delay = RECONNECT_BASE_DELAY
+                        .saturating_mul(2u32.saturating_pow(attempt.saturating_sub(1)));
+                    let delay = exp_delay.min(RECONNECT_MAX_DELAY);
+                    let jitter_max = (delay.as_millis() as u64) / 4;
+                    let jitter = if jitter_max > 0 {
+                        rng.gen_range(0..=jitter_max)
+                    } else {
+                        0
+                    };
+                    let total_delay = delay + Duration::from_millis(jitter);
+
+                    tokio::time::sleep(total_delay).await;
                 }
             }
         }

@@ -331,9 +331,29 @@ pub fn format_listen_event(event: &UserClientEvent) -> Option<Message> {
             ))
         }
 
-        UserClientEvent::ClientDisconnected {} => {
-            Some(Message::new(MessageKind::Info, "Client disconnected"))
-        }
+        UserClientEvent::ClientDisconnected {} => Some(Message::new(
+            MessageKind::Warning,
+            "Proxy connection lost — attempting to reconnect...",
+        )),
+
+        UserClientEvent::Reconnecting { attempt } => Some(Message::rich(
+            MessageKind::Status,
+            vec![
+                Span::styled("Reconnecting to proxy (attempt ", dim()),
+                Span::styled(
+                    attempt.to_string(),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(")...", dim()),
+            ],
+        )),
+
+        UserClientEvent::Reconnected {} => Some(Message::new(
+            MessageKind::Success,
+            "Reconnected to proxy server",
+        )),
 
         UserClientEvent::Error { message, context } => {
             let ctx = context.as_deref().unwrap_or("unknown");

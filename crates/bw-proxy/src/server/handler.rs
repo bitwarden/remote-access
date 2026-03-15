@@ -7,7 +7,11 @@ fn ws_err(e: tokio_tungstenite::tungstenite::Error) -> ProxyError {
 }
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
+
+/// Maximum time the server waits without receiving any message (including
+/// client pings) before considering the connection dead and closing it.
+const CLIENT_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(120);
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
@@ -134,15 +138,43 @@ impl ConnectionHandler {
         fingerprint: IdentityFingerprint,
         conn_id: u64,
     ) -> Result<(), ProxyError> {
-        while let Some(msg_result) = ws_read.next().await {
-            let msg = match msg_result {
-                Ok(Message::Text(text)) => text,
-                Ok(Message::Close(_)) => {
-                    tracing::info!("Connection #{}: Client closed connection", conn_id);
+        let inactivity_deadline = tokio::time::sleep(CLIENT_INACTIVITY_TIMEOUT);
+        tokio::pin!(inactivity_deadline);
+
+        loop {
+            let msg = tokio::select! {
+                msg_result = ws_read.next() => {
+                    match msg_result {
+                        Some(Ok(Message::Text(text))) => {
+                            // Reset inactivity timer only on real protocol messages
+                            inactivity_deadline
+                                .as_mut()
+                                .reset(tokio::time::Instant::now() + CLIENT_INACTIVITY_TIMEOUT);
+                            text
+                        }
+                        Some(Ok(Message::Close(_))) => {
+                            tracing::info!("Connection #{}: Client closed connection", conn_id);
+                            return Ok(());
+                        }
+                        Some(Ok(_)) => {
+                            // Pings/pongs/binary frames also indicate the client is alive
+                            inactivity_deadline
+                                .as_mut()
+                                .reset(tokio::time::Instant::now() + CLIENT_INACTIVITY_TIMEOUT);
+                            continue;
+                        }
+                        Some(Err(e)) => return Err(ws_err(e)),
+                        None => return Ok(()),
+                    }
+                }
+                _ = &mut inactivity_deadline => {
+                    tracing::info!(
+                        "Connection #{}: Client inactive for {}s, closing",
+                        conn_id,
+                        CLIENT_INACTIVITY_TIMEOUT.as_secs()
+                    );
                     return Ok(());
                 }
-                Ok(_) => continue,
-                Err(e) => return Err(ws_err(e)),
             };
 
             let parsed_msg: Messages = match serde_json::from_str(&msg) {
@@ -334,7 +366,5 @@ impl ConnectionHandler {
                 }
             }
         }
-
-        Ok(())
     }
 }
