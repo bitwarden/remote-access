@@ -76,11 +76,15 @@ pub enum UserClientEvent {
     CredentialApproved {
         /// Domain
         domain: String,
+        /// Vault item ID
+        credential_id: Option<String>,
     },
     /// Credential was denied
     CredentialDenied {
         /// Domain
         domain: String,
+        /// Vault item ID
+        credential_id: Option<String>,
     },
     /// A known/cached device reconnected — transport keys refreshed, no re-verification needed
     SessionRefreshed {
@@ -100,6 +104,7 @@ pub enum UserClientEvent {
 
 /// Response actions for events requiring user decision
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum UserClientResponse {
     /// Respond to fingerprint verification prompt
     VerifyFingerprint {
@@ -120,6 +125,8 @@ pub enum UserClientResponse {
         approved: bool,
         /// The credential to send (if approved)
         credential: Option<CredentialData>,
+        /// Vault item ID (for audit logging)
+        credential_id: Option<String>,
     },
 }
 
@@ -141,6 +148,9 @@ pub struct CredentialData {
     /// Additional notes
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+    /// Vault item ID
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_id: Option<String>,
 }
 
 /// Credential request payload (decrypted)
@@ -621,9 +631,16 @@ impl UserClient {
                 domain,
                 approved,
                 credential,
+                credential_id,
             } => {
                 self.handle_credential_response(
-                    request_id, session_id, domain, approved, credential, event_tx,
+                    request_id,
+                    session_id,
+                    domain,
+                    approved,
+                    credential,
+                    credential_id,
+                    event_tx,
                 )
                 .await?;
             }
@@ -632,6 +649,7 @@ impl UserClient {
     }
 
     /// Handle credential response
+    #[allow(clippy::too_many_arguments)]
     async fn handle_credential_response(
         &mut self,
         request_id: String,
@@ -639,6 +657,7 @@ impl UserClient {
         domain: String,
         approved: bool,
         credential: Option<CredentialData>,
+        credential_id: Option<String>,
         event_tx: &mpsc::Sender<UserClientEvent>,
     ) -> Result<(), RemoteClientError> {
         // Parse session_id as fingerprint
@@ -709,7 +728,10 @@ impl UserClient {
                 .await;
 
             event_tx
-                .send(UserClientEvent::CredentialApproved { domain })
+                .send(UserClientEvent::CredentialApproved {
+                    domain,
+                    credential_id,
+                })
                 .await
                 .ok();
         } else {
@@ -722,7 +744,10 @@ impl UserClient {
                 .await;
 
             event_tx
-                .send(UserClientEvent::CredentialDenied { domain })
+                .send(UserClientEvent::CredentialDenied {
+                    domain,
+                    credential_id,
+                })
                 .await
                 .ok();
         }

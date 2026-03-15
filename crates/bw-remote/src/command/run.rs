@@ -21,6 +21,7 @@ const CREDENTIAL_FIELDS: &[(&str, &str)] = &[
     ("uri", "AAC_URI"),
     ("notes", "AAC_NOTES"),
     ("domain", "AAC_DOMAIN"),
+    ("credential_id", "AAC_CREDENTIAL_ID"),
 ];
 
 /// Run a command with credentials injected as environment variables
@@ -36,7 +37,7 @@ EXAMPLES:
   # Combine defaults with custom overrides:
   aac run --domain example.com --env-all --env CUSTOM_PW=password -- deploy.sh
 
-VALID FIELDS: username, password, totp, uri, notes, domain")]
+VALID FIELDS: username, password, totp, uri, notes, domain, credential_id")]
 pub struct RunArgs {
     /// Proxy server URL
     #[arg(long, default_value = DEFAULT_PROXY_URL)]
@@ -59,7 +60,7 @@ pub struct RunArgs {
     pub ephemeral_connection: bool,
 
     /// Map a credential field to an env var: VAR_NAME=field
-    /// Valid fields: username, password, totp, uri, notes, domain
+    /// Valid fields: username, password, totp, uri, notes, domain, credential_id
     #[arg(long = "env", value_name = "VAR=FIELD")]
     pub env_mappings: Vec<String>,
 
@@ -80,6 +81,7 @@ fn get_field<'a>(credential: &'a CredentialData, domain: &'a str, field: &str) -
         "totp" => credential.totp.as_deref(),
         "uri" => credential.uri.as_deref(),
         "notes" => credential.notes.as_deref(),
+        "credential_id" => credential.credential_id.as_deref(),
         "domain" => Some(domain),
         _ => None,
     }
@@ -204,6 +206,7 @@ mod tests {
             totp: Some("123456".to_string()),
             uri: Some("https://example.com".to_string()),
             notes: None,
+            credential_id: Some("item-uuid-123".to_string()),
         }
     }
 
@@ -218,6 +221,10 @@ mod tests {
             Some("example.com")
         );
         assert_eq!(get_field(&cred, "example.com", "notes"), None);
+        assert_eq!(
+            get_field(&cred, "example.com", "credential_id"),
+            Some("item-uuid-123")
+        );
         assert_eq!(get_field(&cred, "example.com", "invalid"), None);
     }
 
@@ -232,7 +239,11 @@ mod tests {
         assert_eq!(env_vars.get("AAC_URI").expect("uri"), "https://example.com");
         assert!(!env_vars.contains_key("AAC_NOTES"), "notes is None");
         assert_eq!(env_vars.get("AAC_DOMAIN").expect("domain"), "example.com");
-        assert_eq!(env_vars.len(), 5);
+        assert_eq!(
+            env_vars.get("AAC_CREDENTIAL_ID").expect("credential_id"),
+            "item-uuid-123"
+        );
+        assert_eq!(env_vars.len(), 6);
     }
 
     #[test]
@@ -267,6 +278,7 @@ mod tests {
             totp: None,
             uri: None,
             notes: None,
+            credential_id: None,
         };
         let env_vars = build_env_vars(&cred, "example.com", true, &[]);
 
@@ -278,6 +290,7 @@ mod tests {
     fn is_valid_field_accepts_known_rejects_unknown() {
         assert!(is_valid_field("username"));
         assert!(is_valid_field("domain"));
+        assert!(is_valid_field("credential_id"));
         assert!(!is_valid_field("bogus"));
         assert!(!is_valid_field(""));
     }

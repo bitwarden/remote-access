@@ -104,6 +104,8 @@ pub enum RemoteClientEvent {
         domain: String,
         /// The credential data
         credential: CredentialData,
+        /// Vault item ID (if provided by the user-client)
+        credential_id: Option<String>,
     },
     /// An error occurred
     Error {
@@ -137,6 +139,9 @@ pub struct CredentialData {
     /// Additional notes
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+    /// Vault item ID
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_id: Option<String>,
 }
 
 /// Internal protocol messages sent over WebSocket

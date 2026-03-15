@@ -304,6 +304,7 @@ fn test_credential() -> UserCredentialData {
         totp: Some("123456".to_string()),
         uri: Some("https://example.com".to_string()),
         notes: Some("Test credential notes".to_string()),
+        credential_id: Some("test-item-id".to_string()),
     }
 }
 
@@ -450,6 +451,7 @@ async fn test_e2e_psk_pairing_and_credential_request() {
                                 domain,
                                 approved: true,
                                 credential: Some(test_credential()),
+                                credential_id: Some("test-item-id".to_string()),
                             })
                             .await
                             .expect("Should send response");
@@ -628,6 +630,7 @@ async fn test_e2e_fingerprint_pairing_and_credential_request() {
                                 domain,
                                 approved: true,
                                 credential: Some(test_credential()),
+                                credential_id: Some("test-item-id".to_string()),
                             })
                             .await
                             .expect("Should send response");
@@ -767,6 +770,7 @@ async fn test_e2e_credential_request_denied() {
                                 domain,
                                 approved: false,
                                 credential: None,
+                                credential_id: None,
                             })
                             .await
                             .expect("Should send denial response");
@@ -906,6 +910,7 @@ async fn test_e2e_multiple_credential_requests() {
                             totp: None,
                             uri: Some(format!("https://{domain}")),
                             notes: Some(format!("Request #{request_count}")),
+                            credential_id: None,
                         };
 
                         user_response_tx
@@ -915,6 +920,7 @@ async fn test_e2e_multiple_credential_requests() {
                                 domain,
                                 approved: true,
                                 credential: Some(credential),
+                                credential_id: None,
                             })
                             .await
                             .expect("Should send response");
@@ -1372,7 +1378,9 @@ async fn test_e2e_multi_device_credential_response() {
                                         totp: None,
                                         uri: None,
                                         notes: None,
+                                        credential_id: None,
                                     }),
+                                    credential_id: None,
                                 })
                                 .await
                                 .ok();
@@ -1403,7 +1411,9 @@ async fn test_e2e_multi_device_credential_response() {
                                         totp: None,
                                         uri: None,
                                         notes: None,
+                                        credential_id: None,
                                     }),
+                                    credential_id: None,
                                 })
                                 .await
                                 .ok();
