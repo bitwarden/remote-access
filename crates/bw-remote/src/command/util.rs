@@ -301,14 +301,14 @@ pub fn format_listen_event(event: &UserClientEvent) -> Option<Message> {
             ],
         )),
 
-        UserClientEvent::CredentialApproved { domain } => Some(Message::rich(
+        UserClientEvent::CredentialApproved { domain, .. } => Some(Message::rich(
             MessageKind::Success,
             vec![
                 Span::styled("Credential approved: ", text()),
                 Span::styled(domain.clone(), val_style()),
             ],
         )),
-        UserClientEvent::CredentialDenied { domain } => Some(Message::rich(
+        UserClientEvent::CredentialDenied { domain, .. } => Some(Message::rich(
             MessageKind::Error,
             vec![
                 Span::styled("Credential denied: ", Style::default().fg(Color::Red)),

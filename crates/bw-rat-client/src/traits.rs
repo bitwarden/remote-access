@@ -169,6 +169,7 @@ pub enum AuditEvent<'a> {
         domain: &'a str,
         remote_identity: &'a IdentityFingerprint,
         request_id: &'a str,
+        credential_id: Option<&'a str>,
         fields: CredentialFieldSet,
     },
 
@@ -179,6 +180,7 @@ pub enum AuditEvent<'a> {
         domain: &'a str,
         remote_identity: &'a IdentityFingerprint,
         request_id: &'a str,
+        credential_id: Option<&'a str>,
     },
 }
 

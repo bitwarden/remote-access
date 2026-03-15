@@ -52,6 +52,7 @@ impl ListenArgs {
 }
 
 /// Current phase of the listen command's interactive loop.
+#[allow(clippy::large_enum_variant)]
 enum Phase {
     /// Waiting for events; showing the idle menu.
     Idle,
@@ -94,6 +95,7 @@ struct BwUri {
 /// Bitwarden CLI item structure
 #[derive(Deserialize)]
 struct BwItem {
+    id: Option<String>,
     login: Option<BwLogin>,
 }
 
@@ -130,6 +132,7 @@ fn lookup_credential(domain: &str, session: Option<&str>) -> Option<UserCredenti
         totp: login.totp,
         uri,
         notes: None,
+        credential_id: item.id,
     })
 }
 
@@ -540,6 +543,7 @@ async fn run_event_loop(
                                     let old_phase = std::mem::replace(&mut phase, Phase::Idle);
                                     if let Phase::CredentialApproval { domain, request_id, session_id, credential } = old_phase {
                                         if approved {
+                                            let cred_id = credential.credential_id.clone();
                                             response_tx
                                                 .send(UserClientResponse::RespondCredential {
                                                     request_id,
@@ -547,6 +551,7 @@ async fn run_event_loop(
                                                     domain: domain.clone(),
                                                     approved: true,
                                                     credential: Some(credential),
+                                                    credential_id: cred_id,
                                                 })
                                                 .await
                                                 .ok();
@@ -559,6 +564,7 @@ async fn run_event_loop(
                                                     domain: domain.clone(),
                                                     approved: false,
                                                     credential: None,
+                                                    credential_id: credential.credential_id,
                                                 })
                                                 .await
                                                 .ok();
@@ -675,6 +681,7 @@ async fn run_event_loop(
                                                 domain,
                                                 approved: false,
                                                 credential: None,
+                                                credential_id: None,
                                             })
                                             .await
                                             .ok();
