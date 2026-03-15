@@ -7,7 +7,10 @@ fn ws_err(e: tokio_tungstenite::tungstenite::Error) -> ProxyError {
 }
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
+
+/// Interval between server-side WebSocket pings to connected clients.
+const SERVER_PING_INTERVAL: Duration = Duration::from_secs(45);
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
@@ -136,7 +139,7 @@ impl ConnectionHandler {
         conn_id: u64,
         tx: &mpsc::UnboundedSender<Message>,
     ) -> Result<(), ProxyError> {
-        let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(45));
+        let mut ping_interval = tokio::time::interval(SERVER_PING_INTERVAL);
         ping_interval.tick().await; // consume the immediate first tick
 
         loop {

@@ -9,6 +9,11 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tokio_tungstenite::{WebSocketStream, connect_async, tungstenite::Message};
 
+/// Interval between client-side WebSocket pings.
+const PING_INTERVAL: Duration = Duration::from_secs(30);
+/// Maximum time without a pong before the connection is considered dead.
+const PONG_TIMEOUT: Duration = Duration::from_secs(60);
+
 use super::config::{ClientState, IncomingMessage, ProxyClientConfig};
 
 /// Convert tungstenite errors into ProxyError (replaces the From impl that
@@ -599,7 +604,7 @@ impl ProxyProtocolClient {
         mut outgoing_rx: mpsc::UnboundedReceiver<Message>,
         last_pong: Arc<Mutex<Instant>>,
     ) {
-        let mut ping_interval = tokio::time::interval(Duration::from_secs(30));
+        let mut ping_interval = tokio::time::interval(PING_INTERVAL);
         ping_interval.tick().await; // consume the immediate first tick
 
         loop {
@@ -615,9 +620,9 @@ impl ProxyProtocolClient {
                     }
                 }
                 _ = ping_interval.tick() => {
-                    // Check if we received a pong recently (within 60s)
+                    // Check if we received a pong recently
                     let elapsed = last_pong.lock().await.elapsed();
-                    if elapsed > Duration::from_secs(60) {
+                    if elapsed > PONG_TIMEOUT {
                         tracing::warn!("No pong received in {:?}, closing connection", elapsed);
                         break;
                     }

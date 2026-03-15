@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use bw_noise_protocol::{Ciphersuite, MultiDeviceTransport, Psk, ResponderHandshake};
@@ -9,6 +10,11 @@ use crate::proxy::ProxyClient;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
+
+/// Base delay for reconnection backoff.
+const RECONNECT_BASE_DELAY: Duration = Duration::from_secs(2);
+/// Maximum delay between reconnection attempts (15 minutes).
+const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(15 * 60);
 
 /// Holds the state of a handshake pending fingerprint verification
 struct PendingHandshakeVerification {
@@ -370,8 +376,7 @@ impl UserClient {
     ) -> Result<mpsc::UnboundedReceiver<IncomingMessage>, RemoteClientError> {
         use rand::Rng;
 
-        let base_delay = std::time::Duration::from_secs(2);
-        let max_delay = std::time::Duration::from_secs(15 * 60);
+        let mut rng = rand::thread_rng();
         let mut attempt: u32 = 0;
 
         loop {
@@ -398,16 +403,16 @@ impl UserClient {
                         .ok();
 
                     // Exponential backoff with jitter
-                    let exp_delay =
-                        base_delay.saturating_mul(2u32.saturating_pow(attempt.saturating_sub(1)));
-                    let delay = exp_delay.min(max_delay);
+                    let exp_delay = RECONNECT_BASE_DELAY
+                        .saturating_mul(2u32.saturating_pow(attempt.saturating_sub(1)));
+                    let delay = exp_delay.min(RECONNECT_MAX_DELAY);
                     let jitter_max = (delay.as_millis() as u64) / 4;
                     let jitter = if jitter_max > 0 {
-                        rand::thread_rng().gen_range(0..=jitter_max)
+                        rng.gen_range(0..=jitter_max)
                     } else {
                         0
                     };
-                    let total_delay = delay + std::time::Duration::from_millis(jitter);
+                    let total_delay = delay + Duration::from_millis(jitter);
 
                     tokio::time::sleep(total_delay).await;
                 }
@@ -693,38 +698,14 @@ impl UserClient {
 
         let msg_json = serde_json::to_string(&msg)?;
 
-        // Try to send, reconnect once on connection failure
-        let send_result = {
-            let proxy_client = self
-                .proxy_client
-                .as_ref()
-                .ok_or(RemoteClientError::NotInitialized)?;
+        let proxy_client = self
+            .proxy_client
+            .as_ref()
+            .ok_or(RemoteClientError::NotInitialized)?;
 
-            proxy_client
-                .send_to(fingerprint, msg_json.clone().into_bytes())
-                .await
-        };
-
-        if let Err(e) = send_result {
-            warn!("Send failed, attempting reconnection: {}", e);
-            event_tx
-                .send(UserClientEvent::ClientDisconnected {})
-                .await
-                .ok();
-            let new_rx = self.attempt_reconnection(event_tx).await?;
-            self.incoming_rx = Some(new_rx);
-            event_tx.send(UserClientEvent::Reconnected {}).await.ok();
-
-            // Retry once after reconnect
-            let proxy_client = self
-                .proxy_client
-                .as_ref()
-                .ok_or(RemoteClientError::NotInitialized)?;
-
-            proxy_client
-                .send_to(fingerprint, msg_json.into_bytes())
-                .await?;
-        }
+        proxy_client
+            .send_to(fingerprint, msg_json.into_bytes())
+            .await?;
 
         // Send event
         if approved {
