@@ -144,18 +144,25 @@ impl ConnectionHandler {
         loop {
             let msg = tokio::select! {
                 msg_result = ws_read.next() => {
-                    // Any message from the client resets the inactivity timer
-                    inactivity_deadline
-                        .as_mut()
-                        .reset(tokio::time::Instant::now() + CLIENT_INACTIVITY_TIMEOUT);
-
                     match msg_result {
-                        Some(Ok(Message::Text(text))) => text,
+                        Some(Ok(Message::Text(text))) => {
+                            // Reset inactivity timer only on real protocol messages
+                            inactivity_deadline
+                                .as_mut()
+                                .reset(tokio::time::Instant::now() + CLIENT_INACTIVITY_TIMEOUT);
+                            text
+                        }
                         Some(Ok(Message::Close(_))) => {
                             tracing::info!("Connection #{}: Client closed connection", conn_id);
                             return Ok(());
                         }
-                        Some(Ok(_)) => continue,
+                        Some(Ok(_)) => {
+                            // Pings/pongs/binary frames also indicate the client is alive
+                            inactivity_deadline
+                                .as_mut()
+                                .reset(tokio::time::Instant::now() + CLIENT_INACTIVITY_TIMEOUT);
+                            continue;
+                        }
                         Some(Err(e)) => return Err(ws_err(e)),
                         None => return Ok(()),
                     }
