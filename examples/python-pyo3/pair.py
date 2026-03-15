@@ -39,11 +39,6 @@ def main() -> int:
         if fingerprint:
             print(f"Handshake fingerprint: {fingerprint}", file=sys.stderr)
 
-        sessions = client.list_sessions()
-        if sessions:
-            fp, name, cached_at, _ = sessions[0]
-            print(f"Session cached: {fp[:16]}...", file=sys.stderr)
-
         print("Paired successfully.", file=sys.stderr)
         return 0
     except Exception as e:
