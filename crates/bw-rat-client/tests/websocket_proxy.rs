@@ -447,6 +447,7 @@ async fn test_e2e_psk_pairing_and_credential_request() {
                             .send(UserClientResponse::RespondCredential {
                                 request_id,
                                 session_id,
+                                domain,
                                 approved: true,
                                 credential: Some(test_credential()),
                             })
@@ -624,6 +625,7 @@ async fn test_e2e_fingerprint_pairing_and_credential_request() {
                             .send(UserClientResponse::RespondCredential {
                                 request_id,
                                 session_id,
+                                domain,
                                 approved: true,
                                 credential: Some(test_credential()),
                             })
@@ -754,7 +756,7 @@ async fn test_e2e_credential_request_denied() {
                     if let UserClientEvent::CredentialRequest {
                         request_id,
                         session_id,
-                        ..
+                        domain,
                     } = event
                     {
                         // Deny the credential request
@@ -762,6 +764,7 @@ async fn test_e2e_credential_request_denied() {
                             .send(UserClientResponse::RespondCredential {
                                 request_id,
                                 session_id,
+                                domain,
                                 approved: false,
                                 credential: None,
                             })
@@ -909,6 +912,7 @@ async fn test_e2e_multiple_credential_requests() {
                             .send(UserClientResponse::RespondCredential {
                                 request_id,
                                 session_id,
+                                domain,
                                 approved: true,
                                 credential: Some(credential),
                             })
@@ -1352,7 +1356,7 @@ async fn test_e2e_multi_device_credential_response() {
                     if let UserClientEvent::CredentialRequest {
                         request_id,
                         session_id,
-                        ..
+                        domain,
                     } = event
                     {
                         if should_device1_handle(&request_id) {
@@ -1360,6 +1364,7 @@ async fn test_e2e_multi_device_credential_response() {
                                 .send(UserClientResponse::RespondCredential {
                                     request_id,
                                     session_id,
+                                    domain,
                                     approved: true,
                                     credential: Some(UserCredentialData {
                                         username: Some("device1_user".into()),
@@ -1382,7 +1387,7 @@ async fn test_e2e_multi_device_credential_response() {
                     if let UserClientEvent::CredentialRequest {
                         request_id,
                         session_id,
-                        ..
+                        domain,
                     } = event
                     {
                         if !should_device1_handle(&request_id) {
@@ -1390,6 +1395,7 @@ async fn test_e2e_multi_device_credential_response() {
                                 .send(UserClientResponse::RespondCredential {
                                     request_id,
                                     session_id,
+                                    domain,
                                     approved: true,
                                     credential: Some(UserCredentialData {
                                         username: Some("device2_user".into()),

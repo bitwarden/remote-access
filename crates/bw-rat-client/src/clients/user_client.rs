@@ -114,6 +114,8 @@ pub enum UserClientResponse {
         request_id: String,
         /// Session ID for routing to correct transport (fingerprint)
         session_id: String,
+        /// The requested domain
+        domain: String,
         /// Whether approved
         approved: bool,
         /// The credential to send (if approved)
@@ -616,11 +618,12 @@ impl UserClient {
             UserClientResponse::RespondCredential {
                 request_id,
                 session_id,
+                domain,
                 approved,
                 credential,
             } => {
                 self.handle_credential_response(
-                    request_id, session_id, approved, credential, event_tx,
+                    request_id, session_id, domain, approved, credential, event_tx,
                 )
                 .await?;
             }
@@ -633,6 +636,7 @@ impl UserClient {
         &mut self,
         request_id: String,
         session_id: String,
+        domain: String,
         approved: bool,
         credential: Option<CredentialData>,
         event_tx: &mpsc::Sender<UserClientEvent>,
@@ -650,9 +654,20 @@ impl UserClient {
             .get_mut(&fingerprint)
             .ok_or(RemoteClientError::SecureChannelNotEstablished)?;
 
+        // Compute audit fields before credential is moved into the response payload
+        let fields = credential
+            .as_ref()
+            .map_or_else(CredentialFieldSet::default, |c| CredentialFieldSet {
+                has_username: c.username.is_some(),
+                has_password: c.password.is_some(),
+                has_totp: c.totp.is_some(),
+                has_uri: c.uri.is_some(),
+                has_notes: c.notes.is_some(),
+            });
+
         // Create response payload
         let response_payload = CredentialResponsePayload {
-            credential: if approved { credential.clone() } else { None },
+            credential: if approved { credential } else { None },
             error: if !approved {
                 Some("Request denied".to_string())
             } else {
@@ -684,19 +699,9 @@ impl UserClient {
 
         // Send event
         if approved {
-            let fields = credential
-                .as_ref()
-                .map_or_else(CredentialFieldSet::default, |c| CredentialFieldSet {
-                    has_username: c.username.is_some(),
-                    has_password: c.password.is_some(),
-                    has_totp: c.totp.is_some(),
-                    has_uri: c.uri.is_some(),
-                    has_notes: c.notes.is_some(),
-                });
-
             self.audit_log
                 .write(AuditEvent::CredentialApproved {
-                    domain: "unknown", // TODO: Track domain from request
+                    domain: &domain,
                     remote_identity: &fingerprint,
                     request_id: &request_id,
                     fields,
@@ -704,24 +709,20 @@ impl UserClient {
                 .await;
 
             event_tx
-                .send(UserClientEvent::CredentialApproved {
-                    domain: "unknown".to_string(), // TODO: Track domain from request
-                })
+                .send(UserClientEvent::CredentialApproved { domain })
                 .await
                 .ok();
         } else {
             self.audit_log
                 .write(AuditEvent::CredentialDenied {
-                    domain: "unknown", // TODO: Track domain from request
+                    domain: &domain,
                     remote_identity: &fingerprint,
                     request_id: &request_id,
                 })
                 .await;
 
             event_tx
-                .send(UserClientEvent::CredentialDenied {
-                    domain: "unknown".to_string(),
-                })
+                .send(UserClientEvent::CredentialDenied { domain })
                 .await
                 .ok();
         }

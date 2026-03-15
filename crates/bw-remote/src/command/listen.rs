@@ -544,6 +544,7 @@ async fn run_event_loop(
                                                 .send(UserClientResponse::RespondCredential {
                                                     request_id,
                                                     session_id,
+                                                    domain: domain.clone(),
                                                     approved: true,
                                                     credential: Some(credential),
                                                 })
@@ -555,6 +556,7 @@ async fn run_event_loop(
                                                 .send(UserClientResponse::RespondCredential {
                                                     request_id,
                                                     session_id,
+                                                    domain: domain.clone(),
                                                     approved: false,
                                                     credential: None,
                                                 })
@@ -670,6 +672,7 @@ async fn run_event_loop(
                                             .send(UserClientResponse::RespondCredential {
                                                 request_id,
                                                 session_id,
+                                                domain,
                                                 approved: false,
                                                 credential: None,
                                             })
