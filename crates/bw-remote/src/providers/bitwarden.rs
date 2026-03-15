@@ -233,12 +233,16 @@ impl CredentialProvider for BitwardenProvider {
         match lookup_credential(bw, search, self.session.as_deref()) {
             Some(cred) => LookupResult::Found(cred),
             None => {
-                // If we have no session, the vault is likely locked — report that
-                // rather than "not found" to avoid misleading the user.
+                // When there's no cached session the vault might still be unlocked
+                // natively (e.g. via BW_SESSION in the shell). Check `bw status`
+                // to distinguish "not found" from "vault locked".
                 if self.session.is_none() {
-                    return LookupResult::NotReady {
-                        message: "Vault is locked".to_string(),
-                    };
+                    let (status, _) = check_bw_cli_status(bw, None);
+                    if status.as_deref() != Some("unlocked") {
+                        return LookupResult::NotReady {
+                            message: "Vault is locked".to_string(),
+                        };
+                    }
                 }
                 LookupResult::NotFound
             }
