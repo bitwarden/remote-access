@@ -173,5 +173,5 @@ It contains:
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, crate structure, and how to run the project.
 
 <p align="center">
-  <img src="assets/architecture.png" alt="Agent Access architecture" width="540">
+  <img src="assets/architecture.png" alt="Agent Access architecture" width="960">
 </p>
