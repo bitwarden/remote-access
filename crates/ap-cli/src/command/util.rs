@@ -318,14 +318,14 @@ pub fn format_listen_event(event: &UserClientEvent) -> Option<Message> {
             MessageKind::Success,
             vec![
                 Span::styled("Credential approved: ", text()),
-                Span::styled(domain.clone().unwrap_or_default(), val_style()),
+                Span::styled(domain.clone().unwrap_or_else(|| "(unknown)".into()), val_style()),
             ],
         )),
         UserClientEvent::CredentialDenied { domain, .. } => Some(Message::rich(
             MessageKind::Error,
             vec![
                 Span::styled("Credential denied: ", Style::default().fg(Color::Red)),
-                Span::styled(domain.clone().unwrap_or_default(), val_style()),
+                Span::styled(domain.clone().unwrap_or_else(|| "(unknown)".into()), val_style()),
             ],
         )),
 
