@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use base64::{Engine, engine::general_purpose::STANDARD};
 use ap_noise::{Ciphersuite, MultiDeviceTransport, Psk, ResponderHandshake};
 use ap_proxy_client::IncomingMessage;
 use ap_proxy_protocol::{IdentityFingerprint, RendevouzCode};
+use base64::{Engine, engine::general_purpose::STANDARD};
 
 use crate::proxy::ProxyClient;
 use serde::{Deserialize, Serialize};

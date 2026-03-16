@@ -3,12 +3,12 @@
 //! Handles the user-client (trusted device) mode for receiving and
 //! approving connection requests from remote clients.
 
-use ap_proxy_client::ProxyClientConfig;
-use ap_proxy_protocol::IdentityFingerprint;
 use ap_client::{
     DefaultProxyClient, IdentityProvider, SessionStore, UserClient, UserClientEvent,
     UserClientResponse, UserCredentialData,
 };
+use ap_proxy_client::ProxyClientConfig;
+use ap_proxy_protocol::IdentityFingerprint;
 use clap::Args;
 use color_eyre::eyre::Result;
 use crossterm::event::{Event, EventStream, KeyEventKind};
@@ -229,9 +229,7 @@ async fn run_event_loop(
     response_tx: mpsc::Sender<UserClientResponse>,
     sessions: &[SessionInfo],
     pending_session_name: &Option<String>,
-    mut client_handle: Option<
-        tokio::task::JoinHandle<Result<(), ap_client::RemoteClientError>>,
-    >,
+    mut client_handle: Option<tokio::task::JoinHandle<Result<(), ap_client::RemoteClientError>>>,
     provider: &mut dyn CredentialProvider,
     log_rx: &mut Option<super::tui_tracing::LogReceiver>,
 ) -> Result<EventLoopExit> {

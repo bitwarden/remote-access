@@ -1,6 +1,6 @@
-use async_trait::async_trait;
 use ap_noise::MultiDeviceTransport;
 use ap_proxy_protocol::{IdentityFingerprint, IdentityKeyPair};
+use async_trait::async_trait;
 
 use crate::error::RemoteClientError;
 

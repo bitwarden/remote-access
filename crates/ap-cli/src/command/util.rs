@@ -4,7 +4,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bw_rat_client::{RemoteClientEvent, UserClientEvent};
+use ap_client::{RemoteClientEvent, UserClientEvent};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 

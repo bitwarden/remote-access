@@ -1,8 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use ap_proxy_protocol::{IdentityFingerprint, IdentityKeyPair};
 use ap_client::{IdentityProvider, RemoteClientError};
+use ap_proxy_protocol::{IdentityFingerprint, IdentityKeyPair};
 use tracing::debug;
 
 /// Manages persistent storage identity key pairs to a file

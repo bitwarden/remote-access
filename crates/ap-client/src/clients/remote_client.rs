@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use base64::{Engine, engine::general_purpose::STANDARD};
 use ap_noise::{InitiatorHandshake, MultiDeviceTransport, Psk};
 use ap_proxy_client::IncomingMessage;
 use ap_proxy_protocol::{IdentityFingerprint, RendevouzCode};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use rand::RngCore;
 
 use crate::proxy::ProxyClient;

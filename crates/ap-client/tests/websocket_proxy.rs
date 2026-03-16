@@ -7,15 +7,15 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Mutex;
 
-use ap_noise::MultiDeviceTransport;
-use ap_proxy::server::ProxyServer;
-use ap_proxy_client::ProxyClientConfig;
-use ap_proxy_protocol::{IdentityFingerprint, IdentityKeyPair};
 use ap_client::{
     DefaultProxyClient, IdentityProvider, Psk, RemoteClient, RemoteClientEvent,
     RemoteClientResponse, SessionStore, UserClient, UserClientEvent, UserClientResponse,
     UserCredentialData,
 };
+use ap_noise::MultiDeviceTransport;
+use ap_proxy::server::ProxyServer;
+use ap_proxy_client::ProxyClientConfig;
+use ap_proxy_protocol::{IdentityFingerprint, IdentityKeyPair};
 use tokio::sync::mpsc;
 use tokio::task::LocalSet;
 use tokio::time::{Duration, timeout};

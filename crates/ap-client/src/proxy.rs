@@ -3,11 +3,11 @@
 //! This module provides the `ProxyClient` trait for abstracting proxy communication,
 //! enabling dependency injection and easier testing.
 
-use async_trait::async_trait;
 use ap_proxy_client::IncomingMessage;
 #[cfg(feature = "native-websocket")]
 use ap_proxy_client::{ProxyClientConfig, ProxyProtocolClient};
 use ap_proxy_protocol::{IdentityFingerprint, RendevouzCode};
+use async_trait::async_trait;
 use tokio::sync::mpsc;
 
 use crate::error::RemoteClientError;

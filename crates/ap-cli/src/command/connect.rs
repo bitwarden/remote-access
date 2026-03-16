@@ -3,12 +3,12 @@
 //! Handles the interactive session for connecting to a proxy
 //! and requesting credentials over a secure Noise Protocol channel.
 
-use ap_noise::Psk;
-use ap_proxy_client::ProxyClientConfig;
 use ap_client::{
     ConnectionMode, DefaultProxyClient, IdentityFingerprint, IdentityProvider, RemoteClient,
     RemoteClientEvent, RemoteClientResponse, SessionStore,
 };
+use ap_noise::Psk;
+use ap_proxy_client::ProxyClientConfig;
 use clap::Args;
 use color_eyre::eyre::{Result, bail};
 use crossterm::event::{Event, EventStream, KeyEventKind};
