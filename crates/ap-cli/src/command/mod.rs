@@ -40,6 +40,17 @@ fn version_string() -> &'static str {
     &VERSION
 }
 
+fn header() -> &'static str {
+    static HEADER: LazyLock<String> = LazyLock::new(|| {
+        if *COLOR_CHOICE == ColorChoice::Never {
+            format!("Agent Access CLI - {}", version_string())
+        } else {
+            format!("\x1b[1;36mAgent Access CLI\x1b[0m - {}", version_string())
+        }
+    });
+    &HEADER
+}
+
 /// Color choice: disabled when `LLM` or `NO_COLOR` is set, otherwise auto-detect.
 /// Cached once per process.
 static COLOR_CHOICE: LazyLock<ColorChoice> = LazyLock::new(|| {
@@ -69,7 +80,7 @@ const STYLES: Styles = Styles::styled()
 #[derive(Parser)]
 #[command(name = "aac")]
 #[command(author, version = version_string(), about = "Retrieve credentials from your password manager over a secure channel", long_about = None)]
-#[command(styles = STYLES)]
+#[command(styles = STYLES, before_help = header())]
 #[command(after_help = "\
 AUTOMATION / AGENT / LLM USE:
   For non-interactive (single-shot) credential retrieval:
