@@ -59,7 +59,7 @@ impl RendevouzCode {
         let mut rng = rand::thread_rng();
 
         // The code has an alphabet of size 36. With 9 characters, that's
-        // 36^9 = 101,559,956,668,416 possible codes. The codes are short-lived, and the connections to the relay are rate-limited,
+        // 36^9 = 101,559,956,668,416 possible codes. The codes are short-lived, and the connections to the proxy are rate-limited,
         // which is why this is considered sufficient.
         let code = Alphanumeric.sample_string(&mut rng, 9);
         let code = code.to_ascii_uppercase();

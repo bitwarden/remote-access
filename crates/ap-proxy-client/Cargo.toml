@@ -1,6 +1,6 @@
 [package]
 name = "ap-proxy-client"
-description = "Client library for connecting to the ap-proxy WebSocket relay"
+description = "Client library for connecting to the ap-proxy WebSocket server"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

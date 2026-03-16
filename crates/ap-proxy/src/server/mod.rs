@@ -1,6 +1,6 @@
 //! Proxy server implementation.
 //!
-//! This module provides the server-side implementation of the ap-proxy relay.
+//! This module provides the server-side implementation of the ap-proxy server.
 //! The server can be run standalone using the binary, or embedded in custom applications.
 //!
 //! # Running as a Binary
@@ -40,7 +40,7 @@
 //!
 //! # Security Considerations
 //!
-//! The server operates as a zero-knowledge relay:
+//! The server operates as a zero-knowledge proxy:
 //! - Verifies client identities via cryptographic signatures
 //! - Routes messages based on fingerprints
 //! - Does not decrypt or inspect message payloads

@@ -1,4 +1,4 @@
-//! Client library for connecting to a ap-proxy WebSocket relay server.
+//! Client library for connecting to an ap-proxy WebSocket server.
 //!
 //! This crate provides [`ProxyProtocolClient`] for connecting to a proxy server,
 //! authenticating, and sending/receiving messages.

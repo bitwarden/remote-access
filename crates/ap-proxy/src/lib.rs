@@ -1,13 +1,13 @@
 //! WebSocket proxy server for secure peer-to-peer messaging.
 //!
-//! This crate provides the relay server that accepts WebSocket connections,
+//! This crate provides the proxy server that accepts WebSocket connections,
 //! authenticates clients, and routes messages between them. The server is
 //! zero-knowledge and cannot decrypt client payloads.
 //!
 //!
 //! # Architecture
 //!
-//! The proxy operates as a message relay between authenticated clients:
+//! The proxy routes messages between authenticated clients:
 //!
 //! ```text
 //! Client A                    Proxy Server                   Client B

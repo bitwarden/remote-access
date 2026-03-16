@@ -1,6 +1,6 @@
 # ap-proxy
 
-A WebSocket relay server for `aac` (ap-cli) that routes messages between authenticated clients without access to message contents.
+A WebSocket proxy server for `aac` (ap-cli) that routes messages between authenticated clients without access to message contents.
 
 For the client library, see [`ap-proxy-client`](../ap-proxy-client/).
 For shared protocol types, see [`ap-proxy-protocol`](../ap-proxy-protocol/).

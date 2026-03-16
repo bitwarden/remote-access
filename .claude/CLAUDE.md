@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Agent Access SDK — a Rust workspace implementing secure peer-to-peer credential sharing over WebSocket relay with end-to-end encryption via the Noise Protocol (NNpsk2 pattern). The proxy server is zero-knowledge and cannot decrypt traffic.
+Agent Access SDK — a Rust workspace implementing secure peer-to-peer credential sharing over a WebSocket proxy with end-to-end encryption via the Noise Protocol (NNpsk2 pattern). The proxy server is zero-knowledge and cannot decrypt traffic.
 
 ## Build & Run Commands
 
@@ -54,11 +54,11 @@ ap-cli (CLI binary)
   └── ap-client (protocol client library)
         ├── ap-noise (Noise handshake + encrypted transport)
         │     └── ap-error / ap-error-macro (error infrastructure)
-        └── ap-proxy (WebSocket relay server + client library)
+        └── ap-proxy (WebSocket proxy server + client library)
 ```
 
 - **ap-noise** — Noise NNpsk2 handshake, `MultiDeviceTransport` for encrypted messaging, XChaCha20-Poly1305 transport encryption, session state persistence for resumption.
-- **ap-proxy** — WebSocket relay server (`ap-proxy` binary) and `ProxyProtocolClient` library. Three-phase protocol: authentication, rendezvous, messaging. Default listen address: `ws://localhost:8080`.
+- **ap-proxy** — WebSocket proxy server (`ap-proxy` binary) and `ProxyProtocolClient` library. Three-phase protocol: authentication, rendezvous, messaging. Default listen address: `ws://localhost:8080`.
 - **ap-client** — `RemoteClient` (untrusted device requesting credentials) and `UserClient` (trusted device serving credentials). Uses trait abstractions (`SessionStore`, `IdentityProvider`, `ProxyClient`) and async event/response channels.
 - **ap-cli** (`aac` binary) — CLI driver with interactive TUI (ratatui + crossterm) and non-interactive single-shot mode. Subcommands: `connect`, `listen`, `cache` (with `clear`/`list`), `list-devices`, `clear-keypairs`. Integrates with `bw` CLI for credential lookup via `bw get item`.
 - **ap-error / ap-error-macro** — Error handling utilities ported from Bitwarden's `sdk-internal`.

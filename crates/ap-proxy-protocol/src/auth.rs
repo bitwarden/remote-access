@@ -1,6 +1,6 @@
 //! Authentication module for the ap-proxy crate. Authentication works by creating a cryptographic
-//! identity - a signature key-pair. The identity is the public key. It is proven to the relay, by
-//! signing a challenge provided by the relay using the signature key.
+//! identity - a signature key-pair. The identity is the public key. It is proven to the proxy, by
+//! signing a challenge provided by the proxy using the signature key.
 
 use coset::{
     CborSerializable, CoseKey, CoseKeyBuilder, CoseSign1, HeaderBuilder, Label,

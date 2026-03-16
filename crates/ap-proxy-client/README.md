@@ -1,6 +1,6 @@
 # ap-proxy-client
 
-A client library for connecting to an `ap-proxy` WebSocket relay server.
+A client library for connecting to an `ap-proxy` WebSocket server.
 
 ## Overview
 

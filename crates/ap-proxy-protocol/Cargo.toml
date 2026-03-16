@@ -1,6 +1,6 @@
 [package]
 name = "ap-proxy-protocol"
-description = "Shared wire protocol types for the ap-proxy WebSocket relay"
+description = "Shared wire protocol types for the ap-proxy WebSocket server"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
