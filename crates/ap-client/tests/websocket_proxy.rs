@@ -302,6 +302,7 @@ fn test_credential() -> CredentialData {
         uri: Some("https://example.com".to_string()),
         notes: Some("Test credential notes".to_string()),
         credential_id: Some("test-item-id".to_string()),
+        domain: Some("example.com".to_string()),
     }
 }
 
@@ -908,6 +909,7 @@ async fn test_e2e_multiple_credential_requests() {
                             uri: Some(format!("https://{domain}")),
                             notes: Some(format!("Request #{request_count}")),
                             credential_id: None,
+                            domain: Some(domain.clone()),
                         };
 
                         user_response_tx
@@ -1376,6 +1378,7 @@ async fn test_e2e_multi_device_credential_response() {
                                         uri: None,
                                         notes: None,
                                         credential_id: None,
+                                        domain: Some("example.com".into()),
                                     }),
                                     credential_id: None,
                                 })
@@ -1409,6 +1412,7 @@ async fn test_e2e_multi_device_credential_response() {
                                         uri: None,
                                         notes: None,
                                         credential_id: None,
+                                        domain: Some("example.com".into()),
                                     }),
                                     credential_id: None,
                                 })

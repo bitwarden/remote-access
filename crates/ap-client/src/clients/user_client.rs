@@ -733,7 +733,6 @@ impl UserClient {
                 None
             },
             request_id: Some(request_id.clone()),
-            domain: Some(domain.clone()),
         };
 
         // Encrypt and send

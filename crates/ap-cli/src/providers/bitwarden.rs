@@ -158,6 +158,8 @@ fn lookup_credential(bw: &str, search: &str, session: Option<&str>) -> Option<Cr
         .and_then(|uris| uris.first())
         .and_then(|u| u.uri.clone());
 
+    let domain = uri.as_deref().and_then(domain_from_uri);
+
     Some(CredentialData {
         username: login.username,
         password: login.password,
@@ -165,7 +167,23 @@ fn lookup_credential(bw: &str, search: &str, session: Option<&str>) -> Option<Cr
         uri,
         notes: None,
         credential_id: item.id,
+        domain,
     })
+}
+
+/// Extract the domain (host) from a URI string, e.g. `https://example.com/path` → `example.com`.
+fn domain_from_uri(uri: &str) -> Option<String> {
+    // Strip scheme (e.g. "https://")
+    let after_scheme = match uri.split_once("://") {
+        Some((_, rest)) => rest,
+        None => uri,
+    };
+    // Take host (before any '/' or ':')
+    let host = after_scheme.split(['/', ':']).next()?;
+    if host.is_empty() {
+        return None;
+    }
+    Some(host.to_string())
 }
 
 /// Create a `BitwardenProvider` with explicit fields (for testing without

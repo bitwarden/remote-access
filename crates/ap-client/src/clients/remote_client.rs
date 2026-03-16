@@ -675,14 +675,12 @@ impl RemoteClient {
 
         // 4. Send result through oneshot channel
         if let Some(sender) = sender {
-            let domain = response.domain.unwrap_or_default();
             let result = if let Some(error) = response.error {
                 Err(RemoteClientError::CredentialRequestFailed(error))
             } else if let Some(credential) = response.credential {
                 // Emit success event
                 event_tx
                     .send(RemoteClientEvent::CredentialReceived {
-                        domain,
                         credential: credential.clone(),
                     })
                     .await

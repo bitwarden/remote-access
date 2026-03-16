@@ -100,8 +100,6 @@ pub enum RemoteClientEvent {
     },
     /// Credential was received
     CredentialReceived {
-        /// Domain of the credential
-        domain: String,
         /// The credential data
         credential: CredentialData,
     },
@@ -140,6 +138,10 @@ pub struct CredentialData {
     /// Vault item ID
     #[serde(skip_serializing_if = "Option::is_none")]
     pub credential_id: Option<String>,
+    /// Domain associated with this credential
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
 }
 
 /// Internal protocol messages sent over WebSocket
@@ -179,8 +181,4 @@ pub(crate) struct CredentialResponsePayload {
     #[serde(rename = "requestId")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
-    /// Domain echoed back from the request
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub domain: Option<String>,
 }

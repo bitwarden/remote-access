@@ -191,6 +191,7 @@ mod tests {
             uri: Some("https://example.com".into()),
             notes: None,
             credential_id: Some("id-123".into()),
+            domain: Some("example.com".into()),
         }
     }
 

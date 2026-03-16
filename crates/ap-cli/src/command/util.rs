@@ -147,11 +147,17 @@ pub fn format_connect_event(event: &RemoteClientEvent) -> Option<Message> {
                 Span::styled("...", dim()),
             ],
         )),
-        RemoteClientEvent::CredentialReceived { domain, .. } => Some(Message::rich(
+        RemoteClientEvent::CredentialReceived { credential } => Some(Message::rich(
             MessageKind::Success,
             vec![
                 Span::styled("Credential received for: ", text()),
-                Span::styled(domain.clone(), val_style()),
+                Span::styled(
+                    credential
+                        .domain
+                        .clone()
+                        .unwrap_or_else(|| "unknown".into()),
+                    val_style(),
+                ),
             ],
         )),
         RemoteClientEvent::Error { message, context } => {
