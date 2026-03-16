@@ -386,18 +386,10 @@ impl RemoteClient {
 
         debug!("Requesting credential for query: {:?}", query);
 
-        // Build domain/id fields based on query variant
-        let (domain, id) = match query {
-            CredentialQuery::Domain(d) => (d.clone(), None),
-            CredentialQuery::Id(id) => (String::new(), Some(id.clone())),
-            CredentialQuery::Search(s) => (s.clone(), None),
-        };
-
         // Create and encrypt request
         let request = CredentialRequestPayload {
             request_type: "credential_request".to_string(),
-            domain,
-            id,
+            query: query.clone(),
             timestamp: now_millis(),
             request_id: request_id.clone(),
         };

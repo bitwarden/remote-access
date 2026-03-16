@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 /// What kind of credential to look up.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum CredentialQuery {
     /// Look up by domain / URL.
     Domain(String),
@@ -15,6 +16,17 @@ pub enum CredentialQuery {
     Id(String),
     /// Free-text search.
     Search(String),
+}
+
+impl CredentialQuery {
+    /// Extract the inner search string from any query variant.
+    pub fn search_string(&self) -> &str {
+        match self {
+            Self::Domain(d) => d.as_str(),
+            Self::Id(id) => id.as_str(),
+            Self::Search(s) => s.as_str(),
+        }
+    }
 }
 
 impl fmt::Display for CredentialQuery {
@@ -188,9 +200,7 @@ pub(crate) enum ProtocolMessage {
 pub(crate) struct CredentialRequestPayload {
     #[serde(rename = "type")]
     pub request_type: String,
-    pub domain: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
+    pub query: CredentialQuery,
     pub timestamp: u64,
     #[serde(rename = "requestId")]
     pub request_id: String,

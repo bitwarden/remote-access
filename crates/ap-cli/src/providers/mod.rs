@@ -132,12 +132,7 @@ mod tests {
         }
 
         fn lookup(&self, query: &CredentialQuery) -> LookupResult {
-            let search = match query {
-                CredentialQuery::Domain(d) => d.as_str(),
-                CredentialQuery::Id(id) => id.as_str(),
-                CredentialQuery::Search(s) => s.as_str(),
-            };
-            match self.credentials.get(search) {
+            match self.credentials.get(query.search_string()) {
                 Some(cred) => LookupResult::Found(cred.clone()),
                 None => LookupResult::NotFound,
             }

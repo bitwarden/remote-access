@@ -266,11 +266,7 @@ impl CredentialProvider for BitwardenProvider {
             }
         };
 
-        let search = match query {
-            CredentialQuery::Domain(d) => d.as_str(),
-            CredentialQuery::Id(id) => id.as_str(),
-            CredentialQuery::Search(s) => s.as_str(),
-        };
+        let search = query.search_string();
 
         match lookup_credential(bw, search, self.session.as_deref()) {
             Some(cred) => LookupResult::Found(cred),

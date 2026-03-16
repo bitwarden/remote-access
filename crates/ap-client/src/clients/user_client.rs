@@ -635,23 +635,16 @@ impl UserClient {
 
         self.audit_log
             .write(AuditEvent::CredentialRequested {
-                domain: &request.domain,
+                domain: request.query.search_string(),
                 remote_identity: &source,
                 request_id: &request.request_id,
             })
             .await;
 
-        // Build query from the request payload
-        let query = if let Some(id) = request.id {
-            crate::types::CredentialQuery::Id(id)
-        } else {
-            crate::types::CredentialQuery::Domain(request.domain.clone())
-        };
-
         // Send credential request event
         event_tx
             .send(UserClientEvent::CredentialRequest {
-                query,
+                query: request.query,
                 request_id: request.request_id.clone(),
                 session_id: format!("{source:?}"),
             })
