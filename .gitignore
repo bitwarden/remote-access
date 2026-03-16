@@ -19,3 +19,9 @@ target
 # Node
 node_modules
 
+# Python
+.venv
+__pycache__
+*.pyc
+*.egg-info
+
