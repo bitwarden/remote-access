@@ -19,37 +19,46 @@ It creates an end-to-end encrypted tunnel between the remote system and the pass
 
 Agent Access is an open protocol, CLI tool, and Rust SDK that you can use to implement it directly into agents or custom software. While we at Bitwarden have built it, it's open for any password manager to leverage to further support agentic or automation use cases without exposing your entire vault.
 
+> [!IMPORTANT]
+> This project is in an **early preview stage**. APIs and protocols are subject to change. We do not recommend inputting sensitive credentials directly into LLMs or AI agents (any unknown software, really).
+> 
+> For LLM's specifically, where possible use environment injection (e.g. `aac run`) to pass secrets to processes without exposing them in recorded context.
+
+<p align="center">
+  <img src="assets/overview.webp" alt="Agent Access overview" width="960">
+</p>
+
 ## Installation
 
 ### macOS (Apple Silicon)
 
 ```shell
-curl -L https://github.com/bitwarden/remote-access/releases/latest/download/aac-macos-aarch64.tar.gz | tar xz
+curl -L https://github.com/bitwarden/agent-access/releases/latest/download/aac-macos-aarch64.tar.gz | tar xz
 sudo mv aac /usr/local/bin/ # Makes it available on PATH
 ```
 
 ### macOS (Intel)
 
 ```shell
-curl -L https://github.com/bitwarden/remote-access/releases/latest/download/aac-macos-x86_64.tar.gz | tar xz
+curl -L https://github.com/bitwarden/agent-access/releases/latest/download/aac-macos-x86_64.tar.gz | tar xz
 sudo mv aac /usr/local/bin/ # Makes it available on PATH
 ```
 
 ### Linux (x86_64)
 
 ```shell
-curl -L https://github.com/bitwarden/remote-access/releases/latest/download/aac-linux-x86_64.tar.gz | tar xz
+curl -L https://github.com/bitwarden/agent-access/releases/latest/download/aac-linux-x86_64.tar.gz | tar xz
 sudo mv aac /usr/local/bin/ # Makes it available on PATH
 ```
 
 ### Windows (x86_64)
 
-Download [aac-windows-x86_64.zip](https://github.com/bitwarden/remote-access/releases/latest/download/aac-windows-x86_64.zip) from the [latest release](https://github.com/bitwarden/remote-access/releases/latest) and extract it to a directory on your PATH.
+Download [aac-windows-x86_64.zip](https://github.com/bitwarden/agent-access/releases/latest/download/aac-windows-x86_64.zip) from the [latest release](https://github.com/bitwarden/agent-access/releases/latest) and extract it to a directory on your PATH.
 
 ### OpenClaw skill
 
 ```shell
-curl -fsSL "https://raw.githubusercontent.com/bitwarden/remote-access/main/examples/skills/agent-access/SKILL.md" -o ~/.openclaw/skills/agent-access/SKILL.md --create-dirs
+curl -fsSL "https://raw.githubusercontent.com/bitwarden/agent-access/main/examples/skills/agent-access/SKILL.md" -o ~/.openclaw/skills/agent-access/SKILL.md --create-dirs
 ```
 
 ## Examples
@@ -57,6 +66,20 @@ curl -fsSL "https://raw.githubusercontent.com/bitwarden/remote-access/main/examp
 * [OpenClaw skill](examples/skills/agent-access/SKILL.md)
 * Automated script requesting an API-token.
 * Github Action
+
+### Use from your code
+
+Use Agent Access directly from your code by referencing the rust sdk. Here's an example using Python via PyO3 bindings to request credentials over the end-to-end encrypted tunnel.
+
+```python
+from agent_access import RemoteClient
+
+client = RemoteClient("python-remote")
+client.connect(token="ABC-DEF-GHI")
+cred = client.request_credential("example.com")
+print(cred.username, cred.password)
+client.close()
+```
 
 ## Getting started (Bitwarden CLI)
 
@@ -91,7 +114,7 @@ aac connect --token <pairing-token> --output json
 
 # Fetching credentials (without interactivity)
 aac connect --domain example.com --output json
-aac connect --domain github.com --output json
+aac connect --domain github.com --provider bitwarden --output json
 
 # Pair + Fetch in one command (without interactivity)
 aac connect --token <pairing-token> --domain example.com --output json
@@ -146,5 +169,9 @@ It contains:
 * A Rust SDK for establishing a tunnel, sending requests, and responding to them
 * A CLI tool for requesting / releasing credentials
 * A proxy server for demo/development purposes
+
+<p align="center">
+  <img src="assets/architecture.png" alt="Agent Access architecture" width="960">
+</p>
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, crate structure, and how to run the project.
