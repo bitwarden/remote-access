@@ -4,7 +4,7 @@ A multi-device Noise Protocol implementation with forward secrecy, break-in reco
 
 ## Overview
 
-This crate provides secure channel establishment and encrypted communication for the access-protocol project. It implements the Noise Protocol Framework's NNpsk2 pattern with enhancements for multi-device scenarios.
+This crate provides secure channel establishment and encrypted communication for the Access Protocol. It implements the Noise Protocol Framework's NNpsk2 pattern with enhancements for multi-device scenarios.
 
 ## Quick Start
 
