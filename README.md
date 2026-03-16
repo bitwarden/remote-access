@@ -96,10 +96,45 @@ aac connect --domain github.com --output json
 # Pair + Fetch in one command (without interactivity)
 aac connect --token <pairing-token> --domain example.com --output json
 
+# Fetch by vault item ID instead of domain
+aac connect --id <vault-item-id> --output json
+
 # Output:
 {"credential":{"notes":null,"password":"alligator5","totp":null,"uri":"https://github.com","username":"example"},"domain":"github.com","success":true}
 
 ```
+
+### Fetching by ID
+
+You can use `--id` instead of `--domain` to fetch a specific vault item by its unique identifier. This is useful when multiple items share the same domain, or when you know the exact item you need.
+
+```shell
+aac connect --id <vault-item-id> --output json
+```
+
+The `--id` and `--domain` flags are mutually exclusive — use one or the other.
+
+### Running commands with credentials
+
+The `run` subcommand fetches a credential and injects it as environment variables into a child process. Secrets never touch stdout or disk — they're passed exclusively through the child process's environment.
+
+```shell
+# Map specific credential fields to env vars
+aac run --domain example.com --env DB_PASSWORD=password --env DB_USER=username -- psql
+
+# Inject all fields with AAC_ prefix (AAC_USERNAME, AAC_PASSWORD, etc.)
+aac run --domain example.com --env-all -- deploy.sh
+
+# Combine defaults with custom overrides
+aac run --domain example.com --env-all --env CUSTOM_PW=password -- deploy.sh
+
+# Use --id instead of --domain
+aac run --id <vault-item-id> --env-all -- deploy.sh
+```
+
+**Available credential fields:** `username`, `password`, `totp`, `uri`, `notes`, `domain`, `credential_id`
+
+When using `--env-all`, each field is injected with an `AAC_` prefix (e.g., `AAC_USERNAME`, `AAC_PASSWORD`). Explicit `--env` mappings override `--env-all` defaults. At least one of `--env` or `--env-all` is required.
 
 ## Contributing
 
