@@ -1,10 +1,10 @@
 //! Error types for the remote client
 
-use bw_error::bw_error;
+use ap_error::ap_error;
 use thiserror::Error;
 
 /// Errors that can occur in the remote client
-#[bw_error(flat)]
+#[ap_error(flat)]
 #[derive(Debug, Error)]
 pub enum RemoteClientError {
     /// Failed to connect to the proxy server
@@ -88,8 +88,8 @@ pub enum RemoteClientError {
     SessionNotFound,
 }
 
-impl From<bw_noise_protocol::error::NoiseProtocolError> for RemoteClientError {
-    fn from(err: bw_noise_protocol::error::NoiseProtocolError) -> Self {
+impl From<ap_noise::error::NoiseProtocolError> for RemoteClientError {
+    fn from(err: ap_noise::error::NoiseProtocolError) -> Self {
         RemoteClientError::NoiseProtocol(err.to_string())
     }
 }
@@ -100,8 +100,8 @@ impl From<serde_json::Error> for RemoteClientError {
     }
 }
 
-impl From<bw_proxy_protocol::ProxyError> for RemoteClientError {
-    fn from(err: bw_proxy_protocol::ProxyError) -> Self {
+impl From<ap_proxy_protocol::ProxyError> for RemoteClientError {
+    fn from(err: ap_proxy_protocol::ProxyError) -> Self {
         RemoteClientError::ConnectionFailed(err.to_string())
     }
 }

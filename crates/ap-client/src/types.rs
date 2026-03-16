@@ -1,7 +1,7 @@
 //! Types for the remote client protocol
 
-use bw_noise_protocol::Psk;
-use bw_proxy_protocol::IdentityFingerprint;
+use ap_noise::Psk;
+use ap_proxy_protocol::IdentityFingerprint;
 use serde::{Deserialize, Serialize};
 
 /// Connection mode for establishing a connection

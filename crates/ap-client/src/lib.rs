@@ -1,4 +1,4 @@
-//! Noise Protocol Clients for bw_remote
+//! Noise Protocol Clients for access-protocol
 //!
 //! This crate provides both remote and user client implementations for
 //! connecting through a proxy using the Noise Protocol.
@@ -13,8 +13,8 @@
 //! ## Remote Client Usage (untrusted device)
 //!
 //! ```ignore
-//! use bw_noise_client::{RemoteClient, DefaultProxyClient, IdentityProvider, SessionStore};
-//! use bw_proxy_client::ProxyClientConfig;
+//! use ap_client::{RemoteClient, DefaultProxyClient, IdentityProvider, SessionStore};
+//! use ap_proxy_client::ProxyClientConfig;
 //! use tokio::sync::mpsc;
 //!
 //! // Create proxy client
@@ -43,10 +43,10 @@
 //! ## User Client Usage (trusted device)
 //!
 //! ```ignore
-//! use bw_noise_client::{
+//! use ap_client::{
 //!     DefaultProxyClient, IdentityProvider, UserClient, UserClientEvent, UserClientResponse,
 //! };
-//! use bw_proxy_client::ProxyClientConfig;
+//! use ap_proxy_client::ProxyClientConfig;
 //! use tokio::sync::mpsc;
 //!
 //! // Create proxy client
@@ -93,7 +93,7 @@ pub use traits::{
 };
 pub use types::{ConnectionMode, CredentialData, RemoteClientEvent, RemoteClientResponse};
 
-// Re-export bw-proxy-protocol types
-pub use bw_proxy_protocol::{IdentityFingerprint, RendevouzCode};
+// Re-export ap-proxy-protocol types
+pub use ap_proxy_protocol::{IdentityFingerprint, RendevouzCode};
 // Re-export PSK type from noise protocol
-pub use bw_noise_protocol::Psk;
+pub use ap_noise::Psk;

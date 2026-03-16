@@ -3,9 +3,9 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
-use bw_noise_protocol::{InitiatorHandshake, MultiDeviceTransport, Psk};
-use bw_proxy_client::IncomingMessage;
-use bw_proxy_protocol::{IdentityFingerprint, RendevouzCode};
+use ap_noise::{InitiatorHandshake, MultiDeviceTransport, Psk};
+use ap_proxy_client::IncomingMessage;
+use ap_proxy_protocol::{IdentityFingerprint, RendevouzCode};
 use rand::RngCore;
 
 use crate::proxy::ProxyClient;
@@ -576,7 +576,7 @@ impl RemoteClient {
             .decode(&response)
             .map_err(|e| RemoteClientError::Serialization(format!("Invalid base64: {e}")))?;
 
-        let response_packet = bw_noise_protocol::HandshakePacket::decode(&response_bytes)
+        let response_packet = ap_noise::HandshakePacket::decode(&response_bytes)
             .map_err(|e| RemoteClientError::NoiseProtocol(format!("Invalid packet: {e}")))?;
 
         // Complete handshake
@@ -650,7 +650,7 @@ impl RemoteClient {
             .decode(&encrypted)
             .map_err(|e| RemoteClientError::Serialization(format!("Invalid base64: {e}")))?;
 
-        let packet = bw_noise_protocol::TransportPacket::decode(&encrypted_bytes)
+        let packet = ap_noise::TransportPacket::decode(&encrypted_bytes)
             .map_err(|e| RemoteClientError::NoiseProtocol(format!("Invalid packet: {e}")))?;
 
         let mut transport_guard = transport.lock().await;

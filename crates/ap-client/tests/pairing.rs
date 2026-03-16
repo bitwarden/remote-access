@@ -1,4 +1,4 @@
-//! Integration tests for bw-rat-client pairing flows
+//! Integration tests for ap-client pairing flows
 //!
 //! These tests verify the PSK and fingerprint-based pairing modes
 //! using mock implementations of the identity provider, session store, and proxy.
@@ -8,10 +8,10 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use bw_noise_protocol::{MultiDeviceTransport, PersistentTransportState};
-use bw_proxy_client::IncomingMessage;
-use bw_proxy_protocol::{IdentityFingerprint, IdentityKeyPair, RendevouzCode};
-use bw_rat_client::{
+use ap_noise::{MultiDeviceTransport, PersistentTransportState};
+use ap_proxy_client::IncomingMessage;
+use ap_proxy_protocol::{IdentityFingerprint, IdentityKeyPair, RendevouzCode};
+use ap_client::{
     IdentityProvider, ProxyClient, Psk, RemoteClient, RemoteClientError, RemoteClientEvent,
     RemoteClientResponse, SessionStore, UserClient, UserClientEvent, UserClientResponse,
 };
@@ -76,7 +76,7 @@ impl SessionStore for MockSessionStore {
     fn cache_session(
         &mut self,
         fingerprint: IdentityFingerprint,
-    ) -> Result<(), bw_rat_client::RemoteClientError> {
+    ) -> Result<(), ap_client::RemoteClientError> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -99,7 +99,7 @@ impl SessionStore for MockSessionStore {
     fn remove_session(
         &mut self,
         fingerprint: &IdentityFingerprint,
-    ) -> Result<(), bw_rat_client::RemoteClientError> {
+    ) -> Result<(), ap_client::RemoteClientError> {
         self.sessions
             .lock()
             .expect("Lock should not be poisoned")
@@ -107,7 +107,7 @@ impl SessionStore for MockSessionStore {
         Ok(())
     }
 
-    fn clear(&mut self) -> Result<(), bw_rat_client::RemoteClientError> {
+    fn clear(&mut self) -> Result<(), ap_client::RemoteClientError> {
         self.sessions
             .lock()
             .expect("Lock should not be poisoned")
@@ -135,14 +135,14 @@ impl SessionStore for MockSessionStore {
         &mut self,
         _fingerprint: &IdentityFingerprint,
         _name: String,
-    ) -> Result<(), bw_rat_client::RemoteClientError> {
+    ) -> Result<(), ap_client::RemoteClientError> {
         Ok(())
     }
 
     fn update_last_connected(
         &mut self,
         fingerprint: &IdentityFingerprint,
-    ) -> Result<(), bw_rat_client::RemoteClientError> {
+    ) -> Result<(), ap_client::RemoteClientError> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -159,7 +159,7 @@ impl SessionStore for MockSessionStore {
         &mut self,
         fingerprint: &IdentityFingerprint,
         transport_state: MultiDeviceTransport,
-    ) -> Result<(), bw_rat_client::RemoteClientError> {
+    ) -> Result<(), ap_client::RemoteClientError> {
         let mut sessions = self.sessions.lock().expect("Lock should not be poisoned");
         if let Some(entry) = sessions.get_mut(fingerprint) {
             entry.transport_state = Some(
@@ -174,7 +174,7 @@ impl SessionStore for MockSessionStore {
     fn load_transport_state(
         &self,
         fingerprint: &IdentityFingerprint,
-    ) -> Result<Option<MultiDeviceTransport>, bw_rat_client::RemoteClientError> {
+    ) -> Result<Option<MultiDeviceTransport>, ap_client::RemoteClientError> {
         let sessions = self.sessions.lock().expect("Lock should not be poisoned");
         Ok(sessions.get(fingerprint).and_then(|e| {
             PersistentTransportState::from_bytes(
@@ -236,13 +236,13 @@ impl MockProxyClient {
 impl ProxyClient for MockProxyClient {
     async fn connect(
         &mut self,
-    ) -> Result<mpsc::UnboundedReceiver<IncomingMessage>, bw_rat_client::RemoteClientError> {
+    ) -> Result<mpsc::UnboundedReceiver<IncomingMessage>, ap_client::RemoteClientError> {
         self.incoming_rx
             .take()
-            .ok_or(bw_rat_client::RemoteClientError::NotInitialized)
+            .ok_or(ap_client::RemoteClientError::NotInitialized)
     }
 
-    async fn request_rendezvous(&self) -> Result<(), bw_rat_client::RemoteClientError> {
+    async fn request_rendezvous(&self) -> Result<(), ap_client::RemoteClientError> {
         // Generate a rendezvous code and send it to ourselves
         let code = self
             .rendezvous_code
@@ -250,14 +250,14 @@ impl ProxyClient for MockProxyClient {
             .unwrap_or_else(|| RendevouzCode::from_string("TEST12345".to_string()));
         self.incoming_tx
             .send(IncomingMessage::RendevouzInfo(code))
-            .map_err(|_| bw_rat_client::RemoteClientError::ChannelClosed)?;
+            .map_err(|_| ap_client::RemoteClientError::ChannelClosed)?;
         Ok(())
     }
 
     async fn request_identity(
         &self,
         _code: RendevouzCode,
-    ) -> Result<(), bw_rat_client::RemoteClientError> {
+    ) -> Result<(), ap_client::RemoteClientError> {
         // Return the peer's identity
         if let Some(peer_fp) = self.peer_fingerprint {
             // Create a dummy identity for the peer
@@ -267,7 +267,7 @@ impl ProxyClient for MockProxyClient {
                     fingerprint: peer_fp,
                     identity: dummy_keypair.identity(),
                 })
-                .map_err(|_| bw_rat_client::RemoteClientError::ChannelClosed)?;
+                .map_err(|_| ap_client::RemoteClientError::ChannelClosed)?;
         }
         Ok(())
     }
@@ -276,14 +276,14 @@ impl ProxyClient for MockProxyClient {
         &self,
         fingerprint: IdentityFingerprint,
         data: Vec<u8>,
-    ) -> Result<(), bw_rat_client::RemoteClientError> {
+    ) -> Result<(), ap_client::RemoteClientError> {
         self.outgoing_tx
             .send((fingerprint, data))
-            .map_err(|_| bw_rat_client::RemoteClientError::ChannelClosed)?;
+            .map_err(|_| ap_client::RemoteClientError::ChannelClosed)?;
         Ok(())
     }
 
-    async fn disconnect(&mut self) -> Result<(), bw_rat_client::RemoteClientError> {
+    async fn disconnect(&mut self) -> Result<(), ap_client::RemoteClientError> {
         Ok(())
     }
 }

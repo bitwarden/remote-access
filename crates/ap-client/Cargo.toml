@@ -1,6 +1,6 @@
 [package]
-name = "bw-rat-client"
-description = "Noise Protocol remote client for bw_remote"
+name = "ap-client"
+description = "Noise Protocol remote client for access-protocol"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -9,15 +9,15 @@ license.workspace = true
 
 [features]
 default = ["native-websocket"]
-native-websocket = ["bw-proxy-client/native-websocket"]
+native-websocket = ["ap-proxy-client/native-websocket"]
 
 [dependencies]
 async-trait = "0.1"
 base64 = { workspace = true }
-bw-error = { workspace = true }
-bw-noise-protocol = { workspace = true }
-bw-proxy-client = { workspace = true, default-features = false }
-bw-proxy-protocol = { workspace = true }
+ap-error = { workspace = true }
+ap-noise = { workspace = true }
+ap-proxy-client = { workspace = true, default-features = false }
+ap-proxy-protocol = { workspace = true }
 dirs = { workspace = true }
 futures-util = { workspace = true }
 hex = { workspace = true }
@@ -29,7 +29,7 @@ tokio = { version = "1.36.0", default-features = false, features = ["sync", "mac
 tracing = { workspace = true }
 
 [dev-dependencies]
-bw-proxy = { workspace = true }
+ap-proxy = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "test-util"] }
 
 [lints]

@@ -7,11 +7,11 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Mutex;
 
-use bw_noise_protocol::MultiDeviceTransport;
-use bw_proxy::server::ProxyServer;
-use bw_proxy_client::ProxyClientConfig;
-use bw_proxy_protocol::{IdentityFingerprint, IdentityKeyPair};
-use bw_rat_client::{
+use ap_noise::MultiDeviceTransport;
+use ap_proxy::server::ProxyServer;
+use ap_proxy_client::ProxyClientConfig;
+use ap_proxy_protocol::{IdentityFingerprint, IdentityKeyPair};
+use ap_client::{
     DefaultProxyClient, IdentityProvider, Psk, RemoteClient, RemoteClientEvent,
     RemoteClientResponse, SessionStore, UserClient, UserClientEvent, UserClientResponse,
     UserCredentialData,
@@ -82,7 +82,7 @@ impl SessionStore for MockSessionStore {
     fn cache_session(
         &mut self,
         fingerprint: IdentityFingerprint,
-    ) -> Result<(), bw_rat_client::RemoteClientError> {
+    ) -> Result<(), ap_client::RemoteClientError> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -105,7 +105,7 @@ impl SessionStore for MockSessionStore {
     fn remove_session(
         &mut self,
         fingerprint: &IdentityFingerprint,
-    ) -> Result<(), bw_rat_client::RemoteClientError> {
+    ) -> Result<(), ap_client::RemoteClientError> {
         self.sessions
             .lock()
             .expect("Lock should not be poisoned")
@@ -113,7 +113,7 @@ impl SessionStore for MockSessionStore {
         Ok(())
     }
 
-    fn clear(&mut self) -> Result<(), bw_rat_client::RemoteClientError> {
+    fn clear(&mut self) -> Result<(), ap_client::RemoteClientError> {
         self.sessions
             .lock()
             .expect("Lock should not be poisoned")
@@ -141,14 +141,14 @@ impl SessionStore for MockSessionStore {
         &mut self,
         _fingerprint: &IdentityFingerprint,
         _name: String,
-    ) -> Result<(), bw_rat_client::RemoteClientError> {
+    ) -> Result<(), ap_client::RemoteClientError> {
         Ok(())
     }
 
     fn update_last_connected(
         &mut self,
         fingerprint: &IdentityFingerprint,
-    ) -> Result<(), bw_rat_client::RemoteClientError> {
+    ) -> Result<(), ap_client::RemoteClientError> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -165,7 +165,7 @@ impl SessionStore for MockSessionStore {
         &mut self,
         fingerprint: &IdentityFingerprint,
         transport_state: MultiDeviceTransport,
-    ) -> Result<(), bw_rat_client::RemoteClientError> {
+    ) -> Result<(), ap_client::RemoteClientError> {
         let mut sessions = self.sessions.lock().expect("Lock should not be poisoned");
         if let Some(entry) = sessions.get_mut(fingerprint) {
             entry.transport_state = Some(transport_state);
@@ -176,7 +176,7 @@ impl SessionStore for MockSessionStore {
     fn load_transport_state(
         &self,
         fingerprint: &IdentityFingerprint,
-    ) -> Result<Option<MultiDeviceTransport>, bw_rat_client::RemoteClientError> {
+    ) -> Result<Option<MultiDeviceTransport>, ap_client::RemoteClientError> {
         let sessions = self.sessions.lock().expect("Lock should not be poisoned");
         Ok(sessions
             .get(fingerprint)
@@ -198,7 +198,7 @@ impl SessionStore for SharedSessionStore {
     fn cache_session(
         &mut self,
         fingerprint: IdentityFingerprint,
-    ) -> Result<(), bw_rat_client::RemoteClientError> {
+    ) -> Result<(), ap_client::RemoteClientError> {
         self.0
             .lock()
             .expect("Lock should not be poisoned")
@@ -208,14 +208,14 @@ impl SessionStore for SharedSessionStore {
     fn remove_session(
         &mut self,
         fingerprint: &IdentityFingerprint,
-    ) -> Result<(), bw_rat_client::RemoteClientError> {
+    ) -> Result<(), ap_client::RemoteClientError> {
         self.0
             .lock()
             .expect("Lock should not be poisoned")
             .remove_session(fingerprint)
     }
 
-    fn clear(&mut self) -> Result<(), bw_rat_client::RemoteClientError> {
+    fn clear(&mut self) -> Result<(), ap_client::RemoteClientError> {
         self.0.lock().expect("Lock should not be poisoned").clear()
     }
 
@@ -230,7 +230,7 @@ impl SessionStore for SharedSessionStore {
         &mut self,
         fingerprint: &IdentityFingerprint,
         name: String,
-    ) -> Result<(), bw_rat_client::RemoteClientError> {
+    ) -> Result<(), ap_client::RemoteClientError> {
         self.0
             .lock()
             .expect("Lock should not be poisoned")
@@ -240,7 +240,7 @@ impl SessionStore for SharedSessionStore {
     fn update_last_connected(
         &mut self,
         fingerprint: &IdentityFingerprint,
-    ) -> Result<(), bw_rat_client::RemoteClientError> {
+    ) -> Result<(), ap_client::RemoteClientError> {
         self.0
             .lock()
             .expect("Lock should not be poisoned")
@@ -251,7 +251,7 @@ impl SessionStore for SharedSessionStore {
         &mut self,
         fingerprint: &IdentityFingerprint,
         transport_state: MultiDeviceTransport,
-    ) -> Result<(), bw_rat_client::RemoteClientError> {
+    ) -> Result<(), ap_client::RemoteClientError> {
         self.0
             .lock()
             .expect("Lock should not be poisoned")
@@ -261,7 +261,7 @@ impl SessionStore for SharedSessionStore {
     fn load_transport_state(
         &self,
         fingerprint: &IdentityFingerprint,
-    ) -> Result<Option<MultiDeviceTransport>, bw_rat_client::RemoteClientError> {
+    ) -> Result<Option<MultiDeviceTransport>, ap_client::RemoteClientError> {
         self.0
             .lock()
             .expect("Lock should not be poisoned")
@@ -1046,7 +1046,7 @@ async fn test_e2e_transport_state_persistence() {
                 fn cache_session(
                     &mut self,
                     fingerprint: IdentityFingerprint,
-                ) -> Result<(), bw_rat_client::RemoteClientError> {
+                ) -> Result<(), ap_client::RemoteClientError> {
                     self.0
                         .lock()
                         .expect("Lock should not be poisoned")
@@ -1056,14 +1056,14 @@ async fn test_e2e_transport_state_persistence() {
                 fn remove_session(
                     &mut self,
                     fingerprint: &IdentityFingerprint,
-                ) -> Result<(), bw_rat_client::RemoteClientError> {
+                ) -> Result<(), ap_client::RemoteClientError> {
                     self.0
                         .lock()
                         .expect("Lock should not be poisoned")
                         .remove_session(fingerprint)
                 }
 
-                fn clear(&mut self) -> Result<(), bw_rat_client::RemoteClientError> {
+                fn clear(&mut self) -> Result<(), ap_client::RemoteClientError> {
                     self.0.lock().expect("Lock should not be poisoned").clear()
                 }
 
@@ -1078,7 +1078,7 @@ async fn test_e2e_transport_state_persistence() {
                     &mut self,
                     fingerprint: &IdentityFingerprint,
                     name: String,
-                ) -> Result<(), bw_rat_client::RemoteClientError> {
+                ) -> Result<(), ap_client::RemoteClientError> {
                     self.0
                         .lock()
                         .expect("Lock should not be poisoned")
@@ -1088,7 +1088,7 @@ async fn test_e2e_transport_state_persistence() {
                 fn update_last_connected(
                     &mut self,
                     fingerprint: &IdentityFingerprint,
-                ) -> Result<(), bw_rat_client::RemoteClientError> {
+                ) -> Result<(), ap_client::RemoteClientError> {
                     self.0
                         .lock()
                         .expect("Lock should not be poisoned")
@@ -1099,7 +1099,7 @@ async fn test_e2e_transport_state_persistence() {
                     &mut self,
                     fingerprint: &IdentityFingerprint,
                     transport_state: MultiDeviceTransport,
-                ) -> Result<(), bw_rat_client::RemoteClientError> {
+                ) -> Result<(), ap_client::RemoteClientError> {
                     self.0
                         .lock()
                         .expect("Lock should not be poisoned")
@@ -1109,7 +1109,7 @@ async fn test_e2e_transport_state_persistence() {
                 fn load_transport_state(
                     &self,
                     fingerprint: &IdentityFingerprint,
-                ) -> Result<Option<MultiDeviceTransport>, bw_rat_client::RemoteClientError>
+                ) -> Result<Option<MultiDeviceTransport>, ap_client::RemoteClientError>
                 {
                     self.0
                         .lock()

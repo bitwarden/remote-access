@@ -4,10 +4,10 @@
 //! enabling dependency injection and easier testing.
 
 use async_trait::async_trait;
-use bw_proxy_client::IncomingMessage;
+use ap_proxy_client::IncomingMessage;
 #[cfg(feature = "native-websocket")]
-use bw_proxy_client::{ProxyClientConfig, ProxyProtocolClient};
-use bw_proxy_protocol::{IdentityFingerprint, RendevouzCode};
+use ap_proxy_client::{ProxyClientConfig, ProxyProtocolClient};
+use ap_proxy_protocol::{IdentityFingerprint, RendevouzCode};
 use tokio::sync::mpsc;
 
 use crate::error::RemoteClientError;
@@ -37,7 +37,7 @@ pub trait ProxyClient: Send + Sync {
     async fn disconnect(&mut self) -> Result<(), RemoteClientError>;
 }
 
-/// Default implementation using ProxyProtocolClient from bw-proxy
+/// Default implementation using ProxyProtocolClient from ap-proxy
 #[cfg(feature = "native-websocket")]
 pub struct DefaultProxyClient {
     inner: ProxyProtocolClient,
