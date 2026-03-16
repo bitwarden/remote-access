@@ -15,12 +15,12 @@ It contains:
 
 ## Crate Structure
 
-* `bw-error` - Error handling utilities for bw_remote. Re-exports the `bw_error` proc macro and provides the `FlatError` trait.
-* `bw-error-macro` - Proc macro for generating error types with `FlatError` trait implementation. Simplified version of `bitwarden-error-macro` that only supports the `flat` error type for CLI use.
-* `bw-noise-protocol` - Multi-device Noise-based Protocol implementation using the NNpsk2 pattern for secure channel establishment with PSK-based authentication.
-* `bw-proxy` - Zero-knowledge WebSocket proxy server enabling secure rendezvous between remote and user clients. Runs as a standalone binary with environment-based configuration.
-* `bw-rat-client` - Remote and user client implementations for connecting through the proxy using the Noise Protocol.
-* `bw-remote` - CLI interface for connecting to a user-client through a proxy to request credentials over a secure Noise Protocol channel. Manages session caching and device keypair storage.
+* `ap-error` - Error handling utilities for access-protocol. Re-exports the `ap_error` proc macro and provides the `FlatError` trait.
+* `ap-error-macro` - Proc macro for generating error types with `FlatError` trait implementation. Simplified version of `bitwarden-error-macro` that only supports the `flat` error type for CLI use.
+* `ap-noise` - Multi-device Noise-based Protocol implementation using the NNpsk2 pattern for secure channel establishment with PSK-based authentication.
+* `ap-proxy` - Zero-knowledge WebSocket proxy server enabling secure rendezvous between remote and user clients. Runs as a standalone binary with environment-based configuration.
+* `ap-client` - Remote and user client implementations for connecting through the proxy using the Noise Protocol.
+* `ap-cli` - CLI interface for connecting to a user-client through a proxy to request credentials over a secure Noise Protocol channel. Manages session caching and device keypair storage.
 
 ## Building
 
@@ -30,10 +30,10 @@ Run `cargo build` in this directory. This is a standalone workspace and has no d
 
 ### Proxy Server
 
-Run the `bw-proxy` binary to start the WebSocket proxy server:
+Run the `ap-proxy` binary to start the WebSocket proxy server:
 
 ```shell
-cargo run -p bw-proxy
+cargo run -p ap-proxy
 ```
 
 The proxy binds to `127.0.0.1:8080` by default. Set the `BIND_ADDR` environment variable to override.
@@ -65,7 +65,7 @@ Options:
 
 ### Demo Flow
 
-1. Start the proxy server with `cargo run -p bw-proxy`
+1. Start the proxy server with `cargo run -p ap-proxy`
 2. Start the user-client side with `cargo run --bin aac -- listen`
 3. Enter the pairing token from step 2 into the `--token` argument of `aac connect`
 4. Now `aac`, taking the role of the remote client, will let you type in domains to request credentials for, and you will approve them on the `listen` side from step 2

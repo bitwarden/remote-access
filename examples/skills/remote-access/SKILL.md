@@ -60,7 +60,7 @@ Alternatively, for PSK tokens (format: `<64-hex-psk>_<64-hex-fingerprint>`):
 aac --domain example.com --token <PSK_TOKEN> --output json
 ```
 
-Sessions are cached in `~/.bw-remote/` for future use — subsequent requests don't need a token.
+Sessions are cached in `~/.access-protocol/` for future use — subsequent requests don't need a token.
 
 ## Domain matching
 
