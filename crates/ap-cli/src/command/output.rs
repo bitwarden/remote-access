@@ -50,15 +50,7 @@ pub fn exit_code_for_error(err: &RemoteClientError) -> i32 {
 pub fn emit_json_success(credential: &CredentialData) {
     let obj = serde_json::json!({
         "success": true,
-        "credential": {
-            "username": credential.username,
-            "password": credential.password,
-            "totp": credential.totp,
-            "uri": credential.uri,
-            "notes": credential.notes,
-            "credential_id": credential.credential_id,
-            "domain": credential.domain,
-        }
+        "credential": credential,
     });
     println!("{obj}");
 }

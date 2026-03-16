@@ -154,6 +154,7 @@ pub enum RemoteClientEvent {
 
 /// Credential data returned from a request
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CredentialData {
     /// Username for the credential
     #[serde(skip_serializing_if = "Option::is_none")]
