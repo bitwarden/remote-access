@@ -1,8 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/bw-error",
-    "crates/bw-error-macro",
+    "crates/ap-error",
+    "crates/ap-error-macro",
     "crates/bw-rat-client",
     "crates/bw-noise-protocol",
     "crates/bw-proxy",
@@ -20,8 +20,8 @@ license = "GPL-3.0"
 
 [workspace.dependencies]
 # Internal crates
-bw-error = { path = "crates/bw-error", version = "0.1.0" }
-bw-error-macro = { path = "crates/bw-error-macro", version = "0.1.0" }
+ap-error = { path = "crates/ap-error", version = "0.1.0" }
+ap-error-macro = { path = "crates/ap-error-macro", version = "0.1.0" }
 bw-rat-client = { path = "crates/bw-rat-client", version = "0.1.0" }
 bw-noise-protocol = { path = "crates/bw-noise-protocol", version = "0.1.0" }
 bw-proxy = { path = "crates/bw-proxy", version = "0.1.0" }

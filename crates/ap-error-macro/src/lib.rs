@@ -7,17 +7,17 @@ use darling::{FromMeta, ast::NestedMeta};
 use quote::quote;
 use syn::Data;
 
-/// Arguments for the bw_error macro
+/// Arguments for the ap_error macro
 #[derive(FromMeta)]
-struct BwErrorArgs {
+struct ApErrorArgs {
     #[darling(flatten)]
     #[allow(dead_code)]
-    error_type: BwErrorType,
+    error_type: ApErrorType,
 }
 
 #[derive(FromMeta)]
 #[darling(rename_all = "snake_case")]
-enum BwErrorType {
+enum ApErrorType {
     /// The error is converted into a flat error using the `FlatError` trait
     Flat,
 }
@@ -27,11 +27,11 @@ enum BwErrorType {
 /// # Example
 ///
 /// ```rust,ignore
-/// use bw_error::bw_error;
+/// use ap_error::ap_error;
 /// use thiserror::Error;
 ///
 /// #[derive(Debug, Error)]
-/// #[bw_error(flat)]
+/// #[ap_error(flat)]
 /// enum MyError {
 ///     #[error("Not found")]
 ///     NotFound,
@@ -40,7 +40,7 @@ enum BwErrorType {
 /// }
 /// ```
 #[proc_macro_attribute]
-pub fn bw_error(
+pub fn ap_error(
     args: proc_macro::TokenStream,
     item: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
@@ -51,7 +51,7 @@ pub fn bw_error(
         }
     };
 
-    let _args = match BwErrorArgs::from_list(&attr_args) {
+    let _args = match ApErrorArgs::from_list(&attr_args) {
         Ok(params) => params,
         Err(error) => {
             return proc_macro::TokenStream::from(error.write_errors());
@@ -62,10 +62,10 @@ pub fn bw_error(
     let type_identifier = &input.ident;
 
     // Only flat mode is supported
-    bitwarden_error_flat(&input, type_identifier)
+    ap_error_flat(&input, type_identifier)
 }
 
-fn bitwarden_error_flat(
+fn ap_error_flat(
     input: &syn::DeriveInput,
     type_identifier: &proc_macro2::Ident,
 ) -> proc_macro::TokenStream {
@@ -98,7 +98,7 @@ fn bitwarden_error_flat(
                 #input
 
                 #[automatically_derived]
-                impl ::bw_error::flat_error::FlatError for #type_identifier {
+                impl ::ap_error::flat_error::FlatError for #type_identifier {
                     fn error_variant(&self) -> &'static str {
                         match &self {
                             #(#match_arms), *
@@ -108,7 +108,7 @@ fn bitwarden_error_flat(
             }
             .into()
         }
-        _ => syn::Error::new_spanned(input, "bw_error can only be used with enums")
+        _ => syn::Error::new_spanned(input, "ap_error can only be used with enums")
             .to_compile_error()
             .into(),
     }

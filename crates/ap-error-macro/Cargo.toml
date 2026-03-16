@@ -1,6 +1,6 @@
 [package]
-name = "bw-error-macro"
-description = "Error handling proc macro for bw_remote"
+name = "ap-error-macro"
+description = "Error handling proc macro for access-protocol"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
