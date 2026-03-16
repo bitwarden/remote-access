@@ -1,10 +1,10 @@
 //! Error types for the Noise Protocol implementation
 
-use bw_error::bw_error;
+use ap_error::ap_error;
 use thiserror::Error;
 
 /// Errors that can occur during Noise Protocol operations
-#[bw_error(flat)]
+#[ap_error(flat)]
 #[derive(Debug, Error)]
 pub enum NoiseProtocolError {
     /// Error writing handshake message

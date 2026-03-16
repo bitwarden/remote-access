@@ -9,9 +9,9 @@
 //! 3. Second responder device loads the same state using restore_state()
 //! 4. Both responder devices independently decrypt initiator messages
 //! 5. Both responder devices independently send messages to initiator
-use bw_noise_protocol::{InitiatorHandshake, Psk, ResponderHandshake};
+use ap_noise::{InitiatorHandshake, Psk, ResponderHandshake};
 
-fn main() -> Result<(), bw_noise_protocol::NoiseProtocolError> {
+fn main() -> Result<(), ap_noise::NoiseProtocolError> {
     let psk = Psk::generate();
 
     let psk_string = psk.to_hex();
@@ -37,7 +37,7 @@ fn main() -> Result<(), bw_noise_protocol::NoiseProtocolError> {
     let state_bytes = transport_responder.save_state()?;
 
     let mut transport_responder_device2 =
-        bw_noise_protocol::MultiDeviceTransport::restore_state(&state_bytes)?;
+        ap_noise::MultiDeviceTransport::restore_state(&state_bytes)?;
     let mut transport_responder_device1 = transport_responder;
 
     let message_to_both = b"Hello from Initiator to both devices!";

@@ -14,9 +14,9 @@
 //! - Completing the handshake
 //! - Exchanging encrypted messages
 
-use bw_noise_protocol::{InitiatorHandshake, Psk, ResponderHandshake};
+use ap_noise::{InitiatorHandshake, Psk, ResponderHandshake};
 
-fn main() -> Result<(), bw_noise_protocol::NoiseProtocolError> {
+fn main() -> Result<(), ap_noise::NoiseProtocolError> {
     // Generate a PSK using a cryptographically secure RNG
     let psk = Psk::generate();
 

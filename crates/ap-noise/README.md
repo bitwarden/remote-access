@@ -1,19 +1,19 @@
-# bw-noise-protocol
+# ap-noise
 
 A multi-device Noise Protocol implementation with forward secrecy, break-in recovery, and optional post-quantum resistance.
 
 ## Overview
 
-This crate provides secure channel establishment and encrypted communication for the `bw_remote` project. It implements the Noise Protocol Framework's NNpsk2 pattern with enhancements for multi-device scenarios.
+This crate provides secure channel establishment and encrypted communication for the access-protocol project. It implements the Noise Protocol Framework's NNpsk2 pattern with enhancements for multi-device scenarios.
 
 ## Quick Start
 
 ### Basic Handshake
 
 ```rust
-use bw_noise_protocol::{Ciphersuite, InitiatorHandshake, ResponderHandshake};
+use ap_noise::{Ciphersuite, InitiatorHandshake, ResponderHandshake};
 
-fn main() -> Result<(), bw_noise_protocol::NoiseProtocolError> {
+fn main() -> Result<(), ap_noise::NoiseProtocolError> {
     // Create initiator and responder
     let mut initiator = InitiatorHandshake::new();
     let mut responder = ResponderHandshake::new();
@@ -77,7 +77,7 @@ messages with a lower chain counter are rejected.
 Transport state can be serialized and restored for session resumption:
 
 ```rust,ignore
-# use bw_noise_protocol::MultiDeviceTransport;
+# use ap_noise::MultiDeviceTransport;
 # fn example(transport: &mut MultiDeviceTransport) -> Result<(), Box<dyn std::error::Error>> {
 // Save transport state
 let state_bytes = transport.save_state()?;

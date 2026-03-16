@@ -44,7 +44,7 @@ impl Psk {
     /// # Example
     ///
     /// ```rust
-    /// use bw_noise_protocol::Psk;
+    /// use ap_noise::Psk;
     ///
     /// let psk = Psk::generate();
     /// ```
@@ -73,7 +73,7 @@ impl Psk {
     /// # Example
     ///
     /// ```rust
-    /// use bw_noise_protocol::Psk;
+    /// use ap_noise::Psk;
     /// use rand::thread_rng;
     ///
     /// let psk = Psk::generate();
@@ -92,7 +92,7 @@ impl Psk {
     /// # Example
     ///
     /// ```rust
-    /// use bw_noise_protocol::Psk;
+    /// use ap_noise::Psk;
     /// use rand::thread_rng;
     ///
     /// let psk = Psk::generate();

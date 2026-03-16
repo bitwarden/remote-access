@@ -1,6 +1,6 @@
 [package]
-name = "bw-noise-protocol"
-description = "Noise Protocol implementation for bw_remote"
+name = "ap-noise"
+description = "Noise Protocol implementation for access-protocol"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -13,7 +13,7 @@ experimental-post-quantum-crypto = []
 
 [dependencies]
 base64 = { workspace = true }
-bw-error = { workspace = true }
+ap-error = { workspace = true }
 chacha20poly1305 = { workspace = true }
 ciborium = { workspace = true }
 clatter = { workspace = true }

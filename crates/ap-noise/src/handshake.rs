@@ -54,7 +54,7 @@ impl InitiatorHandshake {
     /// # Example
     ///
     /// ```rust
-    /// use bw_noise_protocol::{InitiatorHandshake, Psk};
+    /// use ap_noise::{InitiatorHandshake, Psk};
     ///
     /// let psk = Psk::generate();
     /// // Share psk out-of-band...
@@ -158,7 +158,7 @@ impl ResponderHandshake {
     /// # Example
     ///
     /// ```rust
-    /// use bw_noise_protocol::{ResponderHandshake, Psk};
+    /// use ap_noise::{ResponderHandshake, Psk};
     ///
     /// // In a real scenario, receive psk from out-of-band channel
     /// // For this example, we'll generate one

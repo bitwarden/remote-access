@@ -1,4 +1,4 @@
-//! Noise Protocol implementation for bw_remote.
+//! Noise Protocol implementation for access-protocol.
 //!
 //! This crate provides a multi-device Noise Protocol implementation using the NNpsk2 pattern
 //! for secure channel establishment with PSK-based authentication.

@@ -4,7 +4,7 @@ members = [
     "crates/ap-error",
     "crates/ap-error-macro",
     "crates/bw-rat-client",
-    "crates/bw-noise-protocol",
+    "crates/ap-noise",
     "crates/bw-proxy",
     "crates/bw-proxy-client",
     "crates/ap-proxy-protocol",
@@ -23,7 +23,7 @@ license = "GPL-3.0"
 ap-error = { path = "crates/ap-error", version = "0.1.0" }
 ap-error-macro = { path = "crates/ap-error-macro", version = "0.1.0" }
 bw-rat-client = { path = "crates/bw-rat-client", version = "0.1.0" }
-bw-noise-protocol = { path = "crates/bw-noise-protocol", version = "0.1.0" }
+ap-noise = { path = "crates/ap-noise", version = "0.1.0" }
 bw-proxy = { path = "crates/bw-proxy", version = "0.1.0" }
 bw-proxy-client = { path = "crates/bw-proxy-client", version = "0.1.0", default-features = false }
 ap-proxy-protocol = { path = "crates/ap-proxy-protocol", version = "0.1.0" }

@@ -15,9 +15,9 @@
 //! Note: Depending on whether the "experimental-post-quantum-crypto" feature is enabled,
 //! this test will use either the classical or post-quantum cipher suite.
 
-use bw_noise_protocol::{InitiatorHandshake, ResponderHandshake};
+use ap_noise::{InitiatorHandshake, ResponderHandshake};
 
-fn main() -> Result<(), bw_noise_protocol::NoiseProtocolError> {
+fn main() -> Result<(), ap_noise::NoiseProtocolError> {
     // Create initiator
     let mut initiator = InitiatorHandshake::new();
 
