@@ -444,9 +444,9 @@ async fn run_event_loop(
                                 ]);
                             }
                             UserClientEvent::CredentialRequest { query, request_id, session_id } => {
-                                let domain = query.to_string();
                                 match provider.lookup(&query) {
                                     LookupResult::Found(credential) => {
+                                        let domain = credential.domain.clone().unwrap_or_else(|| query.to_string());
                                         let found_msg = format!(
                                             "Found: {} ({})",
                                             credential.username.as_deref().unwrap_or("no username"),
@@ -480,19 +480,20 @@ async fn run_event_loop(
                                         );
                                     }
                                     result @ (LookupResult::NotReady { .. } | LookupResult::NotFound) => {
+                                        let label = query.to_string();
                                         match result {
                                             LookupResult::NotReady { message } => {
-                                                app.push_msg(MessageKind::Warning, format!("{message} — cannot look up credential for {domain}"));
+                                                app.push_msg(MessageKind::Warning, format!("{message} — cannot look up credential for {label}"));
                                             }
                                             _ => {
-                                                app.push_msg(MessageKind::Error, format!("No credential found in vault for {domain}"));
+                                                app.push_msg(MessageKind::Error, format!("No credential found in vault for {label}"));
                                             }
                                         }
                                         response_tx
                                             .send(UserClientResponse::RespondCredential {
                                                 request_id,
                                                 session_id,
-                                                domain,
+                                                domain: label,
                                                 approved: false,
                                                 credential: None,
                                                 credential_id: None,
