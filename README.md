@@ -170,8 +170,8 @@ It contains:
 * A CLI tool for requesting / releasing credentials
 * A proxy server for demo/development purposes
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, crate structure, and how to run the project.
-
 <p align="center">
   <img src="assets/architecture.png" alt="Agent Access architecture" width="960">
 </p>
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, crate structure, and how to run the project.
