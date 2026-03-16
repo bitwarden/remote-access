@@ -1,6 +1,6 @@
 [package]
 name = "ap-client"
-description = "Noise Protocol remote client for access-protocol"
+description = "Agent Access SDK. High-level clients for the Access Protocol."
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
