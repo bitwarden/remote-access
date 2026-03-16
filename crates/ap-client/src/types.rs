@@ -179,4 +179,8 @@ pub(crate) struct CredentialResponsePayload {
     #[serde(rename = "requestId")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
+    /// Domain echoed back from the request
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
 }

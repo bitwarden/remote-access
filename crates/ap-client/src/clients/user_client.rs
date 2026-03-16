@@ -186,6 +186,9 @@ struct CredentialResponsePayload {
     error: Option<String>,
     #[serde(rename = "requestId")]
     request_id: String,
+    /// Domain echoed back from the request
+    #[serde(skip_serializing_if = "Option::is_none")]
+    domain: Option<String>,
 }
 
 /// User client for acting as trusted device
@@ -778,6 +781,7 @@ impl UserClient {
                 None
             },
             request_id: request_id.clone(),
+            domain: Some(domain.clone()),
         };
 
         // Encrypt and send
