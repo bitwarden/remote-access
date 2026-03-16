@@ -19,6 +19,10 @@ It creates an end-to-end encrypted tunnel between the remote system and the pass
 
 Agent Access is an open protocol, CLI tool, and Rust SDK that you can use to implement it directly into agents or custom software. While we at Bitwarden have built it, it's open for any password manager to leverage to further support agentic or automation use cases without exposing your entire vault.
 
+<p align="center">
+  <img src="assets/overview.gif" alt="Agent Access overview" width="600">
+</p>
+
 ## Installation
 
 ### macOS (Apple Silicon)
