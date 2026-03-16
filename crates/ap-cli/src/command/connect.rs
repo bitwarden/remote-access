@@ -526,6 +526,9 @@ async fn run_interactive_session(
                                                 if let Some(uri) = &credential.uri {
                                                     app.push_msg(MessageKind::Info, format!("  URI: {uri}"));
                                                 }
+                                                if let Some(id) = &credential.credential_id {
+                                                    app.push_msg(MessageKind::Info, format!("  ID: {id}"));
+                                                }
                                             }
                                             Some(Err(e)) => {
                                                 app.push_msg(MessageKind::Error, format!("Failed to get credential: {e}"));
