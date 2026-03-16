@@ -41,8 +41,13 @@ fn version_string() -> &'static str {
 }
 
 fn header() -> &'static str {
-    static HEADER: LazyLock<String> =
-        LazyLock::new(|| format!("Agent Access CLI - {}", version_string()));
+    static HEADER: LazyLock<String> = LazyLock::new(|| {
+        if *COLOR_CHOICE == ColorChoice::Never {
+            format!("Agent Access CLI - {}", version_string())
+        } else {
+            format!("\x1b[1;36mAgent Access CLI\x1b[0m - {}", version_string())
+        }
+    });
     &HEADER
 }
 
