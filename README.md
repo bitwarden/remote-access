@@ -62,9 +62,9 @@ curl -fsSL "https://raw.githubusercontent.com/bitwarden/agent-access/main/exampl
 * Automated script requesting an API-token.
 * Github Action
 
-### Custom integration with Python (PyO3)
+### Use from your code
 
-Use Agent Access directly from Python via PyO3 bindings to request credentials over an end-to-end encrypted tunnel.
+Use Agent Access directly from your code by referencing the rust sdk. Here's an example using Python via PyO3 bindings to request credentials over the end-to-end encrypted tunnel.
 
 ```python
 from agent_access import RemoteClient
@@ -109,7 +109,7 @@ aac connect --token <pairing-token> --output json
 
 # Fetching credentials (without interactivity)
 aac connect --domain example.com --output json
-aac connect --domain github.com --output json
+aac connect --domain github.com --provider bitwarden --output json
 
 # Pair + Fetch in one command (without interactivity)
 aac connect --token <pairing-token> --domain example.com --output json
@@ -166,3 +166,7 @@ It contains:
 * A proxy server for demo/development purposes
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, crate structure, and how to run the project.
+
+<p align="center">
+  <img src="assets/architecture.png" alt="Agent Access architecture" width="540">
+</p>
