@@ -94,7 +94,7 @@ dependencies = [
 
 [[package]]
 name = "ap-cli"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "ap-client",
  "ap-noise",
@@ -117,7 +117,7 @@ dependencies = [
 
 [[package]]
 name = "ap-client"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "ap-error",
  "ap-noise",
@@ -139,14 +139,14 @@ dependencies = [
 
 [[package]]
 name = "ap-error"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "ap-error-macro",
 ]
 
 [[package]]
 name = "ap-error-macro"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "darling 0.20.11",
  "proc-macro2",
@@ -156,7 +156,7 @@ dependencies = [
 
 [[package]]
 name = "ap-noise"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "ap-error",
  "base64",
@@ -177,7 +177,7 @@ dependencies = [
 
 [[package]]
 name = "ap-proxy"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "ap-proxy-client",
  "ap-proxy-protocol",
@@ -191,7 +191,7 @@ dependencies = [
 
 [[package]]
 name = "ap-proxy-client"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "ap-proxy-protocol",
  "futures-util",
@@ -203,7 +203,7 @@ dependencies = [
 
 [[package]]
 name = "ap-proxy-protocol"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "ap-error",
  "coset",
