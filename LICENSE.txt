@@ -5,7 +5,7 @@ specifies another license. Bitwarden Licensed code is found only in the
 /bitwarden_license directory.
 
 GPL v3.0:
-https://github.com/bitwarden/server/blob/main/LICENSE_GPL.txt
+https://github.com/bitwarden/server/blob/main/LICENSE_AGPL.txt
 
 Bitwarden License v1.0:
 https://github.com/bitwarden/server/blob/main/LICENSE_BITWARDEN.txt

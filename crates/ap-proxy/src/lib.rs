@@ -4,6 +4,8 @@
 //! authenticates clients, and routes messages between them. The server is
 //! zero-knowledge and cannot decrypt client payloads.
 //!
+//! For the client library, see the `ap-proxy-client` crate.
+//! For shared protocol types, see the `ap-proxy-protocol` crate.
 //!
 //! # Architecture
 //!
