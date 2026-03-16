@@ -178,8 +178,13 @@ fn domain_from_uri(uri: &str) -> Option<String> {
         Some((_, rest)) => rest,
         None => uri,
     };
+    // Strip userinfo (e.g. "user:pass@")
+    let after_userinfo = match after_scheme.split_once('@') {
+        Some((_, rest)) => rest,
+        None => after_scheme,
+    };
     // Take host (before any '/' or ':')
-    let host = after_scheme.split(['/', ':']).next()?;
+    let host = after_userinfo.split(['/', ':']).next()?;
     if host.is_empty() {
         return None;
     }
@@ -313,6 +318,47 @@ mod tests {
         let mut bad = VALID_KEY.to_string();
         bad.replace_range(40..41, " ");
         assert!(!looks_like_session_key(&bad));
+    }
+
+    // -- domain_from_uri() ---------------------------------------------------
+
+    #[test]
+    fn domain_from_uri_with_scheme_and_path() {
+        assert_eq!(
+            domain_from_uri("https://example.com/path"),
+            Some("example.com".into())
+        );
+    }
+
+    #[test]
+    fn domain_from_uri_with_port() {
+        assert_eq!(
+            domain_from_uri("https://example.com:8080/path"),
+            Some("example.com".into())
+        );
+    }
+
+    #[test]
+    fn domain_from_uri_no_scheme() {
+        assert_eq!(domain_from_uri("example.com"), Some("example.com".into()));
+    }
+
+    #[test]
+    fn domain_from_uri_with_userinfo() {
+        assert_eq!(
+            domain_from_uri("https://user:pass@example.com"),
+            Some("example.com".into())
+        );
+    }
+
+    #[test]
+    fn domain_from_uri_empty_host() {
+        assert_eq!(domain_from_uri("https://"), None);
+    }
+
+    #[test]
+    fn domain_from_uri_bare_scheme() {
+        assert_eq!(domain_from_uri(""), None);
     }
 
     // -- BitwardenProvider construction & name() ----------------------------
