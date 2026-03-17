@@ -59,8 +59,10 @@ pub enum UserClientEvent {
     HandshakeComplete {},
     /// Handshake fingerprint requires verification
     HandshakeFingerprint {
-        /// The 6-character hex fingerprint
+        /// The 6-character hex fingerprint for visual verification
         fingerprint: String,
+        /// The remote device's stable identity fingerprint
+        identity: IdentityFingerprint,
     },
     /// Fingerprint was verified and connection accepted
     FingerprintVerified {},
@@ -471,6 +473,7 @@ impl UserClient {
             event_tx
                 .send(UserClientEvent::HandshakeFingerprint {
                     fingerprint: fingerprint_str,
+                    identity: source,
                 })
                 .await
                 .ok();
@@ -514,6 +517,7 @@ impl UserClient {
             event_tx
                 .send(UserClientEvent::HandshakeFingerprint {
                     fingerprint: fingerprint_str,
+                    identity: source,
                 })
                 .await
                 .ok();

@@ -276,7 +276,7 @@ pub fn format_listen_event(event: &UserClientEvent) -> Option<Message> {
             "Secure channel established",
         )),
 
-        UserClientEvent::HandshakeFingerprint { fingerprint } => Some(Message::rich(
+        UserClientEvent::HandshakeFingerprint { fingerprint, .. } => Some(Message::rich(
             MessageKind::Prompt,
             vec![
                 Span::styled(
