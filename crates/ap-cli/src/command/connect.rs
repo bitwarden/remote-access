@@ -16,6 +16,7 @@ use futures_util::StreamExt;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use tokio::sync::mpsc;
+use tracing::info;
 
 use super::output::{
     OutputFormat, emit_json_error, emit_json_success, emit_text_credential, exit_code_for_error,
@@ -660,7 +661,7 @@ pub(super) async fn fetch_credential(
     let cached_sessions = session_store.list_sessions().await;
     let mode = resolve_connection_mode(token, session_fingerprint, &cached_sessions)?;
 
-    eprintln!("Connecting to proxy...");
+    info!("Connecting to proxy...");
 
     let (mut event_rx, _response_tx, mut client) =
         start_connection(identity_provider, session_store, proxy_url, &mode, false).await?;
@@ -668,7 +669,7 @@ pub(super) async fn fetch_credential(
     // Drain events in background (prevents channel backpressure)
     tokio::spawn(async move { while event_rx.recv().await.is_some() {} });
 
-    eprintln!("Requesting credential for {query}");
+    info!("Requesting credential for {query}");
 
     match client.request_credential(query).await {
         Ok(credential) => {
@@ -717,7 +718,7 @@ async fn run_single_shot(
             let msg = format!("{e}");
             match output {
                 OutputFormat::Json => emit_json_error(&msg, exit_code_name(code)),
-                OutputFormat::Text => eprintln!("Error: {msg}"),
+                OutputFormat::Text => tracing::error!("{msg}"),
             }
             std::process::exit(code);
         }

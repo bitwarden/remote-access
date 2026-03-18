@@ -6,7 +6,7 @@
 mod connect;
 mod connections;
 mod listen;
-mod output;
+pub(crate) mod output;
 mod run;
 pub(crate) mod tui;
 pub(crate) mod tui_tracing;

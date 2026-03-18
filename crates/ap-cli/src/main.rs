@@ -36,10 +36,15 @@ async fn main() -> Result<()> {
     let cli = Cli::from_arg_matches(&matches)?;
 
     // Initialize logging with appropriate level
+    // - verbose: DEBUG (all messages)
+    // - JSON output: WARN (suppress status messages that would pollute structured output)
+    // - default: INFO (show status messages like "Connecting to proxy...")
     let log_level = if cli.verbose {
         tracing::Level::DEBUG
-    } else {
+    } else if matches!(cli.output, command::output::OutputFormat::Json) {
         tracing::Level::WARN
+    } else {
+        tracing::Level::INFO
     };
 
     let env_filter =

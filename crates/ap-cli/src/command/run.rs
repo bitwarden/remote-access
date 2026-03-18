@@ -179,7 +179,7 @@ impl RunArgs {
                     .downcast_ref::<ap_client::RemoteClientError>()
                     .map(exit_code_for_error)
                     .unwrap_or(exit_code::GENERAL_ERROR);
-                eprintln!("Error: {e}");
+                tracing::error!("{e}");
                 std::process::exit(code);
             }
         };
@@ -187,8 +187,8 @@ impl RunArgs {
         let env_vars = build_env_vars(&credential, self.env_all, &explicit_mappings);
 
         if env_vars.is_empty() {
-            eprintln!(
-                "Warning: no credential fields matched — child process will run without injected env vars"
+            tracing::warn!(
+                "No credential fields matched — child process will run without injected env vars"
             );
         }
 
