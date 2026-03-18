@@ -45,7 +45,8 @@
 //!
 //! ```ignore
 //! use ap_client::{
-//!     DefaultProxyClient, IdentityProvider, UserClient, UserClientEvent, UserClientResponse,
+//!     DefaultProxyClient, IdentityProvider, UserClient, UserClientNotification,
+//!     UserClientRequest,
 //! };
 //! use ap_proxy_client::ProxyClientConfig;
 //! use tokio::sync::mpsc;
@@ -56,21 +57,22 @@
 //!     identity_keypair: Some(identity_provider.identity().to_owned()),
 //! }));
 //!
-//! let (event_tx, event_rx) = mpsc::channel(32);
-//! let (response_tx, response_rx) = mpsc::channel(32);
+//! let (notification_tx, mut notification_rx) = mpsc::channel(32);
+//! let (request_tx, mut request_rx) = mpsc::channel(32);
 //!
-//! let mut client = UserClient::connect(
+//! // Connect — spawns event loop internally, returns handle
+//! let client = UserClient::connect(
 //!     identity_provider,
 //!     session_store,
 //!     proxy_client,
+//!     notification_tx,
+//!     request_tx,
+//!     None, // audit_log
 //! ).await?;
 //!
-//! // Set up pairing (PSK or rendezvous)
+//! // Already listening. Just use it.
 //! let token = client.get_psk_token(None).await?;
 //! // Or: let code = client.get_rendezvous_token(None).await?;
-//!
-//! // Start the event loop
-//! client.listen(event_tx, response_rx).await?;
 //! ```
 
 /// Error types
@@ -85,7 +87,10 @@ pub mod types;
 mod clients;
 
 pub use clients::remote_client::RemoteClient;
-pub use clients::user_client::{UserClient, UserClientEvent, UserClientResponse};
+pub use clients::user_client::{
+    CredentialRequestReply, FingerprintVerificationReply, UserClient, UserClientNotification,
+    UserClientRequest,
+};
 pub use error::RemoteClientError;
 #[cfg(feature = "native-websocket")]
 pub use proxy::DefaultProxyClient;

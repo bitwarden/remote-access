@@ -4,8 +4,8 @@
 //! approving connection requests from remote clients.
 
 use ap_client::{
-    CredentialData, DefaultProxyClient, IdentityProvider, SessionStore, UserClient,
-    UserClientEvent, UserClientResponse,
+    CredentialData, CredentialRequestReply, DefaultProxyClient, FingerprintVerificationReply,
+    IdentityProvider, SessionStore, UserClient, UserClientNotification, UserClientRequest,
 };
 use ap_proxy_client::ProxyClientConfig;
 use ap_proxy_protocol::IdentityFingerprint;
@@ -15,12 +15,12 @@ use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures_util::StreamExt;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use super::tui::{
     App, AppAction, Message, MessageKind, Mode, init_terminal, restore_terminal, wait_for_keypress,
 };
-use super::util::{format_listen_event, format_relative_time};
+use super::util::{format_listen_notification, format_relative_time};
 use crate::providers::{CredentialProvider, LookupResult, ProviderStatus};
 use crate::storage::{FileIdentityStorage, FileSessionCache};
 
@@ -58,16 +58,19 @@ impl ListenArgs {
 enum Phase {
     /// Waiting for events; showing the idle menu.
     Idle,
-    /// Fingerprint verification pending.
-    FingerprintConfirm,
+    /// Fingerprint verification pending — carries the oneshot reply sender.
+    FingerprintConfirm {
+        reply: oneshot::Sender<FingerprintVerificationReply>,
+    },
     /// Prompting user for a friendly device name after fingerprint approval.
-    NameInput,
-    /// Credential approval pending.
+    NameInput {
+        reply: oneshot::Sender<FingerprintVerificationReply>,
+    },
+    /// Credential approval pending — carries the oneshot reply sender.
     CredentialApproval {
         query: ap_client::CredentialQuery,
-        request_id: String,
-        session_id: String,
         credential: CredentialData,
+        reply: oneshot::Sender<CredentialRequestReply>,
     },
     /// Waiting for the user to enter unlock input (password or session key).
     UnlockInput,
@@ -214,10 +217,17 @@ fn idle_footer() -> Line<'static> {
     ])
 }
 
+/// Styled value for fingerprints, codes, domains in the TUI.
+fn val_style() -> Style {
+    Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD)
+}
+
 /// Run the interactive event+prompt loop using the ratatui TUI.
 ///
-/// Handles events from `event_rx`, credential lookups, and user input
-/// in a single `select!` loop. The `client_handle` is aborted on exit.
+/// Handles notifications and requests from the `UserClient`, credential lookups,
+/// and user input in a single `select!` loop.
 ///
 /// The TUI state (`app`, `term`, `reader`) is owned by the caller so that
 /// it survives across `/pair` session restarts without flickering.
@@ -226,11 +236,10 @@ async fn run_event_loop(
     app: &mut App,
     term: &mut ratatui::DefaultTerminal,
     reader: &mut EventStream,
-    mut event_rx: mpsc::Receiver<UserClientEvent>,
-    response_tx: mpsc::Sender<UserClientResponse>,
+    mut notification_rx: mpsc::Receiver<UserClientNotification>,
+    mut request_rx: mpsc::Receiver<UserClientRequest>,
     sessions: &[SessionInfo],
     pending_session_name: &Option<String>,
-    mut client_handle: Option<tokio::task::JoinHandle<Result<(), ap_client::RemoteClientError>>>,
     provider: &mut dyn CredentialProvider,
     log_rx: &mut Option<super::tui_tracing::LogReceiver>,
 ) -> Result<EventLoopExit> {
@@ -308,49 +317,43 @@ async fn run_event_loop(
                                 }
 
                                 // Fingerprint confirmation
-                                (Phase::FingerprintConfirm, AppAction::Confirmed(approved)) => {
+                                (Phase::FingerprintConfirm { .. }, AppAction::Confirmed(approved)) => {
                                     let approved = *approved;
-                                    if !approved {
-                                        response_tx
-                                            .send(UserClientResponse::VerifyFingerprint { approved: false, name: None })
-                                            .await
-                                            .ok();
-                                        app.push_msg(MessageKind::Error, "Fingerprint rejected");
-                                        phase = Phase::Idle;
-                                        app.enter_idle(idle_footer(), IDLE_COMMANDS);
-                                    } else if let Some(name) = pending_session_name.clone() {
-                                        // Name was pre-set via /pair — send immediately
-                                        response_tx
-                                            .send(UserClientResponse::VerifyFingerprint { approved: true, name: Some(name) })
-                                            .await
-                                            .ok();
-                                        app.push_msg(MessageKind::Success, "Fingerprint approved");
-                                        phase = Phase::Idle;
-                                        app.enter_idle(idle_footer(), IDLE_COMMANDS);
-                                    } else {
-                                        // No name pre-set — prompt user for one
-                                        app.push_msg(MessageKind::Success, "Fingerprint approved");
-                                        phase = Phase::NameInput;
-                                        app.input_title = " Name this connection (Enter to skip) ";
-                                        app.set_mode(Mode::TextInput);
-                                        app.commands = &[];
-                                        app.footer = Line::from(vec![
-                                            Span::styled(
-                                                " Type a friendly name for this connection, or press Enter to skip",
-                                                Style::default().fg(Color::Yellow),
-                                            ),
-                                        ]);
+                                    let old_phase = std::mem::replace(&mut phase, Phase::Idle);
+                                    if let Phase::FingerprintConfirm { reply } = old_phase {
+                                        if !approved {
+                                            let _ = reply.send(FingerprintVerificationReply { approved: false, name: None });
+                                            app.push_msg(MessageKind::Error, "Fingerprint rejected");
+                                            app.enter_idle(idle_footer(), IDLE_COMMANDS);
+                                        } else if let Some(name) = pending_session_name.clone() {
+                                            // Name was pre-set via /pair — send immediately
+                                            let _ = reply.send(FingerprintVerificationReply { approved: true, name: Some(name) });
+                                            app.push_msg(MessageKind::Success, "Fingerprint approved");
+                                            app.enter_idle(idle_footer(), IDLE_COMMANDS);
+                                        } else {
+                                            // No name pre-set — prompt user for one
+                                            app.push_msg(MessageKind::Success, "Fingerprint approved");
+                                            phase = Phase::NameInput { reply };
+                                            app.input_title = " Name this connection (Enter to skip) ";
+                                            app.set_mode(Mode::TextInput);
+                                            app.commands = &[];
+                                            app.footer = Line::from(vec![
+                                                Span::styled(
+                                                    " Type a friendly name for this connection, or press Enter to skip",
+                                                    Style::default().fg(Color::Yellow),
+                                                ),
+                                            ]);
+                                        }
                                     }
                                 }
 
                                 // Name input after fingerprint approval
-                                (Phase::NameInput, AppAction::Submit(text)) => {
+                                (Phase::NameInput { .. }, AppAction::Submit(text)) => {
                                     let name = if text.is_empty() { None } else { Some(text.clone()) };
-                                    response_tx
-                                        .send(UserClientResponse::VerifyFingerprint { approved: true, name })
-                                        .await
-                                        .ok();
-                                    phase = Phase::Idle;
+                                    let old_phase = std::mem::replace(&mut phase, Phase::Idle);
+                                    if let Phase::NameInput { reply } = old_phase {
+                                        let _ = reply.send(FingerprintVerificationReply { approved: true, name });
+                                    }
                                     app.enter_idle(idle_footer(), IDLE_COMMANDS);
                                 }
 
@@ -358,34 +361,22 @@ async fn run_event_loop(
                                 (Phase::CredentialApproval { .. }, AppAction::Confirmed(approved)) => {
                                     let approved = *approved;
                                     let old_phase = std::mem::replace(&mut phase, Phase::Idle);
-                                    if let Phase::CredentialApproval { query, request_id, session_id, credential } = old_phase {
+                                    if let Phase::CredentialApproval { query, credential, reply } = old_phase {
                                         let label = credential.domain.clone().unwrap_or_else(|| query.to_string());
                                         if approved {
                                             let cred_id = credential.credential_id.clone();
-                                            response_tx
-                                                .send(UserClientResponse::RespondCredential {
-                                                    request_id,
-                                                    session_id,
-                                                    query,
-                                                    approved: true,
-                                                    credential: Some(credential),
-                                                    credential_id: cred_id,
-                                                })
-                                                .await
-                                                .ok();
+                                            let _ = reply.send(CredentialRequestReply {
+                                                approved: true,
+                                                credential: Some(credential),
+                                                credential_id: cred_id,
+                                            });
                                             app.push_msg(MessageKind::Success, format!("Credential sent for {label}"));
                                         } else {
-                                            response_tx
-                                                .send(UserClientResponse::RespondCredential {
-                                                    request_id,
-                                                    session_id,
-                                                    query,
-                                                    approved: false,
-                                                    credential: None,
-                                                    credential_id: credential.credential_id,
-                                                })
-                                                .await
-                                                .ok();
+                                            let _ = reply.send(CredentialRequestReply {
+                                                approved: false,
+                                                credential: None,
+                                                credential_id: credential.credential_id,
+                                            });
                                             app.push_msg(MessageKind::Error, format!("Credential denied for {label}"));
                                         }
                                     }
@@ -400,118 +391,19 @@ async fn run_event_loop(
                 }
             }
 
-            event = event_rx.recv() => {
-                match event {
-                    Some(event) => {
-                        // Print the formatted event message
-                        if let Some(msg) = format_listen_event(&event) {
+            // Handle notifications (fire-and-forget status updates)
+            notification = notification_rx.recv() => {
+                match notification {
+                    Some(notification) => {
+                        // Print the formatted notification message
+                        if let Some(msg) = format_listen_notification(&notification) {
                             app.push_rich(msg);
                         }
 
-                        // Handle phase transitions
-                        match event {
-                            UserClientEvent::HandshakeFingerprint { .. } => {
-                                phase = Phase::FingerprintConfirm;
-                                app.commands = &[];
-                                let description = match pending_session_name {
-                                    Some(name) => Line::from(vec![
-                                        Span::styled("Device: ", Style::default().fg(Color::DarkGray)),
-                                        Span::styled(
-                                            name.clone(),
-                                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                                        ),
-                                        Span::styled(" — Do the fingerprints match?", Style::default()),
-                                    ]),
-                                    None => Line::from("Do the fingerprints match?"),
-                                };
-                                app.set_mode(Mode::Confirm {
-                                    title: "Fingerprint Verification".to_string(),
-                                    description,
-                                });
-                                app.footer = Line::from(vec![
-                                    Span::styled(
-                                        " Compare fingerprints with remote device — ",
-                                        Style::default().fg(Color::Yellow),
-                                    ),
-                                    Span::styled(
-                                        "[y]",
-                                        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
-                                    ),
-                                    Span::styled(" approve  ", Style::default().fg(Color::Yellow)),
-                                    Span::styled(
-                                        "[n]",
-                                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                                    ),
-                                    Span::styled(" reject", Style::default().fg(Color::Yellow)),
-                                ]);
-                            }
-                            UserClientEvent::CredentialRequest { query, request_id, session_id } => {
-                                match provider.lookup(&query) {
-                                    LookupResult::Found(credential) => {
-                                        let domain = credential.domain.clone().unwrap_or_else(|| query.to_string());
-                                        let found_msg = format!(
-                                            "Found: {} ({})",
-                                            credential.username.as_deref().unwrap_or("no username"),
-                                            credential.uri.as_deref().unwrap_or("no uri")
-                                        );
-                                        app.push_msg(MessageKind::Info, found_msg);
-                                        app.commands = &[];
-                                        let device_label = sessions.iter()
-                                            .find(|(fp, _, _, _)| session_id.contains(&hex::encode(fp.0)))
-                                            .map(|(fp, name, _, _)| {
-                                                name.clone().unwrap_or_else(|| {
-                                                    hex::encode(fp.0).chars().take(12).collect::<String>()
-                                                })
-                                            })
-                                            .unwrap_or_else(|| "unknown device".to_string());
-                                        phase = Phase::CredentialApproval {
-                                            query,
-                                            request_id,
-                                            session_id,
-                                            credential,
-                                        };
-                                        app.set_mode(Mode::Confirm {
-                                            title: format!("Send credential for {domain} to {device_label}?"),
-                                            description: Line::from(""),
-                                        });
-                                        app.footer = Line::from(
-                                            Span::styled(
-                                                " Press [y] to approve or [n] to deny",
-                                                Style::default().fg(Color::Yellow),
-                                            )
-                                        );
-                                    }
-                                    result @ (LookupResult::NotReady { .. } | LookupResult::NotFound) => {
-                                        let label = query.to_string();
-                                        match result {
-                                            LookupResult::NotReady { message } => {
-                                                app.push_msg(MessageKind::Warning, format!("{message} — cannot look up credential for {label}"));
-                                            }
-                                            _ => {
-                                                app.push_msg(MessageKind::Error, format!("No credential found in vault for {label}"));
-                                            }
-                                        }
-                                        response_tx
-                                            .send(UserClientResponse::RespondCredential {
-                                                request_id,
-                                                session_id,
-                                                query,
-                                                approved: false,
-                                                credential: None,
-                                                credential_id: None,
-                                            })
-                                            .await
-                                            .ok();
-                                    }
-                                }
-                            }
-                            UserClientEvent::RendezvousCodeGenerated { .. }
-                            | UserClientEvent::PskTokenGenerated { .. } => {
-                                // Update session panel with pending label
-                                app.set_session_panel(session_info_messages(sessions, Some("New session  (awaiting connection)")));
-                            }
-                            UserClientEvent::SessionRefreshed { .. }
-                            | UserClientEvent::FingerprintVerified { .. } => {
+                        // Handle phase transitions for informational events
+                        match notification {
+                            UserClientNotification::SessionRefreshed { .. }
+                            | UserClientNotification::FingerprintVerified { .. } => {
                                 // Session store was updated — reload from disk
                                 let fresh = reload_sessions().await;
                                 app.set_session_panel(session_info_messages(&fresh, None));
@@ -520,20 +412,139 @@ async fn run_event_loop(
                         }
                     }
                     None => {
-                        let error_msg = match client_handle.take() {
-                            Some(handle) => match handle.await {
-                                Ok(Err(e)) => format!("Connection failed: {e}"),
-                                Err(e) if e.is_panic() => "Client task panicked".to_string(),
-                                _ => "Connection closed".to_string(),
-                            },
-                            None => "Connection closed".to_string(),
-                        };
-                        app.push_msg(MessageKind::Error, &error_msg);
+                        // Notification channel closed — client event loop ended
+                        app.push_msg(MessageKind::Error, "Connection closed");
                         app.push_msg(MessageKind::Info, "Press any key to exit");
                         term.draw(|frame| app.draw(frame))
                             .map_err(|e| color_eyre::eyre::eyre!("TUI draw error: {}", e))?;
                         wait_for_keypress(reader).await;
                         break EventLoopExit::Quit;
+                    }
+                }
+            }
+
+            // Handle requests (require caller action via oneshot reply)
+            request = request_rx.recv() => {
+                if let Some(request) = request {
+                    match request {
+                        UserClientRequest::VerifyFingerprint { fingerprint, reply, .. } => {
+                            // Display the fingerprint
+                            app.push_rich(Message::rich(
+                                MessageKind::Prompt,
+                                vec![
+                                    Span::styled(
+                                        "SECURITY VERIFICATION — Fingerprint: ",
+                                        Style::default()
+                                            .fg(Color::Magenta)
+                                            .add_modifier(Modifier::BOLD),
+                                    ),
+                                    Span::styled(fingerprint, val_style()),
+                                    Span::styled(
+                                        " — Compare with remote device",
+                                        Style::default().fg(Color::DarkGray),
+                                    ),
+                                ],
+                            ));
+
+                            // Enter confirmation phase
+                            phase = Phase::FingerprintConfirm { reply };
+                            app.commands = &[];
+                            let description = match pending_session_name {
+                                Some(name) => Line::from(vec![
+                                    Span::styled("Device: ", Style::default().fg(Color::DarkGray)),
+                                    Span::styled(
+                                        name.clone(),
+                                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                                    ),
+                                    Span::styled(" — Do the fingerprints match?", Style::default()),
+                                ]),
+                                None => Line::from("Do the fingerprints match?"),
+                            };
+                            app.set_mode(Mode::Confirm {
+                                title: "Fingerprint Verification".to_string(),
+                                description,
+                            });
+                            app.footer = Line::from(vec![
+                                Span::styled(
+                                    " Compare fingerprints with remote device — ",
+                                    Style::default().fg(Color::Yellow),
+                                ),
+                                Span::styled(
+                                    "[y]",
+                                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                                ),
+                                Span::styled(" approve  ", Style::default().fg(Color::Yellow)),
+                                Span::styled(
+                                    "[n]",
+                                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                                ),
+                                Span::styled(" reject", Style::default().fg(Color::Yellow)),
+                            ]);
+                        }
+                        UserClientRequest::CredentialRequest { query, identity, reply } => {
+                            // Display the request
+                            app.push_rich(Message::rich(
+                                MessageKind::Prompt,
+                                vec![
+                                    Span::styled("Credential request - ", Style::default().fg(Color::White)),
+                                    Span::styled(query.to_string(), val_style()),
+                                ],
+                            ));
+
+                            match provider.lookup(&query) {
+                                LookupResult::Found(credential) => {
+                                    let domain = credential.domain.clone().unwrap_or_else(|| query.to_string());
+                                    let found_msg = format!(
+                                        "Found: {} ({})",
+                                        credential.username.as_deref().unwrap_or("no username"),
+                                        credential.uri.as_deref().unwrap_or("no uri")
+                                    );
+                                    app.push_msg(MessageKind::Info, found_msg);
+                                    app.commands = &[];
+                                    let identity_hex = hex::encode(identity.0);
+                                    let device_label = sessions.iter()
+                                        .find(|(fp, _, _, _)| identity_hex.contains(&hex::encode(fp.0)))
+                                        .map(|(fp, name, _, _)| {
+                                            name.clone().unwrap_or_else(|| {
+                                                hex::encode(fp.0).chars().take(12).collect::<String>()
+                                            })
+                                        })
+                                        .unwrap_or_else(|| "unknown device".to_string());
+                                    phase = Phase::CredentialApproval {
+                                        query,
+                                        credential,
+                                        reply,
+                                    };
+                                    app.set_mode(Mode::Confirm {
+                                        title: format!("Send credential for {domain} to {device_label}?"),
+                                        description: Line::from(""),
+                                    });
+                                    app.footer = Line::from(
+                                        Span::styled(
+                                            " Press [y] to approve or [n] to deny",
+                                            Style::default().fg(Color::Yellow),
+                                        )
+                                    );
+                                }
+                                result @ (LookupResult::NotReady { .. } | LookupResult::NotFound) => {
+                                    let label = query.to_string();
+                                    match result {
+                                        LookupResult::NotReady { message } => {
+                                            app.push_msg(MessageKind::Warning, format!("{message} — cannot look up credential for {label}"));
+                                        }
+                                        _ => {
+                                            app.push_msg(MessageKind::Error, format!("No credential found in vault for {label}"));
+                                        }
+                                    }
+                                    // Auto-deny: reply through the oneshot directly
+                                    let _ = reply.send(CredentialRequestReply {
+                                        approved: false,
+                                        credential: None,
+                                        credential_id: None,
+                                    });
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -552,9 +563,6 @@ async fn run_event_loop(
         }
     };
 
-    if let Some(handle) = client_handle {
-        handle.abort();
-    }
     Ok(exit)
 }
 
@@ -565,122 +573,139 @@ async fn run_user_client_session(
     provider: &mut dyn CredentialProvider,
     mut log_rx: Option<super::tui_tracing::LogReceiver>,
 ) -> Result<()> {
-    let local = tokio::task::LocalSet::new();
+    // First iteration: if cached sessions exist, listen on those immediately.
+    // On `/pair`, we loop back and start a fresh rendezvous/psk session.
+    let mut force_new_session = false;
+    let mut pending_session_name: Option<String> = None;
 
-    local
-        .run_until(async move {
-            // First iteration: if cached sessions exist, listen on those immediately.
-            // On `/pair`, we loop back and start a fresh rendezvous/psk session.
-            let mut force_new_session = false;
-            let mut pending_session_name: Option<String> = None;
+    // Create TUI state once — it survives across `/pair` restarts.
+    let mut app = App::new();
+    app.client_label = "User client";
 
-            // Create TUI state once — it survives across `/pair` restarts.
-            let mut app = App::new();
-            app.client_label = "User client";
+    // Show initial provider status (single status() call)
+    let initial_status = provider.status();
+    let name = provider.name();
+    match &initial_status {
+        ProviderStatus::Ready { .. } => {}
+        ProviderStatus::Locked { .. } => {
+            app.push_msg(
+                MessageKind::Warning,
+                format!("{name} vault is not unlocked — credential lookups will fail. Use /unlock"),
+            );
+        }
+        ProviderStatus::Unavailable { reason } => {
+            app.push_msg(MessageKind::Warning, format!("{name}: {reason}"));
+        }
+        ProviderStatus::NotInstalled { install_hint } => {
+            app.push_msg(
+                MessageKind::Warning,
+                format!("{name} not found. {install_hint}"),
+            );
+        }
+    }
+    apply_status_spans(&mut app, name, &initial_status);
+    let mut term = init_terminal();
+    let mut reader = EventStream::new();
 
-            // Show initial provider status (single status() call)
-            let initial_status = provider.status();
-            let name = provider.name();
-            match &initial_status {
-                ProviderStatus::Ready { .. } => {}
-                ProviderStatus::Locked { .. } => {
-                    app.push_msg(
-                        MessageKind::Warning,
-                        format!("{name} vault is not unlocked — credential lookups will fail. Use /unlock"),
-                    );
-                }
-                ProviderStatus::Unavailable { reason } => {
-                    app.push_msg(MessageKind::Warning, format!("{name}: {reason}"));
-                }
-                ProviderStatus::NotInstalled { install_hint } => {
-                    app.push_msg(
-                        MessageKind::Warning,
-                        format!("{name} not found. {install_hint}"),
-                    );
-                }
+    loop {
+        let identity_provider = Box::new(FileIdentityStorage::load_or_generate("user_client")?);
+        let session_cache = FileSessionCache::load_or_create("user_client")?;
+        let session_store = Box::new(session_cache);
+        let cached_sessions = session_store.list_sessions().await;
+
+        let has_cached = !cached_sessions.is_empty() && !force_new_session;
+
+        let (notification_tx, notification_rx) = mpsc::channel(32);
+        let (request_tx, request_rx) = mpsc::channel(32);
+
+        let proxy_client = Box::new(DefaultProxyClient::new(ProxyClientConfig {
+            proxy_url: proxy_url.clone(),
+            identity_keypair: Some(identity_provider.identity().await),
+        }));
+
+        let sessions = session_store.list_sessions().await;
+
+        let client = UserClient::connect(
+            identity_provider as Box<dyn IdentityProvider>,
+            session_store as Box<dyn SessionStore>,
+            proxy_client,
+            notification_tx,
+            request_tx,
+            None,
+        )
+        .await?;
+
+        if !has_cached {
+            let client_session_name = pending_session_name.clone();
+            if psk_mode {
+                let token = client.get_psk_token(client_session_name).await?;
+                app.push_rich(Message::rich(
+                    MessageKind::Prompt,
+                    vec![
+                        Span::styled(
+                            "PSK TOKEN: ",
+                            Style::default()
+                                .fg(Color::Magenta)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(token, val_style()),
+                        Span::styled(
+                            " — Share this token securely",
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                    ],
+                ));
+            } else {
+                let code = client.get_rendezvous_token(client_session_name).await?;
+                app.push_rich(Message::rich(
+                    MessageKind::Prompt,
+                    vec![
+                        Span::styled(
+                            "RENDEZVOUS CODE: ",
+                            Style::default()
+                                .fg(Color::Magenta)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(code.as_str().to_string(), val_style()),
+                        Span::styled(
+                            " — Share this code with your remote device",
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                    ],
+                ));
             }
-            apply_status_spans(&mut app, name, &initial_status);
-            let mut term = init_terminal();
-            let mut reader = EventStream::new();
+            app.set_session_panel(session_info_messages(
+                &sessions,
+                Some("New session  (awaiting connection)"),
+            ));
+        }
 
-            loop {
-                let identity_provider =
-                    Box::new(FileIdentityStorage::load_or_generate("user_client")?);
-                let session_cache = FileSessionCache::load_or_create("user_client")?;
-                let session_store = Box::new(session_cache);
-                let cached_sessions = session_store.list_sessions().await;
-
-                let has_cached = !cached_sessions.is_empty() && !force_new_session;
-
-                let (event_tx, event_rx) = mpsc::channel(32);
-                let (response_tx, response_rx) = mpsc::channel(32);
-
-                let proxy_client = Box::new(DefaultProxyClient::new(ProxyClientConfig {
-                    proxy_url: proxy_url.clone(),
-                    identity_keypair: Some(identity_provider.identity().await),
-                }));
-
-                let sessions = session_store.list_sessions().await;
-
-                let client_session_name = pending_session_name.clone();
-                let client_handle = tokio::task::spawn_local(async move {
-                    let mut client = UserClient::connect(
-                        identity_provider as Box<dyn IdentityProvider>,
-                        session_store as Box<dyn SessionStore>,
-                        proxy_client,
-                    )
-                    .await?;
-
-                    if !has_cached {
-                        if psk_mode {
-                            let token = client.get_psk_token(client_session_name).await?;
-                            event_tx
-                                .send(UserClientEvent::PskTokenGenerated { token })
-                                .await
-                                .ok();
-                        } else {
-                            let code = client
-                                .get_rendezvous_token(client_session_name)
-                                .await?;
-                            event_tx
-                                .send(UserClientEvent::RendezvousCodeGenerated {
-                                    code: code.as_str().to_string(),
-                                })
-                                .await
-                                .ok();
-                        }
-                    }
-
-                    client.listen(event_tx, response_rx).await
-                });
-
-                match run_event_loop(
-                    &mut app,
-                    &mut term,
-                    &mut reader,
-                    event_rx,
-                    response_tx,
-                    &sessions,
-                    &pending_session_name,
-                    Some(client_handle),
-                    provider,
-                    &mut log_rx,
-                )
-                .await?
-                {
-                    EventLoopExit::NewSession { name } => {
-                        force_new_session = true;
-                        pending_session_name = name;
-                        continue;
-                    }
-                    EventLoopExit::Quit => break,
-                }
+        match run_event_loop(
+            &mut app,
+            &mut term,
+            &mut reader,
+            notification_rx,
+            request_rx,
+            &sessions,
+            &pending_session_name,
+            provider,
+            &mut log_rx,
+        )
+        .await?
+        {
+            EventLoopExit::NewSession { name } => {
+                force_new_session = true;
+                pending_session_name = name;
+                // Drop the client handle — event loop shuts down when all handles are dropped
+                drop(client);
+                continue;
             }
+            EventLoopExit::Quit => break,
+        }
+    }
 
-            drop(reader);
-            restore_terminal();
-            println!("\nUser client session ended.");
-            Ok(())
-        })
-        .await
+    drop(reader);
+    restore_terminal();
+    println!("\nUser client session ended.");
+    Ok(())
 }

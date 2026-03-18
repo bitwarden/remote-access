@@ -4,7 +4,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ap_client::{RemoteClientEvent, UserClientEvent};
+use ap_client::{RemoteClientEvent, UserClientNotification};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 
@@ -224,77 +224,49 @@ pub fn format_connect_event(event: &RemoteClientEvent) -> Option<Message> {
     }
 }
 
-/// Format a UserClientEvent as a styled `Message` for the TUI.
+/// Format a UserClientNotification as a styled `Message` for the TUI.
 ///
-/// Returns `None` for events handled structurally by the caller
-/// (e.g., `Listening`, `CredentialRequest`, `HandshakeFingerprint`).
+/// Returns `None` for events handled structurally by the caller (e.g., `Listening`).
+/// Actionable requests (`VerifyFingerprint`, `CredentialRequest`) are delivered
+/// separately via `UserClientRequest` and handled in `listen.rs`.
 #[allow(clippy::string_slice)]
-pub fn format_listen_event(event: &UserClientEvent) -> Option<Message> {
-    match event {
-        UserClientEvent::Listening {} => None,
+pub fn format_listen_notification(notification: &UserClientNotification) -> Option<Message> {
+    match notification {
+        UserClientNotification::Listening {} => None,
 
-        UserClientEvent::RendezvousCodeGenerated { code } => Some(Message::rich(
-            MessageKind::Prompt,
-            vec![
-                Span::styled(
-                    "RENDEZVOUS CODE: ",
-                    Style::default()
-                        .fg(Color::Magenta)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(code.clone(), val_style()),
-                Span::styled(" — Share this code with your remote device", dim()),
-            ],
-        )),
-
-        UserClientEvent::PskTokenGenerated { token } => Some(Message::rich(
-            MessageKind::Prompt,
-            vec![
-                Span::styled(
-                    "PSK TOKEN: ",
-                    Style::default()
-                        .fg(Color::Magenta)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(token.clone(), val_style()),
-                Span::styled(" — Share this token securely", dim()),
-            ],
-        )),
-
-        UserClientEvent::HandshakeStart {} => {
+        UserClientNotification::HandshakeStart {} => {
             Some(Message::new(MessageKind::Status, "Noise handshake started"))
         }
-        UserClientEvent::HandshakeProgress { message } => Some(Message::rich(
+        UserClientNotification::HandshakeProgress { message } => Some(Message::rich(
             MessageKind::Status,
             vec![
                 Span::styled("Handshake: ", text()),
                 Span::styled(message.clone(), dim()),
             ],
         )),
-        UserClientEvent::HandshakeComplete {} => Some(Message::new(
+        UserClientNotification::HandshakeComplete {} => Some(Message::new(
             MessageKind::Success,
             "Secure channel established",
         )),
 
-        UserClientEvent::HandshakeFingerprint { fingerprint, .. } => Some(Message::rich(
+        UserClientNotification::HandshakeFingerprint { fingerprint, .. } => Some(Message::rich(
             MessageKind::Prompt,
             vec![
                 Span::styled(
-                    "SECURITY VERIFICATION — Fingerprint: ",
+                    "PSK connection fingerprint: ",
                     Style::default()
                         .fg(Color::Magenta)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(fingerprint.clone(), val_style()),
-                Span::styled(" — Compare with remote device", dim()),
             ],
         )),
 
-        UserClientEvent::FingerprintVerified {} => Some(Message::new(
+        UserClientNotification::FingerprintVerified {} => Some(Message::new(
             MessageKind::Success,
             "Fingerprint verified successfully!",
         )),
-        UserClientEvent::FingerprintRejected { reason } => Some(Message::rich(
+        UserClientNotification::FingerprintRejected { reason } => Some(Message::rich(
             MessageKind::Error,
             vec![
                 Span::styled("Fingerprint rejected: ", Style::default().fg(Color::Red)),
@@ -306,15 +278,7 @@ pub fn format_listen_event(event: &UserClientEvent) -> Option<Message> {
             ],
         )),
 
-        UserClientEvent::CredentialRequest { query, .. } => Some(Message::rich(
-            MessageKind::Prompt,
-            vec![
-                Span::styled("Credential request - ", text()),
-                Span::styled(query.to_string(), val_style()),
-            ],
-        )),
-
-        UserClientEvent::CredentialApproved { domain, .. } => Some(Message::rich(
+        UserClientNotification::CredentialApproved { domain, .. } => Some(Message::rich(
             MessageKind::Success,
             vec![
                 Span::styled("Credential approved: ", text()),
@@ -324,7 +288,7 @@ pub fn format_listen_event(event: &UserClientEvent) -> Option<Message> {
                 ),
             ],
         )),
-        UserClientEvent::CredentialDenied { domain, .. } => Some(Message::rich(
+        UserClientNotification::CredentialDenied { domain, .. } => Some(Message::rich(
             MessageKind::Error,
             vec![
                 Span::styled("Credential denied: ", Style::default().fg(Color::Red)),
@@ -335,7 +299,7 @@ pub fn format_listen_event(event: &UserClientEvent) -> Option<Message> {
             ],
         )),
 
-        UserClientEvent::SessionRefreshed { fingerprint } => {
+        UserClientNotification::SessionRefreshed { fingerprint } => {
             let fp_hex = hex::encode(fingerprint.0);
             let short = &fp_hex[..12.min(fp_hex.len())];
             Some(Message::rich(
@@ -350,12 +314,12 @@ pub fn format_listen_event(event: &UserClientEvent) -> Option<Message> {
             ))
         }
 
-        UserClientEvent::ClientDisconnected {} => Some(Message::new(
+        UserClientNotification::ClientDisconnected {} => Some(Message::new(
             MessageKind::Warning,
             "Proxy connection lost — attempting to reconnect...",
         )),
 
-        UserClientEvent::Reconnecting { attempt } => Some(Message::rich(
+        UserClientNotification::Reconnecting { attempt } => Some(Message::rich(
             MessageKind::Status,
             vec![
                 Span::styled("Reconnecting to proxy (attempt ", dim()),
@@ -369,12 +333,12 @@ pub fn format_listen_event(event: &UserClientEvent) -> Option<Message> {
             ],
         )),
 
-        UserClientEvent::Reconnected {} => Some(Message::new(
+        UserClientNotification::Reconnected {} => Some(Message::new(
             MessageKind::Success,
             "Reconnected to proxy server",
         )),
 
-        UserClientEvent::Error { message, context } => {
+        UserClientNotification::Error { message, context } => {
             let ctx = context.as_deref().unwrap_or("unknown");
             Some(Message::rich(
                 MessageKind::Error,
