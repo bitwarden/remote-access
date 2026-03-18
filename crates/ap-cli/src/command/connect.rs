@@ -228,7 +228,7 @@ async fn run_interactive_session(
         Box::new(FileSessionCache::load_or_create("remote_client")?);
 
     // Get cached sessions from session store
-    let cached_sessions = session_store.list_sessions();
+    let cached_sessions = session_store.list_sessions().await;
 
     // Determine if we can skip straight to connecting based on CLI flags
     let cli_connection_mode = if session_fingerprint.is_some() || token.is_some() {
@@ -657,7 +657,7 @@ pub(super) async fn fetch_credential(
         Box::new(FileSessionCache::load_or_create("remote_client")?)
     };
 
-    let cached_sessions = session_store.list_sessions();
+    let cached_sessions = session_store.list_sessions().await;
     let mode = resolve_connection_mode(token, session_fingerprint, &cached_sessions)?;
 
     eprintln!("Connecting to proxy...");
@@ -741,7 +741,7 @@ async fn start_connection(
 
     let proxy_client = Box::new(DefaultProxyClient::new(ProxyClientConfig {
         proxy_url: proxy_url.to_string(),
-        identity_keypair: Some(identity_provider.identity().to_owned()),
+        identity_keypair: Some(identity_provider.identity().await),
     }));
 
     let mut client = RemoteClient::new(

@@ -228,7 +228,7 @@ impl UserClient {
     ) -> Result<(), RemoteClientError> {
         // Generate PSK and token
         let psk = Psk::generate();
-        let fingerprint = self.identity_provider.fingerprint();
+        let fingerprint = self.identity_provider.fingerprint().await;
         let token = format!("{}_{}", psk.to_hex(), hex::encode(fingerprint.0));
 
         self.psk = Some(psk);
@@ -462,7 +462,7 @@ impl UserClient {
             .ok();
 
         // Check if this is a new connection (not in cache)
-        let is_new_connection = !self.session_store.has_session(&source);
+        let is_new_connection = !self.session_store.has_session(&source).await;
         // PSK connections are already trusted — no fingerprint verification needed
         let is_psk_connection = self.psk.is_some();
 
@@ -482,14 +482,15 @@ impl UserClient {
             // Re-cache to update timestamps (cached_at / last_connected_at),
             // and save the new transport state from the fresh handshake.
             self.transports.insert(source, transport.clone());
-            self.session_store.cache_session(source)?;
+            self.session_store.cache_session(source).await?;
             // Apply pending name if user explicitly re-paired (e.g. `/pair MyName`).
             // During passive reconnections, pending_session_name is None so this is a no-op.
             if let Some(name) = self.pending_session_name.take() {
-                self.session_store.set_session_name(&source, name)?;
+                self.session_store.set_session_name(&source, name).await?;
             }
             self.session_store
-                .save_transport_state(&source, transport)?;
+                .save_transport_state(&source, transport)
+                .await?;
 
             self.audit_log
                 .write(AuditEvent::SessionRefreshed {
@@ -535,13 +536,15 @@ impl UserClient {
         connection_type: AuditConnectionType,
     ) -> Result<(), RemoteClientError> {
         self.transports.insert(fingerprint, transport.clone());
-        self.session_store.cache_session(fingerprint)?;
+        self.session_store.cache_session(fingerprint).await?;
         if let Some(name) = session_name {
             self.session_store
-                .set_session_name(&fingerprint, name.to_owned())?;
+                .set_session_name(&fingerprint, name.to_owned())
+                .await?;
         }
         self.session_store
-            .save_transport_state(&fingerprint, transport)?;
+            .save_transport_state(&fingerprint, transport)
+            .await?;
 
         self.audit_log
             .write(AuditEvent::ConnectionEstablished {
@@ -612,7 +615,8 @@ impl UserClient {
             debug!("Loading transport state for source: {:?}", source);
             let session = self
                 .session_store
-                .load_transport_state(&source)?
+                .load_transport_state(&source)
+                .await?
                 .expect("Transport state should exist for cached session");
             self.transports.insert(source, session);
         }

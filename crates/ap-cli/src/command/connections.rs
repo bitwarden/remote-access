@@ -81,10 +81,10 @@ enum ConnectionsCommands {
 }
 
 impl ConnectionsArgs {
-    pub fn run(self) -> Result<()> {
+    pub async fn run(self) -> Result<()> {
         match self.command {
-            ConnectionsCommands::Clear { scope } => clear_cache(self.client_type, scope),
-            ConnectionsCommands::List => list_cache(self.client_type),
+            ConnectionsCommands::Clear { scope } => clear_cache(self.client_type, scope).await,
+            ConnectionsCommands::List => list_cache(self.client_type).await,
         }
     }
 }
@@ -116,13 +116,13 @@ fn sides_for(client_type: Option<ClientType>) -> Vec<&'static CacheSide> {
     }
 }
 
-fn clear_cache(client_type: Option<ClientType>, scope: ClearScope) -> Result<()> {
+async fn clear_cache(client_type: Option<ClientType>, scope: ClearScope) -> Result<()> {
     let sides = sides_for(client_type);
 
     for side in &sides {
         // Always clear sessions
         let mut cache = FileSessionCache::load_or_create(side.storage_name)?;
-        cache.clear()?;
+        cache.clear().await?;
         println!(
             "{} ({}) session cache cleared.",
             side.label, side.description
@@ -141,7 +141,7 @@ fn clear_cache(client_type: Option<ClientType>, scope: ClearScope) -> Result<()>
     Ok(())
 }
 
-fn list_cache(client_type: Option<ClientType>) -> Result<()> {
+async fn list_cache(client_type: Option<ClientType>) -> Result<()> {
     let sides = sides_for(client_type);
     for (i, side) in sides.iter().enumerate() {
         if i > 0 {
@@ -170,7 +170,7 @@ fn list_cache(client_type: Option<ClientType>) -> Result<()> {
 
         // Load and display sessions
         let cache = FileSessionCache::load_or_create(side.storage_name)?;
-        let mut sessions = cache.list_sessions();
+        let mut sessions = cache.list_sessions().await;
 
         if sessions.is_empty() {
             println!("  {}: {}", grey("Connections"), grey("(none)"));

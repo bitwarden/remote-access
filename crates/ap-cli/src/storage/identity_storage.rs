@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use ap_client::{IdentityProvider, RemoteClientError};
 use ap_proxy_protocol::{IdentityFingerprint, IdentityKeyPair};
+use async_trait::async_trait;
 use tracing::debug;
 
 /// Manages persistent storage identity key pairs to a file
@@ -10,9 +11,10 @@ pub struct FileIdentityStorage {
     keypair: IdentityKeyPair,
 }
 
+#[async_trait]
 impl IdentityProvider for FileIdentityStorage {
-    fn identity(&self) -> &IdentityKeyPair {
-        &self.keypair
+    async fn identity(&self) -> IdentityKeyPair {
+        self.keypair.clone()
     }
 }
 impl FileIdentityStorage {

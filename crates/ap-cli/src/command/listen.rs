@@ -140,10 +140,11 @@ fn apply_status_spans(app: &mut App, name: &str, status: &ProviderStatus) {
 type SessionInfo = (IdentityFingerprint, Option<String>, u64, u64);
 
 /// Reload the session list from disk (the client may have updated it).
-fn reload_sessions() -> Vec<SessionInfo> {
-    FileSessionCache::load_or_create("user_client")
-        .map(|cache| cache.list_sessions())
-        .unwrap_or_default()
+async fn reload_sessions() -> Vec<SessionInfo> {
+    match FileSessionCache::load_or_create("user_client") {
+        Ok(cache) => cache.list_sessions().await,
+        Err(_) => Vec::new(),
+    }
 }
 
 /// Build session info messages for display in the TUI.
@@ -512,7 +513,7 @@ async fn run_event_loop(
                             UserClientEvent::SessionRefreshed { .. }
                             | UserClientEvent::FingerprintVerified { .. } => {
                                 // Session store was updated — reload from disk
-                                let fresh = reload_sessions();
+                                let fresh = reload_sessions().await;
                                 app.set_session_panel(session_info_messages(&fresh, None));
                             }
                             _ => {}
@@ -607,7 +608,7 @@ async fn run_user_client_session(
                     Box::new(FileIdentityStorage::load_or_generate("user_client")?);
                 let session_cache = FileSessionCache::load_or_create("user_client")?;
                 let session_store = Box::new(session_cache);
-                let cached_sessions = session_store.list_sessions();
+                let cached_sessions = session_store.list_sessions().await;
 
                 let has_cached = !cached_sessions.is_empty() && !force_new_session;
 
@@ -616,10 +617,10 @@ async fn run_user_client_session(
 
                 let proxy_client = Box::new(DefaultProxyClient::new(ProxyClientConfig {
                     proxy_url: proxy_url.clone(),
-                    identity_keypair: Some(identity_provider.identity().to_owned()),
+                    identity_keypair: Some(identity_provider.identity().await),
                 }));
 
-                let sessions = session_store.list_sessions();
+                let sessions = session_store.list_sessions().await;
 
                 let client_session_name = pending_session_name.clone();
                 let client_handle = tokio::task::spawn_local(async move {
