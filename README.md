@@ -4,7 +4,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="assets/logo-light.svg">
-    <img alt="Bitwarden Agent Access" src="assets/logo-light.svg" height="60">
+    <img alt="Bitwarden Agent Access" src="assets/logo-light.svg" height="80">
   </picture>
   <br>
   <br>
@@ -25,7 +25,11 @@ Agent Access is an open protocol, CLI tool, and Rust SDK that you can use to imp
 > For LLM's specifically, where possible use environment injection (e.g. `aac run`) to pass secrets to processes without exposing them in recorded context.
 
 <p align="center">
-  <img src="assets/overview.webp" alt="Agent Access overview" width="960">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/overview-dark.webp">
+    <source media="(prefers-color-scheme: light)" srcset="assets/overview-light.webp">
+    <img alt="Agent Access overview" src="assets/overview-light.webp" width="960">
+  </picture>
 </p>
 
 ## Installation
@@ -171,7 +175,11 @@ It contains:
 * A proxy server for demo/development purposes
 
 <p align="center">
-  <img src="assets/architecture.png" alt="Agent Access architecture" width="960">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/architecture-dark.webp">
+    <source media="(prefers-color-scheme: light)" srcset="assets/architecture-light.webp">
+    <img alt="Agent Access architecture" src="assets/architecture-light.webp" width="960">
+  </picture>
 </p>
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, crate structure, and how to run the project.
