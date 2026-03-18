@@ -571,7 +571,7 @@ async fn test_fingerprint_pairing() {
             // Spawn task to auto-approve fingerprint on the USER side (listener must verify)
             let user_approval_task = tokio::task::spawn_local(async move {
                 while let Some(event) = user_event_rx.recv().await {
-                    if let UserClientEvent::HandshakeFingerprint { fingerprint: _ } = event {
+                    if let UserClientEvent::HandshakeFingerprint { fingerprint: _, .. } = event {
                         // Auto-approve the fingerprint on the user/listener side
                         let _ = user_response_tx
                             .send(UserClientResponse::VerifyFingerprint {
@@ -937,7 +937,7 @@ async fn test_fingerprint_pairing_both_sides_verify() {
             // Spawn task to auto-approve fingerprint on the USER side
             let user_approval_task = tokio::task::spawn_local(async move {
                 while let Some(event) = user_event_rx.recv().await {
-                    if let UserClientEvent::HandshakeFingerprint { fingerprint: _ } = event {
+                    if let UserClientEvent::HandshakeFingerprint { fingerprint: _, .. } = event {
                         let _ = user_response_tx
                             .send(UserClientResponse::VerifyFingerprint {
                                 approved: true,
@@ -954,7 +954,7 @@ async fn test_fingerprint_pairing_both_sides_verify() {
             let response_tx_clone = remote_response_tx.clone();
             let remote_approval_task = tokio::task::spawn_local(async move {
                 while let Some(event) = remote_event_rx.recv().await {
-                    if let RemoteClientEvent::HandshakeFingerprint { fingerprint: _ } = event {
+                    if let RemoteClientEvent::HandshakeFingerprint { fingerprint: _, .. } = event {
                         let _ = response_tx_clone
                             .send(RemoteClientResponse::VerifyFingerprint { approved: true })
                             .await;
