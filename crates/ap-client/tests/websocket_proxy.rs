@@ -565,7 +565,7 @@ async fn test_e2e_fingerprint_pairing_and_credential_request() {
             // 9. Spawn approval handler for HandshakeFingerprint event on USER side (listener must verify)
             let user_approval_task = tokio::task::spawn_local(async move {
                 while let Some(event) = user_event_rx.recv().await {
-                    if let UserClientEvent::HandshakeFingerprint { fingerprint: _ } = event {
+                    if let UserClientEvent::HandshakeFingerprint { fingerprint: _, .. } = event {
                         // Auto-approve the fingerprint on the user/listener side
                         user_response_tx
                             .send(UserClientResponse::VerifyFingerprint {
