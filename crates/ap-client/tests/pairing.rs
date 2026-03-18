@@ -35,9 +35,10 @@ impl MockIdentityProvider {
     }
 }
 
+#[async_trait]
 impl IdentityProvider for MockIdentityProvider {
-    fn identity(&self) -> &IdentityKeyPair {
-        &self.keypair
+    async fn identity(&self) -> IdentityKeyPair {
+        self.keypair.clone()
     }
 }
 
@@ -65,15 +66,16 @@ impl MockSessionStore {
     }
 }
 
+#[async_trait]
 impl SessionStore for MockSessionStore {
-    fn has_session(&self, fingerprint: &IdentityFingerprint) -> bool {
+    async fn has_session(&self, fingerprint: &IdentityFingerprint) -> bool {
         self.sessions
             .lock()
             .expect("Lock should not be poisoned")
             .contains_key(fingerprint)
     }
 
-    fn cache_session(
+    async fn cache_session(
         &mut self,
         fingerprint: IdentityFingerprint,
     ) -> Result<(), ap_client::RemoteClientError> {
@@ -96,7 +98,7 @@ impl SessionStore for MockSessionStore {
         Ok(())
     }
 
-    fn remove_session(
+    async fn remove_session(
         &mut self,
         fingerprint: &IdentityFingerprint,
     ) -> Result<(), ap_client::RemoteClientError> {
@@ -107,7 +109,7 @@ impl SessionStore for MockSessionStore {
         Ok(())
     }
 
-    fn clear(&mut self) -> Result<(), ap_client::RemoteClientError> {
+    async fn clear(&mut self) -> Result<(), ap_client::RemoteClientError> {
         self.sessions
             .lock()
             .expect("Lock should not be poisoned")
@@ -115,7 +117,7 @@ impl SessionStore for MockSessionStore {
         Ok(())
     }
 
-    fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64, u64)> {
+    async fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64, u64)> {
         self.sessions
             .lock()
             .expect("Lock should not be poisoned")
@@ -131,7 +133,7 @@ impl SessionStore for MockSessionStore {
             .collect()
     }
 
-    fn set_session_name(
+    async fn set_session_name(
         &mut self,
         _fingerprint: &IdentityFingerprint,
         _name: String,
@@ -139,7 +141,7 @@ impl SessionStore for MockSessionStore {
         Ok(())
     }
 
-    fn update_last_connected(
+    async fn update_last_connected(
         &mut self,
         fingerprint: &IdentityFingerprint,
     ) -> Result<(), ap_client::RemoteClientError> {
@@ -155,7 +157,7 @@ impl SessionStore for MockSessionStore {
         Ok(())
     }
 
-    fn save_transport_state(
+    async fn save_transport_state(
         &mut self,
         fingerprint: &IdentityFingerprint,
         transport_state: MultiDeviceTransport,
@@ -171,7 +173,7 @@ impl SessionStore for MockSessionStore {
         Ok(())
     }
 
-    fn load_transport_state(
+    async fn load_transport_state(
         &self,
         fingerprint: &IdentityFingerprint,
     ) -> Result<Option<MultiDeviceTransport>, ap_client::RemoteClientError> {
@@ -364,8 +366,8 @@ async fn test_psk_pairing() {
             let user_identity = MockIdentityProvider::new();
             let remote_identity = MockIdentityProvider::new();
 
-            let user_fingerprint = user_identity.fingerprint();
-            let remote_fingerprint = remote_identity.fingerprint();
+            let user_fingerprint = user_identity.fingerprint().await;
+            let remote_fingerprint = remote_identity.fingerprint().await;
 
             // Create mock proxy pair
             let (user_proxy, remote_proxy) =
@@ -480,7 +482,10 @@ async fn test_psk_pairing() {
 
             // Verify session is cached
             assert!(
-                remote_client.session_store().has_session(&fingerprint),
+                remote_client
+                    .session_store()
+                    .has_session(&fingerprint)
+                    .await,
                 "Session should be cached in RemoteClient's session store"
             );
 
@@ -503,8 +508,8 @@ async fn test_fingerprint_pairing() {
             let user_identity = MockIdentityProvider::new();
             let remote_identity = MockIdentityProvider::new();
 
-            let user_fingerprint = user_identity.fingerprint();
-            let remote_fingerprint = remote_identity.fingerprint();
+            let user_fingerprint = user_identity.fingerprint().await;
+            let remote_fingerprint = remote_identity.fingerprint().await;
 
             // Create mock proxy pair
             let (mut user_proxy, mut remote_proxy) =
@@ -603,7 +608,8 @@ async fn test_fingerprint_pairing() {
             assert!(
                 remote_client
                     .session_store()
-                    .has_session(&paired_fingerprint),
+                    .has_session(&paired_fingerprint)
+                    .await,
                 "Session should be cached in RemoteClient's session store"
             );
 
@@ -869,8 +875,8 @@ async fn test_fingerprint_pairing_both_sides_verify() {
             let user_identity = MockIdentityProvider::new();
             let remote_identity = MockIdentityProvider::new();
 
-            let user_fingerprint = user_identity.fingerprint();
-            let remote_fingerprint = remote_identity.fingerprint();
+            let user_fingerprint = user_identity.fingerprint().await;
+            let remote_fingerprint = remote_identity.fingerprint().await;
 
             // Create mock proxy pair
             let (mut user_proxy, mut remote_proxy) =
@@ -982,7 +988,8 @@ async fn test_fingerprint_pairing_both_sides_verify() {
             assert!(
                 remote_client
                     .session_store()
-                    .has_session(&paired_fingerprint),
+                    .has_session(&paired_fingerprint)
+                    .await,
                 "Session should be cached in RemoteClient's session store"
             );
 

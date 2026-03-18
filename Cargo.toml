@@ -30,6 +30,7 @@ ap-proxy-client = { path = "crates/ap-proxy-client", version = "0.3.0", default-
 ap-proxy-protocol = { path = "crates/ap-proxy-protocol", version = "0.3.0" }
 
 # External dependencies
+async-trait = "0.1"
 base64 = "0.22"
 coset = "0.4.1"
 chacha20poly1305 = "0.10"

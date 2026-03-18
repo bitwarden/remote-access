@@ -4,6 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ap_client::{RemoteClientError, SessionStore};
 use ap_noise::{MultiDeviceTransport, PersistentTransportState};
 use ap_proxy_protocol::IdentityFingerprint;
+use async_trait::async_trait;
 
 struct SessionEntry {
     fingerprint: IdentityFingerprint,
@@ -35,12 +36,16 @@ impl MemorySessionStore {
     }
 }
 
+#[async_trait]
 impl SessionStore for MemorySessionStore {
-    fn has_session(&self, fingerprint: &IdentityFingerprint) -> bool {
+    async fn has_session(&self, fingerprint: &IdentityFingerprint) -> bool {
         self.sessions.contains_key(fingerprint)
     }
 
-    fn cache_session(&mut self, fingerprint: IdentityFingerprint) -> Result<(), RemoteClientError> {
+    async fn cache_session(
+        &mut self,
+        fingerprint: IdentityFingerprint,
+    ) -> Result<(), RemoteClientError> {
         let now = now_seconds();
         self.sessions
             .entry(fingerprint)
@@ -55,7 +60,7 @@ impl SessionStore for MemorySessionStore {
         Ok(())
     }
 
-    fn remove_session(
+    async fn remove_session(
         &mut self,
         fingerprint: &IdentityFingerprint,
     ) -> Result<(), RemoteClientError> {
@@ -63,12 +68,12 @@ impl SessionStore for MemorySessionStore {
         Ok(())
     }
 
-    fn clear(&mut self) -> Result<(), RemoteClientError> {
+    async fn clear(&mut self) -> Result<(), RemoteClientError> {
         self.sessions.clear();
         Ok(())
     }
 
-    fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64, u64)> {
+    async fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64, u64)> {
         self.sessions
             .values()
             .map(|s| {
@@ -82,7 +87,7 @@ impl SessionStore for MemorySessionStore {
             .collect()
     }
 
-    fn set_session_name(
+    async fn set_session_name(
         &mut self,
         fingerprint: &IdentityFingerprint,
         name: String,
@@ -97,7 +102,7 @@ impl SessionStore for MemorySessionStore {
         }
     }
 
-    fn update_last_connected(
+    async fn update_last_connected(
         &mut self,
         fingerprint: &IdentityFingerprint,
     ) -> Result<(), RemoteClientError> {
@@ -111,7 +116,7 @@ impl SessionStore for MemorySessionStore {
         }
     }
 
-    fn save_transport_state(
+    async fn save_transport_state(
         &mut self,
         fingerprint: &IdentityFingerprint,
         transport_state: MultiDeviceTransport,
@@ -134,7 +139,7 @@ impl SessionStore for MemorySessionStore {
         }
     }
 
-    fn load_transport_state(
+    async fn load_transport_state(
         &self,
         fingerprint: &IdentityFingerprint,
     ) -> Result<Option<MultiDeviceTransport>, RemoteClientError> {

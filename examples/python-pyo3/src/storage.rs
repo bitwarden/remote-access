@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use async_trait::async_trait;
 use bw_noise_protocol::{MultiDeviceTransport, PersistentTransportState};
 use bw_proxy_protocol::{IdentityFingerprint, IdentityKeyPair};
 use bw_rat_client::{IdentityProvider, RemoteClientError, SessionStore};
@@ -15,9 +16,10 @@ pub struct FileIdentityStorage {
     keypair: IdentityKeyPair,
 }
 
+#[async_trait]
 impl IdentityProvider for FileIdentityStorage {
-    fn identity(&self) -> &IdentityKeyPair {
-        &self.keypair
+    async fn identity(&self) -> IdentityKeyPair {
+        self.keypair.clone()
     }
 }
 
@@ -157,15 +159,16 @@ impl FileSessionCache {
     }
 }
 
+#[async_trait]
 impl SessionStore for FileSessionCache {
-    fn has_session(&self, fingerprint: &IdentityFingerprint) -> bool {
+    async fn has_session(&self, fingerprint: &IdentityFingerprint) -> bool {
         self.data
             .sessions
             .iter()
             .any(|s| s.remote_fingerprint == *fingerprint)
     }
 
-    fn cache_session(&mut self, fingerprint: IdentityFingerprint) -> Result<(), RemoteClientError> {
+    async fn cache_session(&mut self, fingerprint: IdentityFingerprint) -> Result<(), RemoteClientError> {
         if let Some(existing) = self
             .data
             .sessions
@@ -187,7 +190,7 @@ impl SessionStore for FileSessionCache {
         Ok(())
     }
 
-    fn remove_session(
+    async fn remove_session(
         &mut self,
         fingerprint: &IdentityFingerprint,
     ) -> Result<(), RemoteClientError> {
@@ -198,13 +201,13 @@ impl SessionStore for FileSessionCache {
         Ok(())
     }
 
-    fn clear(&mut self) -> Result<(), RemoteClientError> {
+    async fn clear(&mut self) -> Result<(), RemoteClientError> {
         self.data.sessions.clear();
         self.save()?;
         Ok(())
     }
 
-    fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64, u64)> {
+    async fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64, u64)> {
         self.data
             .sessions
             .iter()
@@ -219,7 +222,7 @@ impl SessionStore for FileSessionCache {
             .collect()
     }
 
-    fn set_session_name(
+    async fn set_session_name(
         &mut self,
         fingerprint: &IdentityFingerprint,
         name: String,
@@ -240,7 +243,7 @@ impl SessionStore for FileSessionCache {
         }
     }
 
-    fn update_last_connected(
+    async fn update_last_connected(
         &mut self,
         fingerprint: &IdentityFingerprint,
     ) -> Result<(), RemoteClientError> {
@@ -260,7 +263,7 @@ impl SessionStore for FileSessionCache {
         }
     }
 
-    fn save_transport_state(
+    async fn save_transport_state(
         &mut self,
         fingerprint: &IdentityFingerprint,
         transport_state: MultiDeviceTransport,
@@ -289,7 +292,7 @@ impl SessionStore for FileSessionCache {
         }
     }
 
-    fn load_transport_state(
+    async fn load_transport_state(
         &self,
         fingerprint: &IdentityFingerprint,
     ) -> Result<Option<MultiDeviceTransport>, RemoteClientError> {

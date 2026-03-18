@@ -86,7 +86,7 @@ impl PyRemoteClient {
 
         let proxy_client = Box::new(DefaultProxyClient::new(ProxyClientConfig {
             proxy_url: self.proxy_url.clone(),
-            identity_keypair: Some(identity.identity().to_owned()),
+            identity_keypair: Some(self.runtime.block_on(identity.identity())),
         }));
 
         // Create the client (connects to proxy)
@@ -144,7 +144,7 @@ impl PyRemoteClient {
                         Ok(None)
                     } else {
                         // Auto-select cached session if exactly one exists
-                        let sessions = client.session_store().list_sessions();
+                        let sessions = client.session_store().list_sessions().await;
                         if sessions.len() == 1 {
                             let (fingerprint, _, _, _) = &sessions[0];
                             client
@@ -225,8 +225,8 @@ impl PyRemoteClient {
     pub fn clear_sessions(&self) -> PyResult<()> {
         let mut store = FileSessionCache::load_or_create(&self.identity_name)
             .map_err(|e| RemoteAccessError::new_err(e.to_string()))?;
-        store
-            .clear()
+        self.runtime
+            .block_on(store.clear())
             .map_err(|e| RemoteAccessError::new_err(e.to_string()))?;
         Ok(())
     }
@@ -235,8 +235,9 @@ impl PyRemoteClient {
     pub fn list_sessions(&self) -> PyResult<Vec<(String, Option<String>, u64, u64)>> {
         let store = FileSessionCache::load_or_create(&self.identity_name)
             .map_err(|e| RemoteAccessError::new_err(e.to_string()))?;
-        Ok(store
-            .list_sessions()
+        Ok(self
+            .runtime
+            .block_on(store.list_sessions())
             .into_iter()
             .map(|(fp, name, cached, last)| (hex::encode(fp.0), name, cached, last))
             .collect())

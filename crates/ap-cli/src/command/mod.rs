@@ -148,7 +148,7 @@ pub enum Commands {
 /// Process the parsed command and execute the appropriate handler
 pub async fn process_command(cli: Cli, log_rx: Option<LogReceiver>) -> Result<()> {
     match cli.command {
-        Some(Commands::Connections(args)) => args.run(),
+        Some(Commands::Connections(args)) => args.run().await,
         Some(Commands::Connect(args)) => args.run(log_rx).await,
         Some(Commands::Listen(args)) => args.run(log_rx).await,
         Some(Commands::Run(args)) => args.run().await,

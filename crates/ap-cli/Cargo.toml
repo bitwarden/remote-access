@@ -17,6 +17,7 @@ ap-noise = { workspace = true }
 ap-proxy-client = { workspace = true, features = ["native-websocket"] }
 ap-proxy-protocol = { workspace = true }
 ap-client = { workspace = true, features = ["native-websocket"] }
+async-trait = { workspace = true }
 clap = { workspace = true }
 color-eyre = { workspace = true }
 crossterm = { workspace = true }

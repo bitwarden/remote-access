@@ -64,7 +64,7 @@ impl RemoteClient {
         response_rx: mpsc::Receiver<RemoteClientResponse>,
         mut proxy_client: Box<dyn ProxyClient>,
     ) -> Result<Self, RemoteClientError> {
-        let identity = identity_provider.identity().to_owned();
+        let identity = identity_provider.identity().await;
 
         debug!(
             "Connecting to proxy with identity {:?}",
@@ -205,7 +205,7 @@ impl RemoteClient {
         }
 
         // Cache new session
-        self.session_store.cache_session(remote_fingerprint)?;
+        self.session_store.cache_session(remote_fingerprint).await?;
 
         // Finalize connection
         self.finalize_connection(transport, remote_fingerprint, event_tx)
@@ -264,7 +264,7 @@ impl RemoteClient {
             .ok();
 
         // Cache new session
-        self.session_store.cache_session(remote_fingerprint)?;
+        self.session_store.cache_session(remote_fingerprint).await?;
 
         // Finalize connection
         self.finalize_connection(transport, remote_fingerprint, event_tx)
@@ -284,7 +284,7 @@ impl RemoteClient {
         let event_tx = self.event_tx.clone();
 
         // Verify session exists in session store
-        if !self.session_store.has_session(&remote_fingerprint) {
+        if !self.session_store.has_session(&remote_fingerprint).await {
             return Err(RemoteClientError::SessionNotFound);
         }
 
@@ -298,7 +298,8 @@ impl RemoteClient {
 
         let transport_state = self
             .session_store
-            .load_transport_state(&remote_fingerprint)?
+            .load_transport_state(&remote_fingerprint)
+            .await?
             .expect("Transport state should exist for cached session");
 
         event_tx
@@ -314,7 +315,8 @@ impl RemoteClient {
 
         // Update last_connected_at
         self.session_store
-            .update_last_connected(&remote_fingerprint)?;
+            .update_last_connected(&remote_fingerprint)
+            .await?;
 
         // Finalize connection
         self.finalize_connection(transport_state, remote_fingerprint, event_tx)
@@ -335,7 +337,8 @@ impl RemoteClient {
     ) -> Result<(), RemoteClientError> {
         // Save transport state for session resumption
         self.session_store
-            .save_transport_state(&remote_fingerprint, transport.clone())?;
+            .save_transport_state(&remote_fingerprint, transport.clone())
+            .await?;
 
         // Store transport and remote fingerprint
         let transport = Arc::new(Mutex::new(transport));

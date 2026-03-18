@@ -18,6 +18,7 @@ bw-rat-client = { path = "../../crates/bw-rat-client", features = ["native-webso
 bw-proxy-client = { path = "../../crates/bw-proxy-client", default-features = false, features = ["native-websocket"] }
 bw-proxy-protocol = { path = "../../crates/bw-proxy-protocol" }
 bw-noise-protocol = { path = "../../crates/bw-noise-protocol" }
+async-trait = "0.1"
 dirs = "5.0"
 hex = "0.4"
 pyo3 = { version = "0.24", features = ["extension-module"] }
