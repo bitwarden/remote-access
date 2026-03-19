@@ -130,6 +130,7 @@ pub enum UserClientNotification {
 }
 
 /// Reply for fingerprint verification requests.
+#[derive(Debug)]
 pub struct FingerprintVerificationReply {
     /// Whether user approved the fingerprint
     pub approved: bool,
@@ -138,6 +139,7 @@ pub struct FingerprintVerificationReply {
 }
 
 /// Reply for credential requests.
+#[derive(Debug)]
 pub struct CredentialRequestReply {
     /// Whether approved
     pub approved: bool,
@@ -148,6 +150,7 @@ pub struct CredentialRequestReply {
 }
 
 /// Requests that require a caller response, carrying a oneshot reply channel.
+#[derive(Debug)]
 pub enum UserClientRequest {
     /// Handshake fingerprint requires verification (rendezvous connections only).
     VerifyFingerprint {

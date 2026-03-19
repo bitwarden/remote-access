@@ -63,7 +63,7 @@ pub enum ConnectionMode {
 }
 
 /// Credential data returned from a request
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CredentialData {
     /// Username for the credential
@@ -88,6 +88,19 @@ pub struct CredentialData {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
+}
+
+impl std::fmt::Debug for CredentialData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CredentialData")
+            .field("domain", &self.domain)
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
+            .field("totp", &self.totp.as_ref().map(|_| "[REDACTED]"))
+            .field("notes", &self.notes.as_ref().map(|_| "[REDACTED]"))
+            .field("credential_id", &self.credential_id)
+            .finish()
+    }
 }
 
 /// Internal protocol messages sent over WebSocket

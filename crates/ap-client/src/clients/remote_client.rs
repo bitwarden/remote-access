@@ -107,12 +107,14 @@ pub enum RemoteClientNotification {
 }
 
 /// Reply for fingerprint verification requests.
+#[derive(Debug)]
 pub struct RemoteClientFingerprintReply {
     /// Whether user approved the fingerprint
     pub approved: bool,
 }
 
 /// Requests that require a caller response, carrying a oneshot reply channel.
+#[derive(Debug)]
 pub enum RemoteClientRequest {
     /// Handshake fingerprint requires verification.
     VerifyFingerprint {
