@@ -30,10 +30,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Debug, Clone)]
 pub enum RemoteClientNotification {
     /// Connecting to the proxy server
-    Connecting {
-        /// The proxy URL being connected to
-        proxy_url: String,
-    },
+    Connecting,
     /// Successfully connected to the proxy
     Connected {
         /// The device's identity fingerprint (hex-encoded)
@@ -200,9 +197,7 @@ impl RemoteClient {
         debug!("Connecting to proxy with identity {:?}", own_fingerprint);
 
         notification_tx
-            .send(RemoteClientNotification::Connecting {
-                proxy_url: String::new(),
-            })
+            .send(RemoteClientNotification::Connecting)
             .await
             .ok();
 

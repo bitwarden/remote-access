@@ -66,12 +66,9 @@ pub fn format_relative_time(timestamp: u64) -> String {
 #[allow(clippy::string_slice)]
 pub fn format_connect_notification(notification: &RemoteClientNotification) -> Option<Message> {
     match notification {
-        RemoteClientNotification::Connecting { proxy_url } => Some(Message::rich(
+        RemoteClientNotification::Connecting => Some(Message::rich(
             MessageKind::Status,
-            vec![
-                Span::styled("Connecting to proxy: ", text()),
-                Span::styled(proxy_url.clone(), val_style()),
-            ],
+            vec![Span::styled("Connecting to proxy...", text())],
         )),
         RemoteClientNotification::Connected { fingerprint } => {
             let fp_hex = hex::encode(fingerprint.0);
