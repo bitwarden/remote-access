@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use bw_noise_protocol::{MultiDeviceTransport, PersistentTransportState};
-use bw_proxy_protocol::{IdentityFingerprint, IdentityKeyPair};
-use bw_rat_client::{IdentityProvider, RemoteClientError, SessionStore};
+use ap_noise::{MultiDeviceTransport, PersistentTransportState};
+use ap_proxy_protocol::{IdentityFingerprint, IdentityKeyPair};
+use ap_client::{IdentityProvider, RemoteClientError, SessionStore};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------

@@ -14,10 +14,10 @@ crate-type = ["cdylib"]
 path = "src/lib.rs"
 
 [dependencies]
-bw-rat-client = { path = "../../crates/bw-rat-client", features = ["native-websocket"] }
-bw-proxy-client = { path = "../../crates/bw-proxy-client", default-features = false, features = ["native-websocket"] }
-bw-proxy-protocol = { path = "../../crates/bw-proxy-protocol" }
-bw-noise-protocol = { path = "../../crates/bw-noise-protocol" }
+ap-client = { path = "../../crates/ap-client", features = ["native-websocket"] }
+ap-proxy-client = { path = "../../crates/ap-proxy-client", default-features = false, features = ["native-websocket"] }
+ap-proxy-protocol = { path = "../../crates/ap-proxy-protocol" }
+ap-noise = { path = "../../crates/ap-noise" }
 async-trait = "0.1"
 dirs = "5.0"
 hex = "0.4"

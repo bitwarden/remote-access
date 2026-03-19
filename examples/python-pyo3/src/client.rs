@@ -1,8 +1,8 @@
 use pyo3::prelude::*;
 use tokio::sync::mpsc;
 
-use bw_proxy_client::ProxyClientConfig;
-use bw_rat_client::{
+use ap_proxy_client::ProxyClientConfig;
+use ap_client::{
     DefaultProxyClient, IdentityFingerprint, IdentityProvider, Psk, RemoteClient,
     RemoteClientNotification, RemoteClientRequest, SessionStore,
 };
@@ -198,7 +198,7 @@ impl PyRemoteClient {
             .ok_or_else(|| RemoteAccessError::new_err("Not connected — call connect() first"))?;
 
         let query =
-            bw_rat_client::CredentialQuery::Domain(domain.to_string());
+            ap_client::CredentialQuery::Domain(domain.to_string());
         let cred = py
             .allow_threads(|| {
                 self.runtime

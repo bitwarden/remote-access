@@ -2,7 +2,7 @@ use pyo3::create_exception;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
 
-use bw_rat_client::CredentialData;
+use ap_client::CredentialData;
 
 create_exception!(bw_remote_rs, RemoteAccessError, PyException);
 
