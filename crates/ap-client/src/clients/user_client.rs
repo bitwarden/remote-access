@@ -31,7 +31,12 @@ const PENDING_PAIRING_MAX_AGE: Duration = Duration::from_secs(10 * 60);
 /// The kind of pairing: rendezvous (null PSK) or PSK (real key).
 pub(crate) enum PairingKind {
     /// Rendezvous pairing — uses a null PSK, requires fingerprint verification.
-    Rendezvous,
+    ///
+    /// The `reply` sender is `Some(...)` while waiting for the proxy's `RendezvousInfo`
+    /// response, and becomes `None` once the rendezvous code has been delivered.
+    Rendezvous {
+        reply: Option<oneshot::Sender<Result<RendezvousCode, RemoteClientError>>>,
+    },
     /// PSK pairing — uses a real pre-shared key, no fingerprint verification needed.
     Psk { psk: Psk, psk_id: PskId },
 }
@@ -205,12 +210,6 @@ enum UserClientCommand {
     },
 }
 
-/// Pending rendezvous reply waiting for the proxy to send a `RendezvousInfo`.
-struct PendingRendezvousReply {
-    reply: oneshot::Sender<Result<RendezvousCode, RemoteClientError>>,
-    name: Option<String>,
-}
-
 /// A cloneable handle for controlling the user client.
 ///
 /// Obtained from [`UserClient::connect()`], which authenticates with the proxy,
@@ -257,7 +256,6 @@ impl UserClient {
             transports: HashMap::new(),
             pending_pairings: Vec::new(),
             audit_log: audit_log.unwrap_or_else(|| Box::new(NoOpAuditLog)),
-            pending_rendezvous_reply: None,
         };
 
         // Spawn the event loop — use spawn_local on WASM (no Tokio runtime)
@@ -320,8 +318,6 @@ struct UserClientInner {
     pending_pairings: Vec<PendingPairing>,
     /// Audit logger for security-relevant events
     audit_log: Box<dyn AuditLog>,
-    /// Pending rendezvous reply awaiting RendezvousInfo from the proxy
-    pending_rendezvous_reply: Option<PendingRendezvousReply>,
 }
 
 impl UserClientInner {
@@ -496,20 +492,23 @@ impl UserClientInner {
                 }
             }
             IncomingMessage::RendezvousInfo(code) => {
-                // Complete a pending rendezvous request from the handle
-                if let Some(pending) = self.pending_rendezvous_reply.take() {
-                    // Register the pending pairing
-                    let pairing = PendingPairing {
-                        connection_name: pending.name,
-                        created_at: Instant::now(),
-                        kind: PairingKind::Rendezvous,
-                    };
-                    self.pending_pairings
-                        .retain(|p| !matches!(p.kind, PairingKind::Rendezvous));
-                    self.pending_pairings.push(pairing);
+                // Find the pending rendezvous pairing that is still awaiting a reply
+                let idx = self
+                    .pending_pairings
+                    .iter()
+                    .position(|p| matches!(&p.kind, PairingKind::Rendezvous { reply: Some(_) }));
 
-                    debug!("Created rendezvous pairing via handle, code: {}", code);
-                    let _ = pending.reply.send(Ok(code));
+                if let Some(idx) = idx {
+                    // Take the reply sender out, leaving the pairing in place with reply: None
+                    let pairing = &mut self.pending_pairings[idx];
+                    if let PairingKind::Rendezvous { reply } = &mut pairing.kind {
+                        if let Some(sender) = reply.take() {
+                            debug!("Completed rendezvous pairing via handle, code: {}", code);
+                            let _ = sender.send(Ok(code));
+                        }
+                    }
+                } else {
+                    debug!("Received RendezvousInfo but no pending rendezvous pairing found");
                 }
                 Ok(None)
             }
@@ -558,7 +557,7 @@ impl UserClientInner {
                         let pairing = self.pending_pairings.remove(idx);
                         let psk = match pairing.kind {
                             PairingKind::Psk { psk, .. } => psk,
-                            PairingKind::Rendezvous => unreachable!(),
+                            PairingKind::Rendezvous { .. } => unreachable!(),
                         };
                         (Some(psk), pairing.connection_name, true)
                     } else {
@@ -570,11 +569,12 @@ impl UserClientInner {
                     }
                 }
                 None => {
-                    // Rendezvous mode — find the rendezvous pairing
+                    // Rendezvous mode — find a confirmed rendezvous pairing
+                    // (one whose reply has already been sent, i.e. reply is None)
                     let idx = self
                         .pending_pairings
                         .iter()
-                        .position(|p| matches!(p.kind, PairingKind::Rendezvous));
+                        .position(|p| matches!(p.kind, PairingKind::Rendezvous { reply: None }));
                     let connection_name =
                         idx.and_then(|i| self.pending_pairings.remove(i).connection_name);
                     (None, connection_name, false)
@@ -837,8 +837,36 @@ impl UserClientInner {
                     return;
                 }
 
-                // Store the pending reply — will be completed when RendezvousInfo arrives
-                self.pending_rendezvous_reply = Some(PendingRendezvousReply { reply, name });
+                // Prune stale pairings
+                Self::prune_stale_pairings(&mut self.pending_pairings);
+
+                // If there's already a pending rendezvous pairing awaiting its code,
+                // error the old one rather than silently overwriting it
+                if let Some(old_idx) = self
+                    .pending_pairings
+                    .iter()
+                    .position(|p| matches!(&p.kind, PairingKind::Rendezvous { reply: Some(_) }))
+                {
+                    let old = self.pending_pairings.remove(old_idx);
+                    if let PairingKind::Rendezvous {
+                        reply: Some(old_reply),
+                    } = old.kind
+                    {
+                        warn!("Replacing existing pending rendezvous pairing");
+                        let _ = old_reply.send(Err(RemoteClientError::InvalidState {
+                            expected: "single pending rendezvous".to_string(),
+                            current: "replaced by new rendezvous request".to_string(),
+                        }));
+                    }
+                }
+
+                // Push the new pairing immediately — reply will be completed
+                // when RendezvousInfo arrives from the proxy
+                self.pending_pairings.push(PendingPairing {
+                    connection_name: name,
+                    created_at: Instant::now(),
+                    kind: PairingKind::Rendezvous { reply: Some(reply) },
+                });
 
                 // Emit notification so the caller knows a code is being requested
                 notification_tx
