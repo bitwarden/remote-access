@@ -19,15 +19,22 @@ ap-error = { workspace = true }
 ap-noise = { workspace = true }
 ap-proxy-client = { workspace = true, default-features = false }
 ap-proxy-protocol = { workspace = true }
-dirs = { workspace = true }
 futures-util = { workspace = true }
 hex = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { version = "1.36.0", default-features = false, features = ["sync", "macros", "time"] }
+tokio = { version = "1.36.0", default-features = false, features = ["sync", "macros"] }
 tracing = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1.36.0", features = ["time"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+gloo-timers = { version = "0.3", features = ["futures"] }
+wasm-bindgen-futures = "0.4"
+web-time = "1"
 
 [dev-dependencies]
 ap-proxy = { workspace = true }

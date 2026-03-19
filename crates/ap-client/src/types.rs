@@ -6,6 +6,13 @@ use ap_noise::Psk;
 use ap_proxy_protocol::IdentityFingerprint;
 use serde::{Deserialize, Serialize};
 
+/// A stable identifier for a PSK, derived from `hex(SHA256(psk)[0..8])`.
+///
+/// Used as a lookup key to match incoming handshakes to the correct pending
+/// pairing. Today this maps to in-memory pending pairings; in the future it
+/// could index persistent/reusable PSKs from a `PskStore`.
+pub type PskId = String;
+
 /// What kind of credential to look up.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,105 +62,8 @@ pub enum ConnectionMode {
     },
 }
 
-pub enum ClientAction {
-    Accept,
-}
-
-/// Responses from CLI to RemoteClient
-#[derive(Debug, Clone)]
-pub enum RemoteClientResponse {
-    /// Response to fingerprint verification prompt
-    VerifyFingerprint {
-        /// Whether user confirmed fingerprint matches
-        approved: bool,
-    },
-}
-
-/// Events emitted by the remote client during connection and operation
-#[derive(Debug, Clone)]
-pub enum RemoteClientEvent {
-    /// Connecting to the proxy server
-    Connecting {
-        /// The proxy URL being connected to
-        proxy_url: String,
-    },
-    /// Successfully connected to the proxy
-    Connected {
-        /// The device's identity fingerprint (hex-encoded)
-        fingerprint: IdentityFingerprint,
-    },
-    /// Reconnecting to an existing session
-    ReconnectingToSession {
-        /// The fingerprint being reconnected to
-        fingerprint: IdentityFingerprint,
-    },
-    /// Rendezvous code resolution starting
-    RendezvousResolving {
-        /// The rendezvous code being resolved
-        code: String,
-    },
-    /// Rendezvous code resolved to fingerprint
-    RendezvousResolved {
-        /// The resolved identity fingerprint
-        fingerprint: IdentityFingerprint,
-    },
-    /// Using PSK mode for connection
-    PskMode {
-        /// The fingerprint being connected to
-        fingerprint: IdentityFingerprint,
-    },
-    /// Noise handshake starting
-    HandshakeStart,
-    /// Noise handshake progress
-    HandshakeProgress {
-        /// Progress message
-        message: String,
-    },
-    /// Noise handshake complete
-    HandshakeComplete,
-    /// Handshake fingerprint ready for verification
-    HandshakeFingerprint {
-        /// The 6-character hex fingerprint
-        fingerprint: String,
-    },
-    /// User verified the fingerprint
-    FingerprintVerified,
-    /// User rejected the fingerprint
-    FingerprintRejected {
-        /// Reason for rejection
-        reason: String,
-    },
-    /// Client is ready for credential requests
-    Ready {
-        /// Whether credentials can be requested
-        can_request_credentials: bool,
-    },
-    /// Credential request was sent
-    CredentialRequestSent {
-        /// The query used for the request
-        query: CredentialQuery,
-    },
-    /// Credential was received
-    CredentialReceived {
-        /// The credential data
-        credential: CredentialData,
-    },
-    /// An error occurred
-    Error {
-        /// Error message
-        message: String,
-        /// Context where error occurred
-        context: Option<String>,
-    },
-    /// Client was disconnected
-    Disconnected {
-        /// Reason for disconnection
-        reason: Option<String>,
-    },
-}
-
 /// Credential data returned from a request
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CredentialData {
     /// Username for the credential
@@ -180,13 +90,33 @@ pub struct CredentialData {
     pub domain: Option<String>,
 }
 
+impl std::fmt::Debug for CredentialData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CredentialData")
+            .field("domain", &self.domain)
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
+            .field("totp", &self.totp.as_ref().map(|_| "[REDACTED]"))
+            .field("notes", &self.notes.as_ref().map(|_| "[REDACTED]"))
+            .field("credential_id", &self.credential_id)
+            .finish()
+    }
+}
+
 /// Internal protocol messages sent over WebSocket
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub(crate) enum ProtocolMessage {
     /// Noise handshake init (initiator -> responder)
     #[serde(rename = "handshake-init")]
-    HandshakeInit { data: String, ciphersuite: String },
+    HandshakeInit {
+        data: String,
+        ciphersuite: String,
+        /// PSK identifier — `Some(id)` for PSK mode, `None` for rendezvous mode.
+        /// Backward-compatible: old clients omit this field (deserialized as `None`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        psk_id: Option<PskId>,
+    },
     /// Noise handshake response (responder -> initiator)
     #[serde(rename = "handshake-response")]
     HandshakeResponse { data: String, ciphersuite: String },

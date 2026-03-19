@@ -1,6 +1,4 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use ap_noise::{InitiatorHandshake, MultiDeviceTransport, Psk};
 use ap_proxy_client::IncomingMessage;
@@ -8,11 +6,9 @@ use ap_proxy_protocol::{IdentityFingerprint, RendezvousCode};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use rand::RngCore;
 
+use crate::compat::{now_millis, timeout};
 use crate::proxy::ProxyClient;
-use tokio::{
-    sync::{Mutex, mpsc, oneshot},
-    time::timeout,
-};
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 
 use crate::traits::{IdentityProvider, SessionStore};
@@ -20,137 +16,492 @@ use crate::{
     error::RemoteClientError,
     types::{
         CredentialData, CredentialQuery, CredentialRequestPayload, CredentialResponsePayload,
-        ProtocolMessage, RemoteClientEvent, RemoteClientResponse,
+        ProtocolMessage,
     },
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Type alias for pending credential request senders
-type PendingRequestMap =
-    HashMap<String, oneshot::Sender<Result<CredentialData, RemoteClientError>>>;
+// =============================================================================
+// Public types: Notifications (fire-and-forget) and Requests (with reply)
+// =============================================================================
 
-/// Remote client for connecting to a user-client through a proxy
+/// Fire-and-forget status updates emitted by the remote client.
+#[derive(Debug, Clone)]
+pub enum RemoteClientNotification {
+    /// Connecting to the proxy server
+    Connecting,
+    /// Successfully connected to the proxy
+    Connected {
+        /// The device's identity fingerprint (hex-encoded)
+        fingerprint: IdentityFingerprint,
+    },
+    /// Reconnecting to an existing session
+    ReconnectingToSession {
+        /// The fingerprint being reconnected to
+        fingerprint: IdentityFingerprint,
+    },
+    /// Rendezvous code resolution starting
+    RendezvousResolving {
+        /// The rendezvous code being resolved
+        code: String,
+    },
+    /// Rendezvous code resolved to fingerprint
+    RendezvousResolved {
+        /// The resolved identity fingerprint
+        fingerprint: IdentityFingerprint,
+    },
+    /// Using PSK mode for connection
+    PskMode {
+        /// The fingerprint being connected to
+        fingerprint: IdentityFingerprint,
+    },
+    /// Noise handshake starting
+    HandshakeStart,
+    /// Noise handshake progress
+    HandshakeProgress {
+        /// Progress message
+        message: String,
+    },
+    /// Noise handshake complete
+    HandshakeComplete,
+    /// Handshake fingerprint (informational — for PSK or non-verified connections)
+    HandshakeFingerprint {
+        /// The 6-character hex fingerprint
+        fingerprint: String,
+    },
+    /// User verified the fingerprint
+    FingerprintVerified,
+    /// User rejected the fingerprint
+    FingerprintRejected {
+        /// Reason for rejection
+        reason: String,
+    },
+    /// Client is ready for credential requests
+    Ready {
+        /// Whether credentials can be requested
+        can_request_credentials: bool,
+    },
+    /// Credential request was sent
+    CredentialRequestSent {
+        /// The query used for the request
+        query: CredentialQuery,
+    },
+    /// Credential was received
+    CredentialReceived {
+        /// The credential data
+        credential: CredentialData,
+    },
+    /// An error occurred
+    Error {
+        /// Error message
+        message: String,
+        /// Context where error occurred
+        context: Option<String>,
+    },
+    /// Client was disconnected
+    Disconnected {
+        /// Reason for disconnection
+        reason: Option<String>,
+    },
+}
+
+/// Reply for fingerprint verification requests.
+#[derive(Debug)]
+pub struct RemoteClientFingerprintReply {
+    /// Whether user approved the fingerprint
+    pub approved: bool,
+}
+
+/// Requests that require a caller response, carrying a oneshot reply channel.
+#[derive(Debug)]
+pub enum RemoteClientRequest {
+    /// Handshake fingerprint requires verification.
+    VerifyFingerprint {
+        /// The 6-character hex fingerprint for visual verification
+        fingerprint: String,
+        /// Channel to send the verification reply
+        reply: oneshot::Sender<RemoteClientFingerprintReply>,
+    },
+}
+
+// =============================================================================
+// Command channel for RemoteClient handle → event loop communication
+// =============================================================================
+
+/// Type alias matching `SessionStore::list_sessions()` return type.
+type SessionList = Vec<(IdentityFingerprint, Option<String>, u64, u64)>;
+
+/// Commands sent from a `RemoteClient` handle to the running event loop.
+enum RemoteClientCommand {
+    PairWithHandshake {
+        rendezvous_code: String,
+        verify_fingerprint: bool,
+        reply: oneshot::Sender<Result<IdentityFingerprint, RemoteClientError>>,
+    },
+    PairWithPsk {
+        psk: Psk,
+        remote_fingerprint: IdentityFingerprint,
+        reply: oneshot::Sender<Result<(), RemoteClientError>>,
+    },
+    LoadCachedSession {
+        remote_fingerprint: IdentityFingerprint,
+        reply: oneshot::Sender<Result<(), RemoteClientError>>,
+    },
+    RequestCredential {
+        query: CredentialQuery,
+        reply: oneshot::Sender<Result<CredentialData, RemoteClientError>>,
+    },
+    ListSessions {
+        reply: oneshot::Sender<SessionList>,
+    },
+    HasSession {
+        fingerprint: IdentityFingerprint,
+        reply: oneshot::Sender<bool>,
+    },
+}
+
+// =============================================================================
+// Handle — cloneable, Send, all methods take &self
+// =============================================================================
+
+/// A cloneable handle for controlling the remote client.
+///
+/// Obtained from [`RemoteClient::connect()`], which authenticates with the proxy,
+/// spawns the event loop internally, and returns this handle. All methods
+/// communicate with the event loop through an internal command channel.
+///
+/// `Clone` and `Send` — share freely across tasks and threads.
+/// Dropping all handles shuts down the event loop and disconnects from the proxy.
+#[derive(Clone)]
 pub struct RemoteClient {
-    session_store: Box<dyn SessionStore>,
-    proxy_client: Box<dyn ProxyClient>,
-    incoming_rx: Option<mpsc::UnboundedReceiver<IncomingMessage>>,
-    transport: Option<Arc<Mutex<MultiDeviceTransport>>>,
-    remote_fingerprint: Option<IdentityFingerprint>,
-    pending_requests: Arc<Mutex<PendingRequestMap>>,
-    event_tx: mpsc::Sender<RemoteClientEvent>,
-    response_rx: Option<mpsc::Receiver<RemoteClientResponse>>,
+    command_tx: mpsc::Sender<RemoteClientCommand>,
 }
 
 impl RemoteClient {
-    /// Create a new remote client and connect to the proxy server
+    /// Connect to the proxy server, spawn the event loop, and return a handle.
     ///
-    /// This establishes the WebSocket connection and authenticates with the proxy.
-    /// After calling this, use one of the pairing methods:
-    /// - `pair_with_handshake()` for new rendezvous-based pairing
-    /// - `pair_with_psk()` for PSK-based pairing
-    /// - `load_cached_session()` for reconnecting with a cached session
-    ///
-    /// # Arguments
-    /// * `identity_provider` - Provider for the client's identity
-    /// * `session_store` - Store for caching sessions
-    /// * `event_tx` - Channel sender for client events
-    /// * `response_rx` - Channel receiver for client responses
-    /// * `proxy_client` - The proxy client implementation to use for communication
-    pub async fn new(
+    /// This is the single entry point. After `connect()` returns, the client is
+    /// authenticated with the proxy and ready for pairing. Use one of the pairing
+    /// methods to establish a secure channel:
+    /// - [`pair_with_handshake()`](Self::pair_with_handshake) for rendezvous-based pairing
+    /// - [`pair_with_psk()`](Self::pair_with_psk) for PSK-based pairing
+    /// - [`load_cached_session()`](Self::load_cached_session) for reconnecting with a cached session
+    pub async fn connect(
         identity_provider: Box<dyn IdentityProvider>,
         session_store: Box<dyn SessionStore>,
-        event_tx: mpsc::Sender<RemoteClientEvent>,
-        response_rx: mpsc::Receiver<RemoteClientResponse>,
         mut proxy_client: Box<dyn ProxyClient>,
+        notification_tx: mpsc::Sender<RemoteClientNotification>,
+        request_tx: mpsc::Sender<RemoteClientRequest>,
     ) -> Result<Self, RemoteClientError> {
-        let identity = identity_provider.identity().await;
+        let own_fingerprint = identity_provider.fingerprint().await;
 
-        debug!(
-            "Connecting to proxy with identity {:?}",
-            identity.identity().fingerprint()
-        );
+        debug!("Connecting to proxy with identity {:?}", own_fingerprint);
 
-        event_tx
-            .send(RemoteClientEvent::Connecting {
-                proxy_url: String::new(),
-            })
+        notification_tx
+            .send(RemoteClientNotification::Connecting)
             .await
             .ok();
 
         let incoming_rx = proxy_client.connect().await?;
 
-        event_tx
-            .send(RemoteClientEvent::Connected {
-                fingerprint: identity.identity().fingerprint(),
+        notification_tx
+            .send(RemoteClientNotification::Connected {
+                fingerprint: own_fingerprint,
             })
             .await
             .ok();
 
         debug!("Connected to proxy successfully");
 
-        Ok(Self {
+        // Create command channel
+        let (command_tx, command_rx) = mpsc::channel(32);
+
+        // Build inner state
+        let inner = RemoteClientInner {
             session_store,
             proxy_client,
-            incoming_rx: Some(incoming_rx),
             transport: None,
             remote_fingerprint: None,
-            pending_requests: Arc::new(Mutex::new(HashMap::new())),
-            event_tx,
-            response_rx: Some(response_rx),
-        })
+        };
+
+        // Spawn the event loop — use spawn_local on WASM (no Tokio runtime)
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(inner.run_event_loop(
+            incoming_rx,
+            command_rx,
+            notification_tx,
+            request_tx,
+        ));
+        #[cfg(not(target_arch = "wasm32"))]
+        tokio::spawn(inner.run_event_loop(incoming_rx, command_rx, notification_tx, request_tx));
+
+        Ok(Self { command_tx })
     }
 
-    /// Pair with a remote device using a rendezvous code
+    /// Pair with a remote device using a rendezvous code.
     ///
-    /// This resolves the rendezvous code to a fingerprint, performs the Noise handshake,
-    /// and optionally waits for user fingerprint verification.
-    ///
-    /// # Arguments
-    /// * `rendezvous_code` - The rendezvous code to resolve
-    /// * `verify_fingerprint` - If true, emit fingerprint event and wait for user verification.
-    ///   If false, emit fingerprint event informationally and proceed immediately.
+    /// Resolves the rendezvous code to a fingerprint, performs the Noise handshake,
+    /// and optionally waits for user fingerprint verification. If `verify_fingerprint`
+    /// is true, a [`RemoteClientRequest::VerifyFingerprint`] will be sent on the
+    /// request channel and must be answered before this method returns.
     pub async fn pair_with_handshake(
-        &mut self,
-        rendezvous_code: &str,
+        &self,
+        rendezvous_code: String,
         verify_fingerprint: bool,
     ) -> Result<IdentityFingerprint, RemoteClientError> {
-        let incoming_rx =
-            self.incoming_rx
-                .as_mut()
-                .ok_or_else(|| RemoteClientError::InvalidState {
-                    expected: "proxy connected".to_string(),
-                    current: "not connected".to_string(),
-                })?;
+        let (tx, rx) = oneshot::channel();
+        self.command_tx
+            .send(RemoteClientCommand::PairWithHandshake {
+                rendezvous_code,
+                verify_fingerprint,
+                reply: tx,
+            })
+            .await
+            .map_err(|_| RemoteClientError::ChannelClosed)?;
+        rx.await.map_err(|_| RemoteClientError::ChannelClosed)?
+    }
 
-        let event_tx = self.event_tx.clone();
+    /// Pair with a remote device using a pre-shared key.
+    ///
+    /// Uses the PSK for authentication, skipping fingerprint verification
+    /// since trust is established through the PSK.
+    pub async fn pair_with_psk(
+        &self,
+        psk: Psk,
+        remote_fingerprint: IdentityFingerprint,
+    ) -> Result<(), RemoteClientError> {
+        let (tx, rx) = oneshot::channel();
+        self.command_tx
+            .send(RemoteClientCommand::PairWithPsk {
+                psk,
+                remote_fingerprint,
+                reply: tx,
+            })
+            .await
+            .map_err(|_| RemoteClientError::ChannelClosed)?;
+        rx.await.map_err(|_| RemoteClientError::ChannelClosed)?
+    }
 
-        let response_rx = self
-            .response_rx
-            .as_mut()
-            .ok_or(RemoteClientError::NotInitialized)?;
+    /// Reconnect to a remote device using a cached session.
+    ///
+    /// Verifies the session exists in the session store and reconnects
+    /// without requiring fingerprint verification.
+    pub async fn load_cached_session(
+        &self,
+        remote_fingerprint: IdentityFingerprint,
+    ) -> Result<(), RemoteClientError> {
+        let (tx, rx) = oneshot::channel();
+        self.command_tx
+            .send(RemoteClientCommand::LoadCachedSession {
+                remote_fingerprint,
+                reply: tx,
+            })
+            .await
+            .map_err(|_| RemoteClientError::ChannelClosed)?;
+        rx.await.map_err(|_| RemoteClientError::ChannelClosed)?
+    }
 
+    /// Request a credential over the secure channel.
+    pub async fn request_credential(
+        &self,
+        query: &CredentialQuery,
+    ) -> Result<CredentialData, RemoteClientError> {
+        let (tx, rx) = oneshot::channel();
+        self.command_tx
+            .send(RemoteClientCommand::RequestCredential {
+                query: query.clone(),
+                reply: tx,
+            })
+            .await
+            .map_err(|_| RemoteClientError::ChannelClosed)?;
+        rx.await.map_err(|_| RemoteClientError::ChannelClosed)?
+    }
+
+    /// List all cached sessions.
+    pub async fn list_sessions(
+        &self,
+    ) -> Result<Vec<(IdentityFingerprint, Option<String>, u64, u64)>, RemoteClientError> {
+        let (tx, rx) = oneshot::channel();
+        self.command_tx
+            .send(RemoteClientCommand::ListSessions { reply: tx })
+            .await
+            .map_err(|_| RemoteClientError::ChannelClosed)?;
+        rx.await.map_err(|_| RemoteClientError::ChannelClosed)
+    }
+
+    /// Check if a session exists for a fingerprint.
+    pub async fn has_session(
+        &self,
+        fingerprint: IdentityFingerprint,
+    ) -> Result<bool, RemoteClientError> {
+        let (tx, rx) = oneshot::channel();
+        self.command_tx
+            .send(RemoteClientCommand::HasSession {
+                fingerprint,
+                reply: tx,
+            })
+            .await
+            .map_err(|_| RemoteClientError::ChannelClosed)?;
+        rx.await.map_err(|_| RemoteClientError::ChannelClosed)
+    }
+}
+
+// =============================================================================
+// Internal state — lives inside the spawned event loop task
+// =============================================================================
+
+/// All mutable state for the remote client, owned by the spawned event loop task.
+struct RemoteClientInner {
+    session_store: Box<dyn SessionStore>,
+    proxy_client: Box<dyn ProxyClient>,
+    transport: Option<MultiDeviceTransport>,
+    remote_fingerprint: Option<IdentityFingerprint>,
+}
+
+impl RemoteClientInner {
+    /// Run the main event loop (consumes self).
+    async fn run_event_loop(
+        mut self,
+        mut incoming_rx: mpsc::UnboundedReceiver<IncomingMessage>,
+        mut command_rx: mpsc::Receiver<RemoteClientCommand>,
+        notification_tx: mpsc::Sender<RemoteClientNotification>,
+        request_tx: mpsc::Sender<RemoteClientRequest>,
+    ) {
+        loop {
+            tokio::select! {
+                msg = incoming_rx.recv() => {
+                    match msg {
+                        Some(_) => {
+                            // Stray message while idle — ignore
+                            debug!("Received message while idle");
+                        }
+                        None => {
+                            // Proxy disconnected
+                            notification_tx.send(RemoteClientNotification::Disconnected {
+                                reason: Some("Proxy connection closed".to_string()),
+                            }).await.ok();
+                            return;
+                        }
+                    }
+                }
+                cmd = command_rx.recv() => {
+                    match cmd {
+                        Some(cmd) => {
+                            self.handle_command(
+                                cmd,
+                                &mut incoming_rx,
+                                &notification_tx,
+                                &request_tx,
+                            ).await;
+                        }
+                        None => {
+                            // All handles dropped — shut down
+                            debug!("All RemoteClient handles dropped, shutting down event loop");
+                            self.proxy_client.disconnect().await.ok();
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Dispatch a command from the handle.
+    async fn handle_command(
+        &mut self,
+        cmd: RemoteClientCommand,
+        incoming_rx: &mut mpsc::UnboundedReceiver<IncomingMessage>,
+        notification_tx: &mpsc::Sender<RemoteClientNotification>,
+        request_tx: &mpsc::Sender<RemoteClientRequest>,
+    ) {
+        match cmd {
+            RemoteClientCommand::PairWithHandshake {
+                rendezvous_code,
+                verify_fingerprint,
+                reply,
+            } => {
+                let result = self
+                    .do_pair_with_handshake(
+                        rendezvous_code,
+                        verify_fingerprint,
+                        incoming_rx,
+                        notification_tx,
+                        request_tx,
+                    )
+                    .await;
+                let _ = reply.send(result);
+            }
+            RemoteClientCommand::PairWithPsk {
+                psk,
+                remote_fingerprint,
+                reply,
+            } => {
+                let result = self
+                    .do_pair_with_psk(psk, remote_fingerprint, incoming_rx, notification_tx)
+                    .await;
+                let _ = reply.send(result);
+            }
+            RemoteClientCommand::LoadCachedSession {
+                remote_fingerprint,
+                reply,
+            } => {
+                let result = self
+                    .do_load_cached_session(remote_fingerprint, notification_tx)
+                    .await;
+                let _ = reply.send(result);
+            }
+            RemoteClientCommand::RequestCredential { query, reply } => {
+                let result = self
+                    .do_request_credential(query, incoming_rx, notification_tx)
+                    .await;
+                let _ = reply.send(result);
+            }
+            RemoteClientCommand::ListSessions { reply } => {
+                let sessions = self.session_store.list_sessions().await;
+                let _ = reply.send(sessions);
+            }
+            RemoteClientCommand::HasSession { fingerprint, reply } => {
+                let has = self.session_store.has_session(&fingerprint).await;
+                let _ = reply.send(has);
+            }
+        }
+    }
+
+    // ── Pairing: Rendezvous handshake ────────────────────────────────
+
+    async fn do_pair_with_handshake(
+        &mut self,
+        rendezvous_code: String,
+        verify_fingerprint: bool,
+        incoming_rx: &mut mpsc::UnboundedReceiver<IncomingMessage>,
+        notification_tx: &mpsc::Sender<RemoteClientNotification>,
+        request_tx: &mpsc::Sender<RemoteClientRequest>,
+    ) -> Result<IdentityFingerprint, RemoteClientError> {
         // Resolve rendezvous code to fingerprint
-        event_tx
-            .send(RemoteClientEvent::RendezvousResolving {
-                code: rendezvous_code.to_string(),
+        notification_tx
+            .send(RemoteClientNotification::RendezvousResolving {
+                code: rendezvous_code.clone(),
             })
             .await
             .ok();
 
         let remote_fingerprint =
-            Self::resolve_rendezvous(self.proxy_client.as_ref(), incoming_rx, rendezvous_code)
+            Self::resolve_rendezvous(self.proxy_client.as_ref(), incoming_rx, &rendezvous_code)
                 .await?;
 
-        event_tx
-            .send(RemoteClientEvent::RendezvousResolved {
+        notification_tx
+            .send(RemoteClientNotification::RendezvousResolved {
                 fingerprint: remote_fingerprint,
             })
             .await
             .ok();
 
         // Perform Noise handshake (no PSK)
-        event_tx.send(RemoteClientEvent::HandshakeStart).await.ok();
+        notification_tx
+            .send(RemoteClientNotification::HandshakeStart)
+            .await
+            .ok();
 
         let (transport, fingerprint_str) = Self::perform_handshake(
             self.proxy_client.as_ref(),
@@ -160,39 +511,49 @@ impl RemoteClient {
         )
         .await?;
 
-        event_tx
-            .send(RemoteClientEvent::HandshakeComplete)
+        notification_tx
+            .send(RemoteClientNotification::HandshakeComplete)
             .await
             .ok();
 
-        // Always emit fingerprint event (informational or for verification)
-        event_tx
-            .send(RemoteClientEvent::HandshakeFingerprint {
-                fingerprint: fingerprint_str,
+        // Always emit fingerprint (informational or for verification)
+        notification_tx
+            .send(RemoteClientNotification::HandshakeFingerprint {
+                fingerprint: fingerprint_str.clone(),
             })
             .await
             .ok();
 
         if verify_fingerprint {
+            // Send verification request via request channel
+            let (fp_tx, fp_rx) = oneshot::channel();
+            request_tx
+                .send(RemoteClientRequest::VerifyFingerprint {
+                    fingerprint: fingerprint_str,
+                    reply: fp_tx,
+                })
+                .await
+                .map_err(|_| RemoteClientError::ChannelClosed)?;
+
             // Wait for user verification (60s timeout)
-            match timeout(Duration::from_secs(60), response_rx.recv()).await {
-                Ok(Some(RemoteClientResponse::VerifyFingerprint { approved: true })) => {
-                    event_tx
-                        .send(RemoteClientEvent::FingerprintVerified)
+            match timeout(Duration::from_secs(60), fp_rx).await {
+                Ok(Ok(RemoteClientFingerprintReply { approved: true })) => {
+                    notification_tx
+                        .send(RemoteClientNotification::FingerprintVerified)
                         .await
                         .ok();
                 }
-                Ok(Some(RemoteClientResponse::VerifyFingerprint { approved: false })) => {
+                Ok(Ok(RemoteClientFingerprintReply { approved: false })) => {
                     self.proxy_client.disconnect().await.ok();
-                    event_tx
-                        .send(RemoteClientEvent::FingerprintRejected {
+                    notification_tx
+                        .send(RemoteClientNotification::FingerprintRejected {
                             reason: "User rejected fingerprint verification".to_string(),
                         })
                         .await
                         .ok();
                     return Err(RemoteClientError::FingerprintRejected);
                 }
-                Ok(None) => {
+                Ok(Err(_)) => {
                     return Err(RemoteClientError::ChannelClosed);
                 }
                 Err(_) => {
@@ -204,45 +565,34 @@ impl RemoteClient {
             }
         }
 
-        // Cache new session
-        self.session_store.cache_session(remote_fingerprint).await?;
-
         // Finalize connection
-        self.finalize_connection(transport, remote_fingerprint, event_tx)
+        self.finalize_pairing(transport, remote_fingerprint, notification_tx)
             .await?;
 
         Ok(remote_fingerprint)
     }
 
-    /// Pair with a remote device using a pre-shared key
-    ///
-    /// This uses the PSK for authentication, skipping fingerprint verification
-    /// since trust is established through the PSK.
-    pub async fn pair_with_psk(
+    // ── Pairing: PSK ─────────────────────────────────────────────────
+
+    async fn do_pair_with_psk(
         &mut self,
         psk: Psk,
         remote_fingerprint: IdentityFingerprint,
+        incoming_rx: &mut mpsc::UnboundedReceiver<IncomingMessage>,
+        notification_tx: &mpsc::Sender<RemoteClientNotification>,
     ) -> Result<(), RemoteClientError> {
-        let incoming_rx =
-            self.incoming_rx
-                .as_mut()
-                .ok_or_else(|| RemoteClientError::InvalidState {
-                    expected: "proxy connected".to_string(),
-                    current: "not connected".to_string(),
-                })?;
-
-        let event_tx = self.event_tx.clone();
-
-        // Emit PskMode event
-        event_tx
-            .send(RemoteClientEvent::PskMode {
+        notification_tx
+            .send(RemoteClientNotification::PskMode {
                 fingerprint: remote_fingerprint,
             })
             .await
             .ok();
 
         // Perform Noise handshake with PSK
-        event_tx.send(RemoteClientEvent::HandshakeStart).await.ok();
+        notification_tx
+            .send(RemoteClientNotification::HandshakeStart)
+            .await
+            .ok();
 
         let (transport, _fingerprint_str) = Self::perform_handshake(
             self.proxy_client.as_ref(),
@@ -252,64 +602,56 @@ impl RemoteClient {
         )
         .await?;
 
-        event_tx
-            .send(RemoteClientEvent::HandshakeComplete)
+        notification_tx
+            .send(RemoteClientNotification::HandshakeComplete)
             .await
             .ok();
 
         // Skip fingerprint verification (trust via PSK)
-        event_tx
-            .send(RemoteClientEvent::FingerprintVerified)
+        notification_tx
+            .send(RemoteClientNotification::FingerprintVerified)
             .await
             .ok();
 
-        // Cache new session
-        self.session_store.cache_session(remote_fingerprint).await?;
-
         // Finalize connection
-        self.finalize_connection(transport, remote_fingerprint, event_tx)
+        self.finalize_pairing(transport, remote_fingerprint, notification_tx)
             .await?;
 
         Ok(())
     }
 
-    /// Reconnect to a remote device using a cached session
-    ///
-    /// This verifies the session exists in the session store and reconnects
-    /// without requiring fingerprint verification.
-    pub async fn load_cached_session(
+    // ── Cached session reconnection ──────────────────────────────────
+
+    async fn do_load_cached_session(
         &mut self,
         remote_fingerprint: IdentityFingerprint,
+        notification_tx: &mpsc::Sender<RemoteClientNotification>,
     ) -> Result<(), RemoteClientError> {
-        let event_tx = self.event_tx.clone();
-
-        // Verify session exists in session store
         if !self.session_store.has_session(&remote_fingerprint).await {
             return Err(RemoteClientError::SessionNotFound);
         }
 
-        // Emit reconnecting event
-        event_tx
-            .send(RemoteClientEvent::ReconnectingToSession {
+        notification_tx
+            .send(RemoteClientNotification::ReconnectingToSession {
                 fingerprint: remote_fingerprint,
             })
             .await
             .ok();
 
-        let transport_state = self
+        let transport = self
             .session_store
             .load_transport_state(&remote_fingerprint)
             .await?
-            .expect("Transport state should exist for cached session");
+            .ok_or(RemoteClientError::SessionNotFound)?;
 
-        event_tx
-            .send(RemoteClientEvent::HandshakeComplete)
+        notification_tx
+            .send(RemoteClientNotification::HandshakeComplete)
             .await
             .ok();
 
         // Skip fingerprint verification (already trusted)
-        event_tx
-            .send(RemoteClientEvent::FingerprintVerified)
+        notification_tx
+            .send(RemoteClientNotification::FingerprintVerified)
             .await
             .ok();
 
@@ -318,67 +660,65 @@ impl RemoteClient {
             .update_last_connected(&remote_fingerprint)
             .await?;
 
-        // Finalize connection
-        self.finalize_connection(transport_state, remote_fingerprint, event_tx)
+        // Save transport state and store locally
+        self.session_store
+            .save_transport_state(&remote_fingerprint, transport.clone())
             .await?;
 
+        self.transport = Some(transport);
+        self.remote_fingerprint = Some(remote_fingerprint);
+
+        notification_tx
+            .send(RemoteClientNotification::Ready {
+                can_request_credentials: true,
+            })
+            .await
+            .ok();
+
+        debug!("Reconnected to cached session");
         Ok(())
     }
 
-    /// Finalize the connection after successful pairing
-    ///
-    /// This stores the transport and remote fingerprint, emits the Ready event,
-    /// and spawns the message loop task.
-    async fn finalize_connection(
+    // ── Shared pairing finalization ──────────────────────────────────
+
+    async fn finalize_pairing(
         &mut self,
         transport: MultiDeviceTransport,
         remote_fingerprint: IdentityFingerprint,
-        event_tx: mpsc::Sender<RemoteClientEvent>,
+        notification_tx: &mpsc::Sender<RemoteClientNotification>,
     ) -> Result<(), RemoteClientError> {
+        // Cache session
+        self.session_store.cache_session(remote_fingerprint).await?;
+
         // Save transport state for session resumption
         self.session_store
             .save_transport_state(&remote_fingerprint, transport.clone())
             .await?;
 
         // Store transport and remote fingerprint
-        let transport = Arc::new(Mutex::new(transport));
-        self.transport = Some(Arc::clone(&transport));
+        self.transport = Some(transport);
         self.remote_fingerprint = Some(remote_fingerprint);
 
         // Emit Ready event
-        event_tx
-            .send(RemoteClientEvent::Ready {
+        notification_tx
+            .send(RemoteClientNotification::Ready {
                 can_request_credentials: true,
             })
             .await
             .ok();
 
-        // Take incoming_rx for the message loop
-        let incoming_rx = self
-            .incoming_rx
-            .take()
-            .ok_or(RemoteClientError::NotInitialized)?;
-
-        // Spawn message handler
-        let pending_requests_clone = Arc::clone(&self.pending_requests);
-        tokio::spawn(async move {
-            Self::message_loop(incoming_rx, event_tx, transport, pending_requests_clone).await;
-        });
-
         debug!("Connection established successfully");
         Ok(())
     }
 
-    /// Request a credential over the secure channel
-    pub async fn request_credential(
-        &mut self,
-        query: &CredentialQuery,
-    ) -> Result<CredentialData, RemoteClientError> {
-        let transport = self
-            .transport
-            .as_ref()
-            .ok_or(RemoteClientError::SecureChannelNotEstablished)?;
+    // ── Credential request ───────────────────────────────────────────
 
+    async fn do_request_credential(
+        &mut self,
+        query: CredentialQuery,
+        incoming_rx: &mut mpsc::UnboundedReceiver<IncomingMessage>,
+        notification_tx: &mpsc::Sender<RemoteClientNotification>,
+    ) -> Result<CredentialData, RemoteClientError> {
         let remote_fingerprint = self
             .remote_fingerprint
             .ok_or(RemoteClientError::NotInitialized)?;
@@ -398,14 +738,20 @@ impl RemoteClient {
         };
 
         let request_json = serde_json::to_string(&request)?;
-        let mut transport_guard = transport.lock().await;
-        let encrypted_packet = transport_guard
-            .encrypt(request_json.as_bytes())
-            .map_err(|e| RemoteClientError::NoiseProtocol(e.to_string()))?;
-        drop(transport_guard);
+
+        let encrypted_data = {
+            let transport = self
+                .transport
+                .as_mut()
+                .ok_or(RemoteClientError::SecureChannelNotEstablished)?;
+            let encrypted_packet = transport
+                .encrypt(request_json.as_bytes())
+                .map_err(|e| RemoteClientError::NoiseProtocol(e.to_string()))?;
+            STANDARD.encode(encrypted_packet.encode())
+        };
 
         let msg = ProtocolMessage::CredentialRequest {
-            encrypted: STANDARD.encode(encrypted_packet.encode()),
+            encrypted: encrypted_data,
         };
 
         // Send via proxy
@@ -415,79 +761,128 @@ impl RemoteClient {
             .await?;
 
         // Emit event
-        self.event_tx
-            .send(RemoteClientEvent::CredentialRequestSent {
+        notification_tx
+            .send(RemoteClientNotification::CredentialRequestSent {
                 query: query.clone(),
             })
             .await
             .ok();
 
-        // Create oneshot channel for this request
-        let (response_tx, response_rx) = oneshot::channel();
+        // Wait for matching response inline
+        match timeout(
+            DEFAULT_TIMEOUT,
+            self.receive_credential_response(&request_id, incoming_rx, notification_tx),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(RemoteClientError::Timeout(format!(
+                "Timeout waiting for credential response for query: {query:?}"
+            ))),
+        }
+    }
 
-        // Store sender in pending_requests map
-        self.pending_requests
-            .lock()
-            .await
-            .insert(request_id.clone(), response_tx);
-
-        // Wait for response with timeout
-        match timeout(DEFAULT_TIMEOUT, response_rx).await {
-            Ok(Ok(Ok(credential))) => {
-                // Success - sender already removed by handler
-                debug!("Received credential for query: {:?}", query);
-                Ok(credential)
-            }
-            Ok(Ok(Err(e))) => {
-                // Error response from user client
-                Err(e)
-            }
-            Ok(Err(_)) => {
-                // Sender dropped - connection lost or handler error
-                self.pending_requests.lock().await.remove(&request_id);
-                Err(RemoteClientError::ChannelClosed)
-            }
-            Err(_) => {
-                // Timeout - clean up pending request
-                self.pending_requests.lock().await.remove(&request_id);
-                Err(RemoteClientError::Timeout(format!(
-                    "Timeout waiting for credential response for query: {query:?}"
-                )))
+    /// Wait for a credential response matching the given request_id.
+    ///
+    /// Stale responses from previous requests (e.g. duplicate multi-device
+    /// responses) are decrypted, logged, and silently discarded.
+    async fn receive_credential_response(
+        &mut self,
+        request_id: &str,
+        incoming_rx: &mut mpsc::UnboundedReceiver<IncomingMessage>,
+        notification_tx: &mpsc::Sender<RemoteClientNotification>,
+    ) -> Result<CredentialData, RemoteClientError> {
+        loop {
+            match incoming_rx.recv().await {
+                Some(IncomingMessage::Send { payload, .. }) => {
+                    if let Ok(text) = String::from_utf8(payload)
+                        && let Ok(ProtocolMessage::CredentialResponse { encrypted }) =
+                            serde_json::from_str::<ProtocolMessage>(&text)
+                    {
+                        match self
+                            .decrypt_credential_response(&encrypted, request_id, notification_tx)
+                            .await
+                        {
+                            Ok(credential) => return Ok(credential),
+                            Err(RemoteClientError::CredentialRequestFailed(ref msg))
+                                if msg.contains("request_id mismatch") =>
+                            {
+                                // Stale response from a previous request — skip it
+                                debug!("Skipping stale credential response: {msg}");
+                                continue;
+                            }
+                            Err(e) => return Err(e),
+                        }
+                    }
+                }
+                Some(_) => {
+                    // Non-Send messages (RendezvousInfo, IdentityInfo) — ignore
+                }
+                None => {
+                    return Err(RemoteClientError::ChannelClosed);
+                }
             }
         }
     }
 
-    /// Check if the secure channel is established
-    pub fn is_ready(&self) -> bool {
-        self.transport.is_some()
+    /// Decrypt and validate a credential response.
+    async fn decrypt_credential_response(
+        &mut self,
+        encrypted: &str,
+        request_id: &str,
+        notification_tx: &mpsc::Sender<RemoteClientNotification>,
+    ) -> Result<CredentialData, RemoteClientError> {
+        let encrypted_bytes = STANDARD
+            .decode(encrypted)
+            .map_err(|e| RemoteClientError::Serialization(format!("Invalid base64: {e}")))?;
+
+        let packet = ap_noise::TransportPacket::decode(&encrypted_bytes)
+            .map_err(|e| RemoteClientError::NoiseProtocol(format!("Invalid packet: {e}")))?;
+
+        let transport = self
+            .transport
+            .as_mut()
+            .ok_or(RemoteClientError::SecureChannelNotEstablished)?;
+
+        let decrypted = transport
+            .decrypt(&packet)
+            .map_err(|e| RemoteClientError::NoiseProtocol(e.to_string()))?;
+
+        let response: CredentialResponsePayload = serde_json::from_slice(&decrypted)?;
+
+        // Verify request_id matches
+        if response.request_id.as_deref() != Some(request_id) {
+            warn!(
+                "Ignoring response with mismatched request_id: {:?}",
+                response.request_id
+            );
+            return Err(RemoteClientError::CredentialRequestFailed(
+                "Response request_id mismatch".to_string(),
+            ));
+        }
+
+        if let Some(error) = response.error {
+            return Err(RemoteClientError::CredentialRequestFailed(error));
+        }
+
+        if let Some(credential) = response.credential {
+            notification_tx
+                .send(RemoteClientNotification::CredentialReceived {
+                    credential: credential.clone(),
+                })
+                .await
+                .ok();
+            Ok(credential)
+        } else {
+            Err(RemoteClientError::CredentialRequestFailed(
+                "Response contains neither credential nor error".to_string(),
+            ))
+        }
     }
 
-    /// Close the connection
-    pub async fn close(&mut self) {
-        // Clear pending requests
-        let mut pending = self.pending_requests.lock().await;
-        pending.clear(); // Drops all senders, causing receivers to get Err
-        drop(pending);
+    // ── Handshake helpers (associated functions) ─────────────────────
 
-        self.proxy_client.disconnect().await.ok();
-        self.transport = None;
-        self.remote_fingerprint = None;
-        self.incoming_rx = None;
-        self.response_rx = None;
-        debug!("Connection closed");
-    }
-
-    /// Get the session store for management operations
-    pub fn session_store(&self) -> &dyn SessionStore {
-        self.session_store.as_ref()
-    }
-
-    /// Get a mutable reference to the session store
-    pub fn session_store_mut(&mut self) -> &mut dyn SessionStore {
-        self.session_store.as_mut()
-    }
-
-    /// Resolve rendezvous code to identity fingerprint
+    /// Resolve rendezvous code to identity fingerprint.
     async fn resolve_rendezvous(
         proxy_client: &dyn ProxyClient,
         incoming_rx: &mut mpsc::UnboundedReceiver<IncomingMessage>,
@@ -500,8 +895,8 @@ impl RemoteClient {
             .map_err(|e| RemoteClientError::RendezvousResolutionFailed(e.to_string()))?;
 
         // Wait for IdentityInfo response with timeout
-        let timeout_duration = tokio::time::Duration::from_secs(10);
-        match tokio::time::timeout(timeout_duration, async {
+        let timeout_duration = Duration::from_secs(10);
+        match timeout(timeout_duration, async {
             while let Some(msg) = incoming_rx.recv().await {
                 if let IncomingMessage::IdentityInfo { fingerprint, .. } = msg {
                     return Some(fingerprint);
@@ -521,13 +916,16 @@ impl RemoteClient {
         }
     }
 
-    /// Perform Noise handshake as initiator
+    /// Perform Noise handshake as initiator.
     async fn perform_handshake(
         proxy_client: &dyn ProxyClient,
         incoming_rx: &mut mpsc::UnboundedReceiver<IncomingMessage>,
         remote_fingerprint: IdentityFingerprint,
         psk: Option<Psk>,
     ) -> Result<(MultiDeviceTransport, String), RemoteClientError> {
+        // Compute PSK ID before moving the PSK into the handshake
+        let psk_id = psk.as_ref().map(|p| p.id());
+
         // Create initiator handshake (with or without PSK)
         let mut handshake = if let Some(psk) = psk {
             InitiatorHandshake::with_psk(psk)
@@ -542,6 +940,7 @@ impl RemoteClient {
         let msg = ProtocolMessage::HandshakeInit {
             data: STANDARD.encode(init_packet.encode()?),
             ciphersuite: format!("{:?}", handshake.ciphersuite()),
+            psk_id,
         };
 
         let msg_json = serde_json::to_string(&msg)?;
@@ -589,131 +988,6 @@ impl RemoteClient {
         debug!("Handshake complete");
         Ok((transport, fingerprint.to_string()))
     }
-
-    /// Background message loop
-    async fn message_loop(
-        mut incoming_rx: mpsc::UnboundedReceiver<IncomingMessage>,
-        event_tx: mpsc::Sender<RemoteClientEvent>,
-        transport: Arc<Mutex<MultiDeviceTransport>>,
-        pending_requests: Arc<Mutex<PendingRequestMap>>,
-    ) {
-        while let Some(msg) = incoming_rx.recv().await {
-            match msg {
-                IncomingMessage::Send { payload, .. } => {
-                    // Parse payload and route to appropriate handler
-                    if let Ok(text) = String::from_utf8(payload) {
-                        if let Ok(protocol_msg) = serde_json::from_str::<ProtocolMessage>(&text) {
-                            match protocol_msg {
-                                ProtocolMessage::CredentialResponse { encrypted } => {
-                                    if let Err(e) = Self::handle_credential_response(
-                                        encrypted,
-                                        &transport,
-                                        &pending_requests,
-                                        &event_tx,
-                                    )
-                                    .await
-                                    {
-                                        warn!("Error handling credential response: {:?}", e);
-                                        event_tx
-                                            .send(RemoteClientEvent::Error {
-                                                message: e.to_string(),
-                                                context: Some("credential_response".to_string()),
-                                            })
-                                            .await
-                                            .ok();
-                                    }
-                                }
-                                _ => {
-                                    debug!("Received other message type");
-                                }
-                            }
-                        }
-                    }
-                }
-                IncomingMessage::RendezvousInfo(_) => {
-                    // Ignore - only UserClient needs this
-                }
-                IncomingMessage::IdentityInfo { .. } => {
-                    // Consumed during resolve_rendezvous(), but handle here for race conditions
-                    debug!("Received IdentityInfo message");
-                }
-            }
-        }
-    }
-
-    /// Handle credential response processing
-    async fn handle_credential_response(
-        encrypted: String,
-        transport: &Arc<Mutex<MultiDeviceTransport>>,
-        pending_requests: &Arc<Mutex<PendingRequestMap>>,
-        event_tx: &mpsc::Sender<RemoteClientEvent>,
-    ) -> Result<(), RemoteClientError> {
-        // 1. Decrypt the encrypted response
-        let encrypted_bytes = STANDARD
-            .decode(&encrypted)
-            .map_err(|e| RemoteClientError::Serialization(format!("Invalid base64: {e}")))?;
-
-        let packet = ap_noise::TransportPacket::decode(&encrypted_bytes)
-            .map_err(|e| RemoteClientError::NoiseProtocol(format!("Invalid packet: {e}")))?;
-
-        let mut transport_guard = transport.lock().await;
-        let decrypted = transport_guard
-            .decrypt(&packet)
-            .map_err(|e| RemoteClientError::NoiseProtocol(e.to_string()))?;
-        drop(transport_guard);
-
-        // 2. Deserialize the response payload
-        let response: CredentialResponsePayload = serde_json::from_slice(&decrypted)?;
-
-        // 3. Find and remove the pending request by request_id
-        let mut pending = pending_requests.lock().await;
-        let sender = match response.request_id {
-            Some(ref req_id) => pending.remove(req_id),
-            None => {
-                warn!("Received credential response without request_id");
-                return Ok(()); // Ignore malformed response
-            }
-        };
-        drop(pending);
-
-        // 4. Send result through oneshot channel
-        if let Some(sender) = sender {
-            let result = if let Some(error) = response.error {
-                Err(RemoteClientError::CredentialRequestFailed(error))
-            } else if let Some(credential) = response.credential {
-                // Emit success event
-                event_tx
-                    .send(RemoteClientEvent::CredentialReceived {
-                        credential: credential.clone(),
-                    })
-                    .await
-                    .ok();
-
-                Ok(credential)
-            } else {
-                Err(RemoteClientError::CredentialRequestFailed(
-                    "Response contains neither credential nor error".to_string(),
-                ))
-            };
-
-            sender.send(result).ok(); // Ignore if receiver dropped (timeout)
-        } else {
-            // Response for unknown/expired request_id - already timed out
-            debug!(
-                "Received response for unknown request_id: {:?}",
-                response.request_id
-            );
-        }
-
-        Ok(())
-    }
-}
-
-fn now_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 fn uuid_v4() -> String {

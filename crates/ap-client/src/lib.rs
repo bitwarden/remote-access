@@ -13,7 +13,8 @@
 //! ## Remote Client Usage (untrusted device)
 //!
 //! ```ignore
-//! use ap_client::{RemoteClient, DefaultProxyClient, IdentityProvider, SessionStore};
+//! use ap_client::{RemoteClient, RemoteClientNotification, RemoteClientRequest,
+//!     DefaultProxyClient, IdentityProvider, SessionStore};
 //! use ap_proxy_client::ProxyClientConfig;
 //! use tokio::sync::mpsc;
 //!
@@ -23,19 +24,20 @@
 //!     identity_keypair: Some(identity_provider.identity().to_owned()),
 //! }));
 //!
-//! let (event_tx, mut event_rx) = mpsc::channel(32);
-//! let (response_tx, response_rx) = mpsc::channel(32);
+//! let (notification_tx, mut notification_rx) = mpsc::channel(32);
+//! let (request_tx, mut request_rx) = mpsc::channel(32);
 //!
-//! let mut client = RemoteClient::new(
+//! // Connect — spawns event loop internally, returns handle
+//! let client = RemoteClient::connect(
 //!     identity_provider,
 //!     session_store,
-//!     event_tx,
-//!     response_rx,
 //!     proxy_client,
+//!     notification_tx,
+//!     request_tx,
 //! ).await?;
 //!
 //! // Pair with rendezvous code
-//! client.pair_with_handshake("ABCDEF123").await?;
+//! client.pair_with_handshake("ABCDEF123".to_string(), false).await?;
 //!
 //! let query = ap_client::CredentialQuery::Domain("example.com".to_string());
 //! let credential = client.request_credential(&query).await?;
@@ -45,7 +47,8 @@
 //!
 //! ```ignore
 //! use ap_client::{
-//!     DefaultProxyClient, IdentityProvider, UserClient, UserClientEvent, UserClientResponse,
+//!     DefaultProxyClient, IdentityProvider, UserClient, UserClientNotification,
+//!     UserClientRequest,
 //! };
 //! use ap_proxy_client::ProxyClientConfig;
 //! use tokio::sync::mpsc;
@@ -56,17 +59,22 @@
 //!     identity_keypair: Some(identity_provider.identity().to_owned()),
 //! }));
 //!
-//! let (event_tx, event_rx) = mpsc::channel(32);
-//! let (response_tx, response_rx) = mpsc::channel(32);
+//! let (notification_tx, mut notification_rx) = mpsc::channel(32);
+//! let (request_tx, mut request_rx) = mpsc::channel(32);
 //!
-//! let mut client = UserClient::listen(
+//! // Connect — spawns event loop internally, returns handle
+//! let client = UserClient::connect(
 //!     identity_provider,
 //!     session_store,
 //!     proxy_client,
+//!     notification_tx,
+//!     request_tx,
+//!     None, // audit_log
 //! ).await?;
 //!
-//! // Enable PSK mode or rendezvous mode
-//! client.enable_psk(event_tx, response_rx).await?;
+//! // Already listening. Just use it.
+//! let token = client.get_psk_token(None).await?;
+//! // Or: let code = client.get_rendezvous_token(None).await?;
 //! ```
 
 /// Error types
@@ -79,9 +87,15 @@ pub mod traits;
 pub mod types;
 
 mod clients;
+pub(crate) mod compat;
 
-pub use clients::remote_client::RemoteClient;
-pub use clients::user_client::{UserClient, UserClientEvent, UserClientResponse};
+pub use clients::remote_client::{
+    RemoteClient, RemoteClientFingerprintReply, RemoteClientNotification, RemoteClientRequest,
+};
+pub use clients::user_client::{
+    CredentialRequestReply, FingerprintVerificationReply, UserClient, UserClientNotification,
+    UserClientRequest,
+};
 pub use error::RemoteClientError;
 #[cfg(feature = "native-websocket")]
 pub use proxy::DefaultProxyClient;
@@ -90,9 +104,7 @@ pub use traits::{
     AuditConnectionType, AuditEvent, AuditLog, CredentialFieldSet, IdentityProvider, NoOpAuditLog,
     SessionStore,
 };
-pub use types::{
-    ConnectionMode, CredentialData, CredentialQuery, RemoteClientEvent, RemoteClientResponse,
-};
+pub use types::{ConnectionMode, CredentialData, CredentialQuery, PskId};
 
 // Re-export ap-proxy-protocol types
 pub use ap_proxy_protocol::{IdentityFingerprint, RendezvousCode};

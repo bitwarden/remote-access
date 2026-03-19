@@ -1,10 +1,10 @@
 use pyo3::prelude::*;
 use tokio::sync::mpsc;
 
-use bw_proxy_client::ProxyClientConfig;
-use bw_rat_client::{
+use ap_proxy_client::ProxyClientConfig;
+use ap_client::{
     DefaultProxyClient, IdentityFingerprint, IdentityProvider, Psk, RemoteClient,
-    RemoteClientEvent, SessionStore,
+    RemoteClientNotification, RemoteClientRequest, SessionStore,
 };
 
 use crate::storage::{FileIdentityStorage, FileSessionCache};
@@ -23,9 +23,10 @@ use crate::types::{PyCredentialData, RemoteAccessError};
 pub struct PyRemoteClient {
     runtime: tokio::runtime::Runtime,
     inner: Option<RemoteClient>,
-    event_rx: Option<mpsc::Receiver<RemoteClientEvent>>,
+    notification_rx: Option<mpsc::Receiver<RemoteClientNotification>>,
     proxy_url: String,
     identity_name: String,
+    ready: bool,
 }
 
 #[pymethods]
@@ -53,9 +54,10 @@ impl PyRemoteClient {
         Ok(Self {
             runtime,
             inner: None,
-            event_rx: None,
+            notification_rx: None,
             proxy_url: proxy_url.to_string(),
             identity_name: identity_name.to_string(),
+            ready: false,
         })
     }
 
@@ -81,24 +83,24 @@ impl PyRemoteClient {
         let session_store = FileSessionCache::load_or_create(&self.identity_name)
             .map_err(|e| RemoteAccessError::new_err(e.to_string()))?;
 
-        let (event_tx, event_rx) = mpsc::channel(32);
-        let (_response_tx, response_rx) = mpsc::channel(32);
+        let (notification_tx, notification_rx) = mpsc::channel(32);
+        let (request_tx, _request_rx) = mpsc::channel::<RemoteClientRequest>(32);
 
         let proxy_client = Box::new(DefaultProxyClient::new(ProxyClientConfig {
             proxy_url: self.proxy_url.clone(),
             identity_keypair: Some(self.runtime.block_on(identity.identity())),
         }));
 
-        // Create the client (connects to proxy)
-        let mut client = py
+        // Create the client (connects to proxy, spawns event loop)
+        let client = py
             .allow_threads(|| {
                 self.runtime.block_on(async {
-                    RemoteClient::new(
+                    RemoteClient::connect(
                         Box::new(identity),
                         Box::new(session_store),
-                        event_tx,
-                        response_rx,
                         proxy_client,
+                        notification_tx,
+                        request_tx,
                     )
                     .await
                 })
@@ -129,7 +131,7 @@ impl PyRemoteClient {
                         } else {
                             // Rendezvous code — no fingerprint verification (headless)
                             let fp = client
-                                .pair_with_handshake(token_str, false)
+                                .pair_with_handshake(token_str.to_string(), false)
                                 .await
                                 .map_err(|e| e.to_string())?;
                             // Return the fingerprint hex for informational purposes
@@ -144,7 +146,10 @@ impl PyRemoteClient {
                         Ok(None)
                     } else {
                         // Auto-select cached session if exactly one exists
-                        let sessions = client.session_store().list_sessions().await;
+                        let sessions = client
+                            .list_sessions()
+                            .await
+                            .map_err(|e| e.to_string())?;
                         if sessions.len() == 1 {
                             let (fingerprint, _, _, _) = &sessions[0];
                             client
@@ -169,7 +174,8 @@ impl PyRemoteClient {
             .map_err(|e: String| RemoteAccessError::new_err(e))?;
 
         self.inner = Some(client);
-        self.event_rx = Some(event_rx);
+        self.notification_rx = Some(notification_rx);
+        self.ready = true;
 
         Ok(handshake_fingerprint)
     }
@@ -188,14 +194,15 @@ impl PyRemoteClient {
     ) -> PyResult<PyCredentialData> {
         let client = self
             .inner
-            .as_mut()
+            .as_ref()
             .ok_or_else(|| RemoteAccessError::new_err("Not connected — call connect() first"))?;
 
-        let domain = domain.to_string();
+        let query =
+            ap_client::CredentialQuery::Domain(domain.to_string());
         let cred = py
             .allow_threads(|| {
                 self.runtime
-                    .block_on(async { client.request_credential(&domain).await })
+                    .block_on(async { client.request_credential(&query).await })
             })
             .map_err(|e| RemoteAccessError::new_err(e.to_string()))?;
 
@@ -203,22 +210,17 @@ impl PyRemoteClient {
     }
 
     /// Close the connection and release resources.
-    pub fn close(&mut self, py: Python<'_>) -> PyResult<()> {
-        if let Some(mut client) = self.inner.take() {
-            py.allow_threads(|| {
-                self.runtime.block_on(async {
-                    client.close().await;
-                });
-            });
-        }
-        self.event_rx = None;
+    pub fn close(&mut self, _py: Python<'_>) -> PyResult<()> {
+        self.inner.take(); // Drop the handle — shuts down event loop
+        self.notification_rx = None;
+        self.ready = false;
         Ok(())
     }
 
     /// Whether the secure channel is established and ready.
     #[getter]
     fn is_ready(&self) -> bool {
-        self.inner.as_ref().is_some_and(|c| c.is_ready())
+        self.ready
     }
 
     /// Clear all cached sessions for this identity.

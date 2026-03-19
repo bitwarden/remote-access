@@ -8,8 +8,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ap_client::{
-    IdentityProvider, ProxyClient, Psk, RemoteClient, RemoteClientError, RemoteClientEvent,
-    RemoteClientResponse, SessionStore, UserClient, UserClientEvent, UserClientResponse,
+    FingerprintVerificationReply, IdentityProvider, ProxyClient, Psk, RemoteClient,
+    RemoteClientError, RemoteClientFingerprintReply, RemoteClientNotification, RemoteClientRequest,
+    SessionStore, UserClient, UserClientNotification, UserClientRequest,
 };
 use ap_noise::{MultiDeviceTransport, PersistentTransportState};
 use ap_proxy_client::IncomingMessage;
@@ -355,301 +356,251 @@ fn create_mock_proxy_pair(
 // Test 1: PSK Pairing
 // ============================================================================
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn test_psk_pairing() {
-    use tokio::task::LocalSet;
+    // Create identities
+    let user_identity = MockIdentityProvider::new();
+    let remote_identity = MockIdentityProvider::new();
 
-    let local = LocalSet::new();
-    local
-        .run_until(async {
-            // Create identities
-            let user_identity = MockIdentityProvider::new();
-            let remote_identity = MockIdentityProvider::new();
+    let user_fingerprint = user_identity.fingerprint().await;
+    let remote_fingerprint = remote_identity.fingerprint().await;
 
-            let user_fingerprint = user_identity.fingerprint().await;
-            let remote_fingerprint = remote_identity.fingerprint().await;
+    // Create mock proxy pair
+    let (user_proxy, remote_proxy) = create_mock_proxy_pair(user_fingerprint, remote_fingerprint);
 
-            // Create mock proxy pair
-            let (user_proxy, remote_proxy) =
-                create_mock_proxy_pair(user_fingerprint, remote_fingerprint);
+    // Create session stores
+    let user_session_store = MockSessionStore::new();
+    let remote_session_store = MockSessionStore::new();
 
-            // Create session stores
-            let user_session_store = MockSessionStore::new();
-            let remote_session_store = MockSessionStore::new();
+    // Create notification and request channels for UserClient
+    let (notification_tx, mut notification_rx) = mpsc::channel::<UserClientNotification>(32);
+    let (request_tx, _request_rx) = mpsc::channel::<UserClientRequest>(32);
 
-            // Create event and response channels for UserClient
-            let (user_event_tx, mut user_event_rx) = mpsc::channel::<UserClientEvent>(32);
-            let (_user_response_tx, user_response_rx) = mpsc::channel::<UserClientResponse>(32);
+    // Create notification and request channels for RemoteClient
+    let (remote_notification_tx, mut remote_notification_rx) =
+        mpsc::channel::<RemoteClientNotification>(32);
+    let (remote_request_tx, _remote_request_rx) = mpsc::channel::<RemoteClientRequest>(32);
 
-            // Create event and response channels for RemoteClient
-            let (remote_event_tx, mut remote_event_rx) = mpsc::channel::<RemoteClientEvent>(32);
-            let (_remote_response_tx, remote_response_rx) =
-                mpsc::channel::<RemoteClientResponse>(32);
+    // Create and connect UserClient (already listening)
+    let user_client = UserClient::connect(
+        Box::new(user_identity),
+        Box::new(user_session_store),
+        Box::new(user_proxy),
+        notification_tx,
+        request_tx,
+        None,
+    )
+    .await
+    .expect("UserClient should connect");
 
-            // Create and connect UserClient
-            let mut user_client = UserClient::listen(
-                Box::new(user_identity),
-                Box::new(user_session_store),
-                Box::new(user_proxy),
-            )
+    // Get PSK token
+    let token = user_client
+        .get_psk_token(None)
+        .await
+        .expect("Should generate PSK token");
+
+    // Parse token: format is <psk_hex>_<fingerprint_hex>
+    let parts: Vec<&str> = token.split('_').collect();
+    assert_eq!(parts.len(), 2, "Token should have format psk_fingerprint");
+    let psk = Psk::from_hex(parts[0]).expect("Should parse PSK");
+    let fp_bytes = hex::decode(parts[1]).expect("Should decode fingerprint hex");
+    let mut fp_array = [0u8; 32];
+    fp_array.copy_from_slice(&fp_bytes);
+    let fingerprint = IdentityFingerprint(fp_array);
+
+    // Create and connect RemoteClient
+    let remote_client = RemoteClient::connect(
+        Box::new(remote_identity),
+        Box::new(remote_session_store),
+        Box::new(remote_proxy),
+        remote_notification_tx,
+        remote_request_tx,
+    )
+    .await
+    .expect("RemoteClient should connect");
+
+    // Pair with PSK
+    timeout(
+        Duration::from_secs(10),
+        remote_client.pair_with_psk(psk, fingerprint),
+    )
+    .await
+    .expect("Pairing should not timeout")
+    .expect("Pairing should succeed");
+
+    // Verify HandshakeComplete events
+    let mut remote_handshake_complete = false;
+    let mut user_handshake_complete = false;
+
+    // Check remote notifications
+    while let Ok(Some(event)) =
+        timeout(Duration::from_millis(100), remote_notification_rx.recv()).await
+    {
+        if matches!(event, RemoteClientNotification::HandshakeComplete) {
+            remote_handshake_complete = true;
+        }
+    }
+
+    // Check user notifications
+    while let Ok(Some(event)) = timeout(Duration::from_millis(100), notification_rx.recv()).await {
+        if matches!(event, UserClientNotification::HandshakeComplete {}) {
+            user_handshake_complete = true;
+        }
+    }
+
+    assert!(
+        remote_handshake_complete,
+        "RemoteClient should emit HandshakeComplete"
+    );
+    assert!(
+        user_handshake_complete,
+        "UserClient should emit HandshakeComplete"
+    );
+
+    // Verify session is cached
+    assert!(
+        remote_client
+            .has_session(fingerprint)
             .await
-            .expect("UserClient should connect");
+            .expect("has_session should not fail"),
+        "Session should be cached in RemoteClient's session store"
+    );
 
-            // Spawn UserClient's enable_psk in a local task
-            let user_task = tokio::task::spawn_local(async move {
-                user_client
-                    .enable_psk(user_event_tx, user_response_rx)
-                    .await
-            });
-
-            // Wait for PskTokenGenerated event
-            let (psk, fingerprint) = timeout(Duration::from_secs(5), async {
-                loop {
-                    if let Some(UserClientEvent::PskTokenGenerated { token }) =
-                        user_event_rx.recv().await
-                    {
-                        // Parse token: format is <psk_hex>_<fingerprint_hex>
-                        let parts: Vec<&str> = token.split('_').collect();
-                        assert_eq!(parts.len(), 2, "Token should have format psk_fingerprint");
-
-                        let psk = Psk::from_hex(parts[0]).expect("Should parse PSK");
-                        let fp_bytes =
-                            hex::decode(parts[1]).expect("Should decode fingerprint hex");
-                        let mut fp_array = [0u8; 32];
-                        fp_array.copy_from_slice(&fp_bytes);
-                        let fingerprint = IdentityFingerprint(fp_array);
-
-                        return (psk, fingerprint);
-                    }
-                }
-            })
-            .await
-            .expect("Should receive PskTokenGenerated event");
-
-            // Create and connect RemoteClient
-            let mut remote_client = RemoteClient::new(
-                Box::new(remote_identity),
-                Box::new(remote_session_store),
-                remote_event_tx.clone(),
-                remote_response_rx,
-                Box::new(remote_proxy),
-            )
-            .await
-            .expect("RemoteClient should connect");
-
-            // Pair with PSK
-            timeout(
-                Duration::from_secs(10),
-                remote_client.pair_with_psk(psk, fingerprint),
-            )
-            .await
-            .expect("Pairing should not timeout")
-            .expect("Pairing should succeed");
-
-            // Verify HandshakeComplete events
-            let mut remote_handshake_complete = false;
-            let mut user_handshake_complete = false;
-
-            // Check remote events
-            while let Ok(Some(event)) =
-                timeout(Duration::from_millis(100), remote_event_rx.recv()).await
-            {
-                if matches!(event, RemoteClientEvent::HandshakeComplete) {
-                    remote_handshake_complete = true;
-                }
-            }
-
-            // Check user events
-            while let Ok(Some(event)) =
-                timeout(Duration::from_millis(100), user_event_rx.recv()).await
-            {
-                if matches!(event, UserClientEvent::HandshakeComplete {}) {
-                    user_handshake_complete = true;
-                }
-            }
-
-            assert!(
-                remote_handshake_complete,
-                "RemoteClient should emit HandshakeComplete"
-            );
-            assert!(
-                user_handshake_complete,
-                "UserClient should emit HandshakeComplete"
-            );
-
-            // Verify remote_client is ready
-            assert!(remote_client.is_ready(), "RemoteClient should be ready");
-
-            // Verify session is cached
-            assert!(
-                remote_client
-                    .session_store()
-                    .has_session(&fingerprint)
-                    .await,
-                "Session should be cached in RemoteClient's session store"
-            );
-
-            // Cleanup
-            remote_client.close().await;
-            user_task.abort();
-        })
-        .await;
+    // Cleanup
+    drop(remote_client);
+    drop(user_client);
 }
 
 /// Test rendezvous pairing with user-side fingerprint verification (remote side does NOT verify)
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn test_fingerprint_pairing() {
-    use tokio::task::LocalSet;
+    // Create identities
+    let user_identity = MockIdentityProvider::new();
+    let remote_identity = MockIdentityProvider::new();
 
-    let local = LocalSet::new();
-    local
-        .run_until(async {
-            // Create identities
-            let user_identity = MockIdentityProvider::new();
-            let remote_identity = MockIdentityProvider::new();
+    let user_fingerprint = user_identity.fingerprint().await;
+    let remote_fingerprint = remote_identity.fingerprint().await;
 
-            let user_fingerprint = user_identity.fingerprint().await;
-            let remote_fingerprint = remote_identity.fingerprint().await;
+    // Create mock proxy pair
+    let (mut user_proxy, mut remote_proxy) =
+        create_mock_proxy_pair(user_fingerprint, remote_fingerprint);
 
-            // Create mock proxy pair
-            let (mut user_proxy, mut remote_proxy) =
-                create_mock_proxy_pair(user_fingerprint, remote_fingerprint);
+    // Set up rendezvous code
+    let rendezvous_code = RendezvousCode::from_string("ABCDEF123".to_string());
+    user_proxy.set_rendezvous_code(rendezvous_code.clone());
+    remote_proxy.set_peer_fingerprint(user_fingerprint);
 
-            // Set up rendezvous code
-            let rendezvous_code = RendezvousCode::from_string("ABCDEF123".to_string());
-            user_proxy.set_rendezvous_code(rendezvous_code.clone());
-            remote_proxy.set_peer_fingerprint(user_fingerprint);
+    // Create session stores
+    let user_session_store = MockSessionStore::new();
+    let remote_session_store = MockSessionStore::new();
 
-            // Create session stores
-            let user_session_store = MockSessionStore::new();
-            let remote_session_store = MockSessionStore::new();
+    // Create notification and request channels for UserClient
+    let (notification_tx, notification_rx) = mpsc::channel::<UserClientNotification>(32);
+    let (request_tx, mut request_rx) = mpsc::channel::<UserClientRequest>(32);
 
-            // Create event and response channels for UserClient
-            let (user_event_tx, mut user_event_rx) = mpsc::channel::<UserClientEvent>(32);
-            let (user_response_tx, user_response_rx) = mpsc::channel::<UserClientResponse>(32);
+    // Create notification and request channels for RemoteClient
+    let (remote_notification_tx, mut remote_notification_rx) =
+        mpsc::channel::<RemoteClientNotification>(32);
+    let (remote_request_tx, _remote_request_rx) = mpsc::channel::<RemoteClientRequest>(32);
 
-            // Create event and response channels for RemoteClient
-            let (remote_event_tx, mut remote_event_rx) = mpsc::channel::<RemoteClientEvent>(32);
-            let (_remote_response_tx, remote_response_rx) =
-                mpsc::channel::<RemoteClientResponse>(32);
+    // Create and connect UserClient (already listening)
+    let user_client = UserClient::connect(
+        Box::new(user_identity),
+        Box::new(user_session_store),
+        Box::new(user_proxy),
+        notification_tx,
+        request_tx,
+        None,
+    )
+    .await
+    .expect("UserClient should connect");
 
-            // Create and connect UserClient
-            let mut user_client = UserClient::listen(
-                Box::new(user_identity),
-                Box::new(user_session_store),
-                Box::new(user_proxy),
-            )
-            .await
-            .expect("UserClient should connect");
+    // Get rendezvous token
+    let code = user_client
+        .get_rendezvous_token(None)
+        .await
+        .expect("Should get rendezvous token");
+    let code = code.as_str().to_string();
 
-            // Spawn UserClient's enable_rendezvous in a local task
-            let user_task = tokio::task::spawn_local(async move {
-                user_client
-                    .enable_rendezvous(user_event_tx, user_response_rx)
-                    .await
-            });
+    // Create and connect RemoteClient
+    let remote_client = RemoteClient::connect(
+        Box::new(remote_identity),
+        Box::new(remote_session_store),
+        Box::new(remote_proxy),
+        remote_notification_tx,
+        remote_request_tx,
+    )
+    .await
+    .expect("RemoteClient should connect");
 
-            // Wait for RendezvousCodeGenerated event
-            let code = timeout(Duration::from_secs(5), async {
-                loop {
-                    if let Some(UserClientEvent::RendezvousCodeGenerated { code }) =
-                        user_event_rx.recv().await
-                    {
-                        return code;
-                    }
-                }
-            })
-            .await
-            .expect("Should receive RendezvousCodeGenerated event");
-
-            // Create and connect RemoteClient
-            let mut remote_client = RemoteClient::new(
-                Box::new(remote_identity),
-                Box::new(remote_session_store),
-                remote_event_tx.clone(),
-                remote_response_rx,
-                Box::new(remote_proxy),
-            )
-            .await
-            .expect("RemoteClient should connect");
-
-            // Spawn task to auto-approve fingerprint on the USER side (listener must verify)
-            let user_approval_task = tokio::task::spawn_local(async move {
-                while let Some(event) = user_event_rx.recv().await {
-                    if let UserClientEvent::HandshakeFingerprint { fingerprint: _, .. } = event {
-                        // Auto-approve the fingerprint on the user/listener side
-                        let _ = user_response_tx
-                            .send(UserClientResponse::VerifyFingerprint {
-                                approved: true,
-                                name: None,
-                            })
-                            .await;
-                        break;
-                    }
-                }
-                user_event_rx
-            });
-
-            // Pair with handshake using rendezvous code (verify_fingerprint=false on remote side)
-            let pair_result = timeout(
-                Duration::from_secs(10),
-                remote_client.pair_with_handshake(&code, false),
-            )
-            .await
-            .expect("Pairing should not timeout");
-
-            // The pairing should succeed
-            let paired_fingerprint = pair_result.expect("Pairing should succeed");
-
-            // Verify remote_client is ready
-            assert!(remote_client.is_ready(), "RemoteClient should be ready");
-
-            // Verify session is cached
-            assert!(
-                remote_client
-                    .session_store()
-                    .has_session(&paired_fingerprint)
-                    .await,
-                "Session should be cached in RemoteClient's session store"
-            );
-
-            // Check that HandshakeFingerprint was emitted on remote side (informational)
-            let mut got_fingerprint = false;
-            while let Ok(Some(event)) =
-                timeout(Duration::from_millis(100), remote_event_rx.recv()).await
-            {
-                if matches!(event, RemoteClientEvent::HandshakeFingerprint { .. }) {
-                    got_fingerprint = true;
-                }
+    // Spawn task to auto-approve fingerprint on the USER side (listener must verify)
+    let user_approval_task = tokio::spawn(async move {
+        while let Some(request) = request_rx.recv().await {
+            if let UserClientRequest::VerifyFingerprint { reply, .. } = request {
+                // Auto-approve the fingerprint on the user/listener side
+                let _ = reply.send(FingerprintVerificationReply {
+                    approved: true,
+                    name: None,
+                });
+                break;
             }
-            assert!(
-                got_fingerprint,
-                "RemoteClient should emit HandshakeFingerprint (informational)"
-            );
+        }
+        notification_rx
+    });
 
-            // Check that FingerprintVerified was emitted on the user side
-            let mut user_event_rx = user_approval_task
-                .await
-                .expect("User approval task should complete");
+    // Pair with handshake using rendezvous code (verify_fingerprint=false on remote side)
+    let pair_result = timeout(
+        Duration::from_secs(10),
+        remote_client.pair_with_handshake(code, false),
+    )
+    .await
+    .expect("Pairing should not timeout");
 
-            let mut user_fingerprint_verified = false;
-            while let Ok(Some(event)) =
-                timeout(Duration::from_millis(100), user_event_rx.recv()).await
-            {
-                if matches!(event, UserClientEvent::FingerprintVerified {}) {
-                    user_fingerprint_verified = true;
-                }
-            }
-            assert!(
-                user_fingerprint_verified,
-                "UserClient should emit FingerprintVerified"
-            );
+    // The pairing should succeed
+    let paired_fingerprint = pair_result.expect("Pairing should succeed");
 
-            // Cleanup
-            remote_client.close().await;
-            user_task.abort();
-        })
-        .await;
+    // Verify session is cached
+    assert!(
+        remote_client
+            .has_session(paired_fingerprint)
+            .await
+            .expect("has_session should not fail"),
+        "Session should be cached in RemoteClient's session store"
+    );
+
+    // Check that HandshakeFingerprint was emitted on remote side (informational)
+    let mut got_fingerprint = false;
+    while let Ok(Some(event)) =
+        timeout(Duration::from_millis(100), remote_notification_rx.recv()).await
+    {
+        if matches!(event, RemoteClientNotification::HandshakeFingerprint { .. }) {
+            got_fingerprint = true;
+        }
+    }
+    assert!(
+        got_fingerprint,
+        "RemoteClient should emit HandshakeFingerprint (informational)"
+    );
+
+    // Check that FingerprintVerified was emitted on the user side
+    let mut notification_rx = user_approval_task
+        .await
+        .expect("User approval task should complete");
+
+    let mut user_fingerprint_verified = false;
+    while let Ok(Some(event)) = timeout(Duration::from_millis(100), notification_rx.recv()).await {
+        if matches!(event, UserClientNotification::FingerprintVerified {}) {
+            user_fingerprint_verified = true;
+        }
+    }
+    assert!(
+        user_fingerprint_verified,
+        "UserClient should emit FingerprintVerified"
+    );
+
+    // Cleanup
+    drop(remote_client);
+    drop(user_client);
 }
 
 // ============================================================================
@@ -743,64 +694,61 @@ impl ProxyClient for ReconnectingMockProxyClient {
 /// the expected event sequence and connect-call count.
 ///
 /// Uses `tokio::time::pause()` so backoff delays resolve instantly.
-async fn run_reconnection_test(fail_count: u32) -> (Vec<UserClientEvent>, u32) {
-    use tokio::task::LocalSet;
-
+async fn run_reconnection_test(fail_count: u32) -> (Vec<UserClientNotification>, u32) {
     // Pause time so exponential backoff sleeps resolve instantly
     tokio::time::pause();
 
-    let local = LocalSet::new();
-    local
-        .run_until(async {
-            let identity = MockIdentityProvider::new();
-            let session_store = MockSessionStore::new();
+    let identity = MockIdentityProvider::new();
+    let session_store = MockSessionStore::new();
 
-            let proxy = ReconnectingMockProxyClient::new(fail_count, Duration::from_millis(10));
-            let connect_calls = Arc::clone(&proxy.connect_calls);
+    let proxy = ReconnectingMockProxyClient::new(fail_count, Duration::from_millis(10));
+    let connect_calls = Arc::clone(&proxy.connect_calls);
 
-            let (event_tx, mut event_rx) = mpsc::channel::<UserClientEvent>(32);
-            let (_response_tx, response_rx) = mpsc::channel::<UserClientResponse>(32);
+    let (notification_tx, mut event_rx) = mpsc::channel::<UserClientNotification>(32);
+    let (request_tx, _request_rx) = mpsc::channel::<UserClientRequest>(32);
 
-            let mut client =
-                UserClient::listen(Box::new(identity), Box::new(session_store), Box::new(proxy))
-                    .await
-                    .expect("Initial connect should succeed");
+    let client = UserClient::connect(
+        Box::new(identity),
+        Box::new(session_store),
+        Box::new(proxy),
+        notification_tx,
+        request_tx,
+        None,
+    )
+    .await
+    .expect("Initial connect should succeed");
 
-            // Run event loop in background
-            let client_task = tokio::task::spawn_local(async move {
-                client.listen_cached_only(event_tx, response_rx).await
-            });
-
-            // Collect events with a timeout
-            let events = timeout(Duration::from_secs(60), async {
-                let mut collected = Vec::new();
-                while let Some(event) = event_rx.recv().await {
-                    match &event {
-                        UserClientEvent::Listening {} => {}
-                        UserClientEvent::ClientDisconnected {}
-                        | UserClientEvent::Reconnecting { .. }
-                        | UserClientEvent::Reconnected {} => {
-                            collected.push(event.clone());
-                        }
-                        other => {
-                            panic!("Unexpected event during reconnection test: {:?}", other);
-                        }
-                    }
-                    // Stop after seeing Reconnected
-                    if matches!(collected.last(), Some(UserClientEvent::Reconnected {})) {
-                        break;
-                    }
+    // Collect events with a timeout
+    let events = timeout(Duration::from_secs(60), async {
+        let mut collected = Vec::new();
+        while let Some(event) = event_rx.recv().await {
+            match &event {
+                UserClientNotification::Listening {} => {}
+                UserClientNotification::ClientDisconnected {}
+                | UserClientNotification::Reconnecting { .. }
+                | UserClientNotification::Reconnected {} => {
+                    collected.push(event.clone());
                 }
-                collected
-            })
-            .await
-            .expect("Should receive reconnection events within timeout");
+                other => {
+                    panic!("Unexpected event during reconnection test: {:?}", other);
+                }
+            }
+            // Stop after seeing Reconnected
+            if matches!(
+                collected.last(),
+                Some(UserClientNotification::Reconnected {})
+            ) {
+                break;
+            }
+        }
+        collected
+    })
+    .await
+    .expect("Should receive reconnection events within timeout");
 
-            let calls = connect_calls.load(Ordering::SeqCst);
-            client_task.abort();
-            (events, calls)
-        })
-        .await
+    let calls = connect_calls.load(Ordering::SeqCst);
+    drop(client);
+    (events, calls)
 }
 
 /// Test that UserClient reconnects immediately when proxy drops and first retry succeeds.
@@ -816,12 +764,12 @@ async fn test_user_client_reconnects_immediately() {
         "Expected [Disconnected, Reconnected], got: {events:?}"
     );
     assert!(
-        matches!(events[0], UserClientEvent::ClientDisconnected {}),
+        matches!(events[0], UserClientNotification::ClientDisconnected {}),
         "First event should be ClientDisconnected, got {:?}",
         events[0]
     );
     assert!(
-        matches!(events[1], UserClientEvent::Reconnected {}),
+        matches!(events[1], UserClientNotification::Reconnected {}),
         "Second event should be Reconnected, got {:?}",
         events[1]
     );
@@ -845,16 +793,19 @@ async fn test_user_client_reconnects_after_failures() {
         4,
         "Expected [Disconnected, Reconnecting(1), Reconnecting(2), Reconnected], got: {events:?}"
     );
-    assert!(matches!(events[0], UserClientEvent::ClientDisconnected {}));
+    assert!(matches!(
+        events[0],
+        UserClientNotification::ClientDisconnected {}
+    ));
     assert!(matches!(
         events[1],
-        UserClientEvent::Reconnecting { attempt: 1 }
+        UserClientNotification::Reconnecting { attempt: 1 }
     ));
     assert!(matches!(
         events[2],
-        UserClientEvent::Reconnecting { attempt: 2 }
+        UserClientNotification::Reconnecting { attempt: 2 }
     ));
-    assert!(matches!(events[3], UserClientEvent::Reconnected {}));
+    assert!(matches!(events[3], UserClientNotification::Reconnected {}));
 
     // 1 initial + 3 reconnect attempts (2 fail + 1 success)
     assert_eq!(
@@ -864,172 +815,258 @@ async fn test_user_client_reconnects_after_failures() {
 }
 
 /// Test rendezvous pairing with fingerprint verification on BOTH sides
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn test_fingerprint_pairing_both_sides_verify() {
-    use tokio::task::LocalSet;
+    // Create identities
+    let user_identity = MockIdentityProvider::new();
+    let remote_identity = MockIdentityProvider::new();
 
-    let local = LocalSet::new();
-    local
-        .run_until(async {
-            // Create identities
-            let user_identity = MockIdentityProvider::new();
-            let remote_identity = MockIdentityProvider::new();
+    let user_fingerprint = user_identity.fingerprint().await;
+    let remote_fingerprint = remote_identity.fingerprint().await;
 
-            let user_fingerprint = user_identity.fingerprint().await;
-            let remote_fingerprint = remote_identity.fingerprint().await;
+    // Create mock proxy pair
+    let (mut user_proxy, mut remote_proxy) =
+        create_mock_proxy_pair(user_fingerprint, remote_fingerprint);
 
-            // Create mock proxy pair
-            let (mut user_proxy, mut remote_proxy) =
-                create_mock_proxy_pair(user_fingerprint, remote_fingerprint);
+    // Set up rendezvous code
+    let rendezvous_code = RendezvousCode::from_string("XYZW56789".to_string());
+    user_proxy.set_rendezvous_code(rendezvous_code.clone());
+    remote_proxy.set_peer_fingerprint(user_fingerprint);
 
-            // Set up rendezvous code
-            let rendezvous_code = RendezvousCode::from_string("XYZW56789".to_string());
-            user_proxy.set_rendezvous_code(rendezvous_code.clone());
-            remote_proxy.set_peer_fingerprint(user_fingerprint);
+    // Create session stores
+    let user_session_store = MockSessionStore::new();
+    let remote_session_store = MockSessionStore::new();
 
-            // Create session stores
-            let user_session_store = MockSessionStore::new();
-            let remote_session_store = MockSessionStore::new();
+    // Create notification and request channels for UserClient
+    let (notification_tx, notification_rx) = mpsc::channel::<UserClientNotification>(32);
+    let (request_tx, mut request_rx) = mpsc::channel::<UserClientRequest>(32);
 
-            // Create event and response channels for UserClient
-            let (user_event_tx, mut user_event_rx) = mpsc::channel::<UserClientEvent>(32);
-            let (user_response_tx, user_response_rx) = mpsc::channel::<UserClientResponse>(32);
+    // Create notification and request channels for RemoteClient
+    let (remote_notification_tx, remote_notification_rx) =
+        mpsc::channel::<RemoteClientNotification>(32);
+    let (remote_request_tx, mut remote_request_rx) = mpsc::channel::<RemoteClientRequest>(32);
 
-            // Create event and response channels for RemoteClient
-            let (remote_event_tx, mut remote_event_rx) = mpsc::channel::<RemoteClientEvent>(32);
-            let (remote_response_tx, remote_response_rx) =
-                mpsc::channel::<RemoteClientResponse>(32);
+    // Create and connect UserClient (already listening)
+    let user_client = UserClient::connect(
+        Box::new(user_identity),
+        Box::new(user_session_store),
+        Box::new(user_proxy),
+        notification_tx,
+        request_tx,
+        None,
+    )
+    .await
+    .expect("UserClient should connect");
 
-            // Create and connect UserClient
-            let mut user_client = UserClient::listen(
-                Box::new(user_identity),
-                Box::new(user_session_store),
-                Box::new(user_proxy),
-            )
-            .await
-            .expect("UserClient should connect");
+    // Get rendezvous token
+    let code = user_client
+        .get_rendezvous_token(None)
+        .await
+        .expect("Should get rendezvous token");
+    let code = code.as_str().to_string();
 
-            // Spawn UserClient's enable_rendezvous in a local task
-            let user_task = tokio::task::spawn_local(async move {
-                user_client
-                    .enable_rendezvous(user_event_tx, user_response_rx)
-                    .await
-            });
+    // Create and connect RemoteClient
+    let remote_client = RemoteClient::connect(
+        Box::new(remote_identity),
+        Box::new(remote_session_store),
+        Box::new(remote_proxy),
+        remote_notification_tx,
+        remote_request_tx,
+    )
+    .await
+    .expect("RemoteClient should connect");
 
-            // Wait for RendezvousCodeGenerated event
-            let code = timeout(Duration::from_secs(5), async {
-                loop {
-                    if let Some(UserClientEvent::RendezvousCodeGenerated { code }) =
-                        user_event_rx.recv().await
-                    {
-                        return code;
-                    }
-                }
-            })
-            .await
-            .expect("Should receive RendezvousCodeGenerated event");
-
-            // Create and connect RemoteClient
-            let mut remote_client = RemoteClient::new(
-                Box::new(remote_identity),
-                Box::new(remote_session_store),
-                remote_event_tx.clone(),
-                remote_response_rx,
-                Box::new(remote_proxy),
-            )
-            .await
-            .expect("RemoteClient should connect");
-
-            // Spawn task to auto-approve fingerprint on the USER side
-            let user_approval_task = tokio::task::spawn_local(async move {
-                while let Some(event) = user_event_rx.recv().await {
-                    if let UserClientEvent::HandshakeFingerprint { fingerprint: _, .. } = event {
-                        let _ = user_response_tx
-                            .send(UserClientResponse::VerifyFingerprint {
-                                approved: true,
-                                name: None,
-                            })
-                            .await;
-                        break;
-                    }
-                }
-                user_event_rx
-            });
-
-            // Spawn task to auto-approve fingerprint on the REMOTE side
-            let response_tx_clone = remote_response_tx.clone();
-            let remote_approval_task = tokio::task::spawn_local(async move {
-                while let Some(event) = remote_event_rx.recv().await {
-                    if let RemoteClientEvent::HandshakeFingerprint { fingerprint: _, .. } = event {
-                        let _ = response_tx_clone
-                            .send(RemoteClientResponse::VerifyFingerprint { approved: true })
-                            .await;
-                        break;
-                    }
-                }
-                remote_event_rx
-            });
-
-            // Pair with handshake using rendezvous code (verify_fingerprint=true on remote side)
-            let pair_result = timeout(
-                Duration::from_secs(10),
-                remote_client.pair_with_handshake(&code, true),
-            )
-            .await
-            .expect("Pairing should not timeout");
-
-            // The pairing should succeed
-            let paired_fingerprint = pair_result.expect("Pairing should succeed");
-
-            // Verify remote_client is ready
-            assert!(remote_client.is_ready(), "RemoteClient should be ready");
-
-            // Verify session is cached
-            assert!(
-                remote_client
-                    .session_store()
-                    .has_session(&paired_fingerprint)
-                    .await,
-                "Session should be cached in RemoteClient's session store"
-            );
-
-            // Verify remote side emitted FingerprintVerified
-            let mut remote_event_rx = remote_approval_task
-                .await
-                .expect("Remote approval task should complete");
-            let mut remote_fingerprint_verified = false;
-            while let Ok(Some(event)) =
-                timeout(Duration::from_millis(100), remote_event_rx.recv()).await
-            {
-                if matches!(event, RemoteClientEvent::FingerprintVerified) {
-                    remote_fingerprint_verified = true;
-                }
+    // Spawn task to auto-approve fingerprint on the USER side
+    let user_approval_task = tokio::spawn(async move {
+        while let Some(request) = request_rx.recv().await {
+            if let UserClientRequest::VerifyFingerprint { reply, .. } = request {
+                let _ = reply.send(FingerprintVerificationReply {
+                    approved: true,
+                    name: None,
+                });
+                break;
             }
-            assert!(
-                remote_fingerprint_verified,
-                "RemoteClient should emit FingerprintVerified"
-            );
+        }
+        notification_rx
+    });
 
-            // Verify user side emitted FingerprintVerified
-            let mut user_event_rx = user_approval_task
-                .await
-                .expect("User approval task should complete");
-            let mut user_fingerprint_verified = false;
-            while let Ok(Some(event)) =
-                timeout(Duration::from_millis(100), user_event_rx.recv()).await
-            {
-                if matches!(event, UserClientEvent::FingerprintVerified {}) {
-                    user_fingerprint_verified = true;
-                }
-            }
-            assert!(
-                user_fingerprint_verified,
-                "UserClient should emit FingerprintVerified"
-            );
+    // Spawn task to auto-approve fingerprint on the REMOTE side via request channel
+    let remote_approval_task = tokio::spawn(async move {
+        while let Some(request) = remote_request_rx.recv().await {
+            let RemoteClientRequest::VerifyFingerprint { reply, .. } = request;
+            let _ = reply.send(RemoteClientFingerprintReply { approved: true });
+            break;
+        }
+        remote_notification_rx
+    });
 
-            // Cleanup
-            remote_client.close().await;
-            user_task.abort();
-        })
-        .await;
+    // Pair with handshake using rendezvous code (verify_fingerprint=true on remote side)
+    let pair_result = timeout(
+        Duration::from_secs(10),
+        remote_client.pair_with_handshake(code, true),
+    )
+    .await
+    .expect("Pairing should not timeout");
+
+    // The pairing should succeed
+    let paired_fingerprint = pair_result.expect("Pairing should succeed");
+
+    // Verify session is cached
+    assert!(
+        remote_client
+            .has_session(paired_fingerprint)
+            .await
+            .expect("has_session should not fail"),
+        "Session should be cached in RemoteClient's session store"
+    );
+
+    // Verify remote side emitted FingerprintVerified
+    let mut remote_notification_rx = remote_approval_task
+        .await
+        .expect("Remote approval task should complete");
+    let mut remote_fingerprint_verified = false;
+    while let Ok(Some(event)) =
+        timeout(Duration::from_millis(100), remote_notification_rx.recv()).await
+    {
+        if matches!(event, RemoteClientNotification::FingerprintVerified) {
+            remote_fingerprint_verified = true;
+        }
+    }
+    assert!(
+        remote_fingerprint_verified,
+        "RemoteClient should emit FingerprintVerified"
+    );
+
+    // Verify user side emitted FingerprintVerified
+    let mut notification_rx = user_approval_task
+        .await
+        .expect("User approval task should complete");
+    let mut user_fingerprint_verified = false;
+    while let Ok(Some(event)) = timeout(Duration::from_millis(100), notification_rx.recv()).await {
+        if matches!(event, UserClientNotification::FingerprintVerified {}) {
+            user_fingerprint_verified = true;
+        }
+    }
+    assert!(
+        user_fingerprint_verified,
+        "UserClient should emit FingerprintVerified"
+    );
+
+    // Cleanup
+    drop(remote_client);
+    drop(user_client);
+}
+
+// ============================================================================
+// Test: Dual-mode PSK + Rendezvous on same UserClient
+// ============================================================================
+
+/// Test that a single UserClient accepts PSK connections when both PSK and
+/// rendezvous pairings are pending. This verifies that `psk_id` in `HandshakeInit`
+/// correctly routes to the right pending pairing.
+#[tokio::test]
+async fn test_dual_mode_psk_pairing_with_both_modes_pending() {
+    // Create identities
+    let user_identity = MockIdentityProvider::new();
+    let remote_identity = MockIdentityProvider::new();
+
+    let user_fingerprint = user_identity.fingerprint().await;
+    let remote_fingerprint = remote_identity.fingerprint().await;
+
+    // Create mock proxy pair
+    let (mut user_proxy, remote_proxy) =
+        create_mock_proxy_pair(user_fingerprint, remote_fingerprint);
+    // Set up rendezvous so get_rendezvous_token doesn't hang
+    user_proxy.set_rendezvous_code(RendezvousCode::from_string("DUAL12345".to_string()));
+
+    let user_session_store = MockSessionStore::new();
+    let remote_session_store = MockSessionStore::new();
+
+    let (notification_tx, mut notification_rx) = mpsc::channel::<UserClientNotification>(32);
+    let (request_tx, _request_rx) = mpsc::channel::<UserClientRequest>(32);
+
+    let (remote_notification_tx, mut remote_notification_rx) =
+        mpsc::channel::<RemoteClientNotification>(32);
+    let (remote_request_tx, _remote_request_rx) = mpsc::channel::<RemoteClientRequest>(32);
+
+    // Create UserClient (already listening)
+    let user_client = UserClient::connect(
+        Box::new(user_identity),
+        Box::new(user_session_store),
+        Box::new(user_proxy),
+        notification_tx,
+        request_tx,
+        None,
+    )
+    .await
+    .expect("UserClient should connect");
+
+    // Set up BOTH pairings
+    let psk_token = user_client
+        .get_psk_token(Some("psk-device".to_string()))
+        .await
+        .expect("Should generate PSK token");
+
+    let _rendezvous_code = user_client
+        .get_rendezvous_token(Some("rendezvous-device".to_string()))
+        .await
+        .expect("Should get rendezvous token");
+
+    // Parse PSK token
+    let parts: Vec<&str> = psk_token.split('_').collect();
+    assert_eq!(parts.len(), 2);
+    let psk = Psk::from_hex(parts[0]).expect("Should parse PSK");
+    let fp_bytes = hex::decode(parts[1]).expect("Should decode fingerprint hex");
+    let mut fp_array = [0u8; 32];
+    fp_array.copy_from_slice(&fp_bytes);
+    let user_fp_from_token = IdentityFingerprint(fp_array);
+
+    // Connect RemoteClient via PSK
+    let remote_client = RemoteClient::connect(
+        Box::new(remote_identity),
+        Box::new(remote_session_store),
+        Box::new(remote_proxy),
+        remote_notification_tx,
+        remote_request_tx,
+    )
+    .await
+    .expect("RemoteClient should connect");
+
+    timeout(
+        Duration::from_secs(10),
+        remote_client.pair_with_psk(psk, user_fp_from_token),
+    )
+    .await
+    .expect("PSK pairing should not timeout")
+    .expect("PSK pairing should succeed");
+
+    // Verify user-side events: HandshakeComplete should fire
+    let mut user_handshake_complete = false;
+    while let Ok(Some(event)) = timeout(Duration::from_millis(200), notification_rx.recv()).await {
+        if matches!(event, UserClientNotification::HandshakeComplete {}) {
+            user_handshake_complete = true;
+        }
+    }
+    assert!(
+        user_handshake_complete,
+        "UserClient should emit HandshakeComplete for PSK connection"
+    );
+
+    // Verify remote-side notifications
+    let mut remote_handshake_complete = false;
+    while let Ok(Some(event)) =
+        timeout(Duration::from_millis(200), remote_notification_rx.recv()).await
+    {
+        if matches!(event, RemoteClientNotification::HandshakeComplete) {
+            remote_handshake_complete = true;
+        }
+    }
+    assert!(
+        remote_handshake_complete,
+        "RemoteClient should emit HandshakeComplete"
+    );
+
+    // Cleanup
+    drop(remote_client);
+    drop(user_client);
 }

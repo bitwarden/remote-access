@@ -5,7 +5,8 @@
 
 use ap_client::{
     ConnectionMode, DefaultProxyClient, IdentityFingerprint, IdentityProvider, RemoteClient,
-    RemoteClientEvent, RemoteClientResponse, SessionStore,
+    RemoteClientError, RemoteClientFingerprintReply, RemoteClientNotification, RemoteClientRequest,
+    SessionStore,
 };
 use ap_noise::Psk;
 use ap_proxy_client::ProxyClientConfig;
@@ -15,7 +16,7 @@ use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures_util::StreamExt;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tracing::info;
 
 use super::output::{
@@ -24,7 +25,7 @@ use super::output::{
 use super::tui::{
     App, AppAction, MessageKind, Mode, init_terminal, restore_terminal, wait_for_keypress,
 };
-use super::util::{format_connect_event, format_relative_time};
+use super::util::{format_connect_notification, format_relative_time};
 use crate::storage::{FileIdentityStorage, FileSessionCache, MemorySessionStore};
 
 use super::DEFAULT_PROXY_URL;
@@ -213,6 +214,35 @@ fn domain_footer() -> Line<'static> {
     ])
 }
 
+/// Spawn a pairing task based on the connection mode.
+///
+/// Returns a `JoinHandle` that resolves when pairing completes (or fails).
+fn spawn_pairing(
+    client: &RemoteClient,
+    mode: &ConnectionMode,
+    verify_fingerprint: bool,
+) -> tokio::task::JoinHandle<Result<(), RemoteClientError>> {
+    let c = client.clone();
+    match mode.clone() {
+        ConnectionMode::New { rendezvous_code } => tokio::spawn(async move {
+            c.pair_with_handshake(rendezvous_code, verify_fingerprint)
+                .await?;
+            Ok(())
+        }),
+        ConnectionMode::NewPsk {
+            psk,
+            remote_fingerprint,
+        } => tokio::spawn(async move {
+            c.pair_with_psk(psk, remote_fingerprint).await?;
+            Ok(())
+        }),
+        ConnectionMode::Existing { remote_fingerprint } => tokio::spawn(async move {
+            c.load_cached_session(remote_fingerprint).await?;
+            Ok(())
+        }),
+    }
+}
+
 /// Run an interactive session for requesting credentials
 async fn run_interactive_session(
     proxy_url: String,
@@ -254,12 +284,14 @@ async fn run_interactive_session(
     let mut deferred_session_store: Option<Box<dyn SessionStore>> = Some(session_store);
     let deferred_proxy_url = proxy_url;
 
-    let mut event_rx: Option<mpsc::Receiver<RemoteClientEvent>> = None;
-    let mut response_tx: Option<mpsc::Sender<RemoteClientResponse>> = None;
+    let mut notification_rx: Option<mpsc::Receiver<RemoteClientNotification>> = None;
+    let mut request_rx: Option<mpsc::Receiver<RemoteClientRequest>> = None;
     let mut client: Option<RemoteClient> = None;
+    let mut pairing_task: Option<tokio::task::JoinHandle<Result<(), RemoteClientError>>> = None;
+    let mut pending_fp_reply: Option<oneshot::Sender<RemoteClientFingerprintReply>> = None;
 
     // Determine starting phase (and connect immediately for CLI-flag paths)
-    let mut phase = if let Some(mode) = cli_connection_mode {
+    let mut phase = if let Some(ref mode) = cli_connection_mode {
         // CLI flags provided — go straight to connecting
         if ephemeral_connection {
             app.push_msg(MessageKind::Info, EPHEMERAL_MSG);
@@ -273,14 +305,13 @@ async fn run_interactive_session(
                 .take()
                 .expect("session store consumed twice"),
             &deferred_proxy_url,
-            &mode,
-            verify_fingerprint,
         )
         .await
         {
-            Ok((erx, rtx, c)) => {
-                event_rx = Some(erx);
-                response_tx = Some(rtx);
+            Ok((nrx, rrx, c)) => {
+                pairing_task = Some(spawn_pairing(&c, mode, verify_fingerprint));
+                notification_rx = Some(nrx);
+                request_rx = Some(rrx);
                 client = Some(c);
             }
             Err(e) => {
@@ -320,7 +351,7 @@ async fn run_interactive_session(
         term.draw(|frame| app.draw(frame))
             .map_err(|e| color_eyre::eyre::eyre!("TUI draw error: {}", e))?;
 
-        // Build the select! dynamically depending on whether event_rx exists
+        // Build the select! dynamically depending on which channels exist
         tokio::select! {
             maybe_event = reader.next() => {
                 if let Some(Ok(Event::Key(key))) = maybe_event {
@@ -358,12 +389,11 @@ async fn run_interactive_session(
                                             deferred_identity.take().expect("identity consumed twice"),
                                             deferred_session_store.take().expect("session store consumed twice"),
                                             &deferred_proxy_url,
-                                            &mode,
-                                            verify_fingerprint,
                                         ).await {
-                                            Ok((erx, rtx, c)) => {
-                                                event_rx = Some(erx);
-                                                response_tx = Some(rtx);
+                                            Ok((nrx, rrx, c)) => {
+                                                pairing_task = Some(spawn_pairing(&c, &mode, verify_fingerprint));
+                                                notification_rx = Some(nrx);
+                                                request_rx = Some(rrx);
                                                 client = Some(c);
                                                 app.commands = &[];
                                                 phase = Phase::Connecting;
@@ -411,12 +441,11 @@ async fn run_interactive_session(
                                                 deferred_identity.take().expect("identity consumed twice"),
                                                 deferred_session_store.take().expect("session store consumed twice"),
                                                 &deferred_proxy_url,
-                                                &mode,
-                                                verify_fingerprint,
                                             ).await {
-                                                Ok((erx, rtx, c)) => {
-                                                    event_rx = Some(erx);
-                                                    response_tx = Some(rtx);
+                                                Ok((nrx, rrx, c)) => {
+                                                    pairing_task = Some(spawn_pairing(&c, &mode, verify_fingerprint));
+                                                    notification_rx = Some(nrx);
+                                                    request_rx = Some(rrx);
                                                     client = Some(c);
                                                     app.commands = &[];
                                                     phase = Phase::Connecting;
@@ -443,10 +472,8 @@ async fn run_interactive_session(
 
                                 // ── Fingerprint confirmation ──
                                 (Phase::FingerprintConfirm, AppAction::Confirmed(approved)) => {
-                                    if let Some(ref tx) = response_tx {
-                                        tx.send(RemoteClientResponse::VerifyFingerprint { approved })
-                                            .await
-                                            .ok();
+                                    if let Some(reply) = pending_fp_reply.take() {
+                                        let _ = reply.send(RemoteClientFingerprintReply { approved });
                                     }
                                     if approved {
                                         app.push_msg(MessageKind::Success, "Fingerprint approved");
@@ -472,7 +499,7 @@ async fn run_interactive_session(
 
                                     app.push_msg(MessageKind::User, format!("Requesting: {domain}"));
 
-                                    if let Some(ref mut c) = client {
+                                    if let Some(ref c) = client {
                                         let query = ap_client::CredentialQuery::Domain(domain.clone());
                                         let mut cred_fut = std::pin::pin!(c.request_credential(&query));
                                         let mut user_quit = false;
@@ -493,14 +520,14 @@ async fn run_interactive_session(
                                                         }
                                                     }
                                                 }
-                                                event = async {
-                                                    match event_rx.as_mut() {
+                                                notification = async {
+                                                    match notification_rx.as_mut() {
                                                         Some(rx) => rx.recv().await,
                                                         None => std::future::pending().await,
                                                     }
                                                 } => {
-                                                    if let Some(event) = event {
-                                                        if let Some(msg) = format_connect_event(&event) {
+                                                    if let Some(notification) = notification {
+                                                        if let Some(msg) = format_connect_notification(&notification) {
                                                             app.push_rich(msg);
                                                         }
                                                     }
@@ -550,38 +577,80 @@ async fn run_interactive_session(
                 }
             }
 
-            // Handle remote client events (only when connected)
-            event = async {
-                match event_rx.as_mut() {
+            // Handle pairing task completion
+            result = async {
+                match pairing_task.as_mut() {
+                    Some(handle) => Some(handle.await),
+                    None => std::future::pending::<Option<_>>().await,
+                }
+            } => {
+                pairing_task = None;
+                if let Some(result) = result {
+                    match result {
+                        Ok(Ok(())) => {
+                            // Pairing succeeded — Ready notification will arrive via notification_rx
+                        }
+                        Ok(Err(e)) => {
+                            app.push_msg(MessageKind::Error, format!("Connection failed: {e}"));
+                            app.push_msg(MessageKind::Info, "Press any key to exit");
+                            term.draw(|frame| app.draw(frame)).ok();
+                            wait_for_keypress(&mut reader).await;
+                            break;
+                        }
+                        Err(e) => {
+                            app.push_msg(MessageKind::Error, format!("Connection task error: {e}"));
+                            app.push_msg(MessageKind::Info, "Press any key to exit");
+                            term.draw(|frame| app.draw(frame)).ok();
+                            wait_for_keypress(&mut reader).await;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Handle fingerprint verification requests
+            request = async {
+                match request_rx.as_mut() {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
             } => {
-                match event {
-                    Some(event) => {
-                        // Handle fingerprint verification
-                        if let RemoteClientEvent::HandshakeFingerprint { .. } = &event {
-                            if verify_fingerprint {
-                                if let Some(msg) = format_connect_event(&event) {
-                                    app.push_rich(msg);
-                                }
-                                phase = Phase::FingerprintConfirm;
-                                app.set_mode(Mode::Confirm {
-                                    title: "Fingerprint Verification".to_string(),
-                                    description: Line::from("Do the fingerprints match?"),
-                                });
-                                app.footer = Line::from(
-                                    Span::styled(
-                                        " Compare the fingerprint above with the remote device",
-                                        Style::default().fg(Color::Yellow),
-                                    )
-                                );
-                                continue;
-                            }
-                        }
+                if let Some(RemoteClientRequest::VerifyFingerprint { fingerprint, reply }) = request {
+                    // Show fingerprint message
+                    let notification = RemoteClientNotification::HandshakeFingerprint {
+                        fingerprint: fingerprint.clone(),
+                    };
+                    if let Some(msg) = format_connect_notification(&notification) {
+                        app.push_rich(msg);
+                    }
 
+                    // Store reply and switch to confirmation phase
+                    pending_fp_reply = Some(reply);
+                    phase = Phase::FingerprintConfirm;
+                    app.set_mode(Mode::Confirm {
+                        title: "Fingerprint Verification".to_string(),
+                        description: Line::from("Do the fingerprints match?"),
+                    });
+                    app.footer = Line::from(
+                        Span::styled(
+                            " Compare the fingerprint above with the remote device",
+                            Style::default().fg(Color::Yellow),
+                        )
+                    );
+                }
+            }
+
+            // Handle remote client notifications
+            notification = async {
+                match notification_rx.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                match notification {
+                    Some(notification) => {
                         // Transition to Connected on Ready
-                        if matches!(event, RemoteClientEvent::Ready { .. }) {
+                        if matches!(notification, RemoteClientNotification::Ready { .. }) {
                             app.push_msg(MessageKind::Success, "Connection established");
                             if ephemeral_connection {
                                 app.push_msg(MessageKind::Info, EPHEMERAL_MSG);
@@ -594,7 +663,7 @@ async fn run_interactive_session(
                             phase = Phase::Connected;
                         }
 
-                        if let Some(msg) = format_connect_event(&event) {
+                        if let Some(msg) = format_connect_notification(&notification) {
                             app.push_rich(msg);
                         }
                     }
@@ -625,9 +694,9 @@ async fn run_interactive_session(
 
     restore_terminal();
 
-    if let Some(mut c) = client {
+    if let Some(c) = client {
         println!("Closing connection...");
-        c.close().await;
+        drop(c);
         println!("Connection closed. Goodbye!");
     }
     Ok(())
@@ -663,21 +732,46 @@ pub(super) async fn fetch_credential(
 
     info!("Connecting to proxy...");
 
-    let (mut event_rx, _response_tx, mut client) =
-        start_connection(identity_provider, session_store, proxy_url, &mode, false).await?;
+    let (mut notification_rx, _request_rx, client) =
+        start_connection(identity_provider, session_store, proxy_url).await?;
 
-    // Drain events in background (prevents channel backpressure)
-    tokio::spawn(async move { while event_rx.recv().await.is_some() {} });
+    // Drain notifications in background (prevents channel backpressure)
+    tokio::spawn(async move { while notification_rx.recv().await.is_some() {} });
+
+    // Start pairing (inline — single-shot mode never verifies fingerprints)
+    match &mode {
+        ConnectionMode::New { rendezvous_code } => {
+            client
+                .pair_with_handshake(rendezvous_code.clone(), false)
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("Pairing failed: {}", e))?;
+        }
+        ConnectionMode::NewPsk {
+            psk,
+            remote_fingerprint,
+        } => {
+            client
+                .pair_with_psk(psk.clone(), *remote_fingerprint)
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("PSK pairing failed: {}", e))?;
+        }
+        ConnectionMode::Existing { remote_fingerprint } => {
+            client
+                .load_cached_session(*remote_fingerprint)
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("Session reconnection failed: {}", e))?;
+        }
+    }
 
     info!("Requesting credential for {query}");
 
     match client.request_credential(query).await {
         Ok(credential) => {
-            client.close().await;
+            drop(client);
             Ok(credential)
         }
         Err(e) => {
-            client.close().await;
+            drop(client);
             Err(color_eyre::eyre::eyre!(e))
         }
     }
@@ -725,71 +819,38 @@ async fn run_single_shot(
     }
 }
 
-/// Create a connection, start pairing, and return the event/response channels + client.
+/// Connect to the proxy and return the notification/request channels + client handle.
+///
+/// Does NOT start pairing — the caller drives pairing as a concurrent task
+/// so fingerprint verification requests can be handled without deadlocking.
 async fn start_connection(
     identity_provider: Box<dyn IdentityProvider>,
     session_store: Box<dyn SessionStore>,
     proxy_url: &str,
-    mode: &ConnectionMode,
-    verify_fingerprint: bool,
 ) -> Result<(
-    mpsc::Receiver<RemoteClientEvent>,
-    mpsc::Sender<RemoteClientResponse>,
+    mpsc::Receiver<RemoteClientNotification>,
+    mpsc::Receiver<RemoteClientRequest>,
     RemoteClient,
 )> {
-    let (event_tx, event_rx) = mpsc::channel(32);
-    let (response_tx, response_rx) = mpsc::channel(32);
+    let (notification_tx, notification_rx) = mpsc::channel(32);
+    let (request_tx, request_rx) = mpsc::channel(32);
 
     let proxy_client = Box::new(DefaultProxyClient::new(ProxyClientConfig {
         proxy_url: proxy_url.to_string(),
         identity_keypair: Some(identity_provider.identity().await),
     }));
 
-    let mut client = RemoteClient::new(
+    let client = RemoteClient::connect(
         identity_provider,
         session_store,
-        event_tx,
-        response_rx,
         proxy_client,
+        notification_tx,
+        request_tx,
     )
     .await
     .map_err(|e| color_eyre::eyre::eyre!("Connection to proxy failed: {}", e))?;
 
-    start_pairing(&mut client, mode, verify_fingerprint).await?;
-
-    Ok((event_rx, response_tx, client))
-}
-
-/// Initiate pairing based on the connection mode.
-async fn start_pairing(
-    client: &mut RemoteClient,
-    mode: &ConnectionMode,
-    verify_fingerprint: bool,
-) -> Result<()> {
-    match mode {
-        ConnectionMode::New { rendezvous_code } => {
-            client
-                .pair_with_handshake(rendezvous_code, verify_fingerprint)
-                .await
-                .map_err(|e| color_eyre::eyre::eyre!("Pairing failed: {}", e))?;
-        }
-        ConnectionMode::NewPsk {
-            psk,
-            remote_fingerprint,
-        } => {
-            client
-                .pair_with_psk(psk.clone(), *remote_fingerprint)
-                .await
-                .map_err(|e| color_eyre::eyre::eyre!("PSK pairing failed: {}", e))?;
-        }
-        ConnectionMode::Existing { remote_fingerprint } => {
-            client
-                .load_cached_session(*remote_fingerprint)
-                .await
-                .map_err(|e| color_eyre::eyre::eyre!("Session reconnection failed: {}", e))?;
-        }
-    }
-    Ok(())
+    Ok((notification_rx, request_rx, client))
 }
 
 /// Validate that a rendezvous code has the correct format

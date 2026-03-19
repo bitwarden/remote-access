@@ -116,6 +116,18 @@ impl Psk {
     pub fn as_slice(&self) -> &[u8] {
         &self.0
     }
+
+    /// Compute a stable, non-secret identifier for this PSK.
+    ///
+    /// Returns `hex(SHA256(psk)[0..8])` — a 16-character hex string derived from
+    /// the first 8 bytes of the PSK's SHA-256 hash. This serves as a lookup key
+    /// for matching incoming handshakes to pending pairings without revealing the
+    /// PSK itself.
+    pub fn id(&self) -> String {
+        use sha2::{Digest, Sha256 as Sha256Hash};
+        let hash = Sha256Hash::digest(self.0);
+        hex::encode(&hash[..8])
+    }
 }
 
 #[cfg(test)]
