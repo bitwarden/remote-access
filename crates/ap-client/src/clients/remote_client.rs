@@ -228,7 +228,15 @@ impl RemoteClient {
             remote_fingerprint: None,
         };
 
-        // Spawn event loop
+        // Spawn the event loop — use spawn_local on WASM (no Tokio runtime)
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(inner.run_event_loop(
+            incoming_rx,
+            command_rx,
+            notification_tx,
+            request_tx,
+        ));
+        #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(inner.run_event_loop(incoming_rx, command_rx, notification_tx, request_tx));
 
         Ok(Self { command_tx })
@@ -637,7 +645,7 @@ impl RemoteClientInner {
             .session_store
             .load_transport_state(&remote_fingerprint)
             .await?
-            .expect("Transport state should exist for cached session");
+            .ok_or(RemoteClientError::SessionNotFound)?;
 
         notification_tx
             .send(RemoteClientNotification::HandshakeComplete)
