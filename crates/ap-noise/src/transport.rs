@@ -388,10 +388,13 @@ impl MultiDeviceTransport {
 struct XChaCha20Poly1305Nonce([u8; 24]);
 
 impl XChaCha20Poly1305Nonce {
-    fn from_slice(slice: &[u8]) -> Self {
+    fn from_slice(slice: &[u8]) -> Result<Self, NoiseProtocolError> {
+        if slice.len() != 24 {
+            Err(NoiseProtocolError::DecryptionFailed)
+        }
         let mut nonce = [0u8; 24];
         nonce.copy_from_slice(slice);
-        XChaCha20Poly1305Nonce(nonce)
+        Ok(XChaCha20Poly1305Nonce(nonce))
     }
 
     // A rekey needs a nonce with all bytes set to 0xFF
