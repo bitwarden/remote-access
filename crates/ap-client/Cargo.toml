@@ -29,6 +29,10 @@ thiserror = { workspace = true }
 tokio = { version = "1.36.0", default-features = false, features = ["sync", "macros", "time"] }
 tracing = { workspace = true }
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
+web-time = "1"
+
 [dev-dependencies]
 ap-proxy = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "test-util"] }

@@ -9,8 +9,8 @@ use std::sync::Mutex;
 
 use ap_client::{
     CredentialData, CredentialRequestReply, DefaultProxyClient, FingerprintVerificationReply,
-    IdentityProvider, Psk, RemoteClient, RemoteClientEvent, RemoteClientResponse, SessionStore,
-    UserClient, UserClientNotification, UserClientRequest,
+    IdentityProvider, Psk, RemoteClient, RemoteClientNotification, RemoteClientRequest,
+    SessionStore, UserClient, UserClientNotification, UserClientRequest,
 };
 use ap_noise::MultiDeviceTransport;
 use ap_proxy::server::ProxyServer;
@@ -387,20 +387,21 @@ async fn test_e2e_psk_pairing_and_credential_request() {
     fp_array.copy_from_slice(&fp_bytes);
     let fingerprint = IdentityFingerprint(fp_array);
 
-    // 6. Create event and response channels for RemoteClient
-    let (remote_event_tx, mut remote_event_rx) = mpsc::channel::<RemoteClientEvent>(32);
-    let (_remote_response_tx, remote_response_rx) = mpsc::channel::<RemoteClientResponse>(32);
+    // 6. Create notification and request channels for RemoteClient
+    let (remote_notification_tx, mut remote_notification_rx) =
+        mpsc::channel::<RemoteClientNotification>(32);
+    let (remote_request_tx, mut _remote_request_rx) = mpsc::channel::<RemoteClientRequest>(32);
 
     // 7. Create RemoteClient with DefaultProxyClient
     let remote_proxy = create_proxy_client(addr, None);
     let remote_session_store = MockSessionStore::new();
 
-    let mut remote_client = RemoteClient::new(
+    let remote_client = RemoteClient::connect(
         Box::new(remote_identity),
         Box::new(remote_session_store),
-        remote_event_tx.clone(),
-        remote_response_rx,
         Box::new(remote_proxy),
+        remote_notification_tx,
+        remote_request_tx,
     )
     .await
     .expect("RemoteClient should connect");
@@ -416,8 +417,10 @@ async fn test_e2e_psk_pairing_and_credential_request() {
 
     // 9. Verify HandshakeComplete events on both sides
     let mut remote_handshake_complete = false;
-    while let Ok(Some(event)) = timeout(Duration::from_millis(500), remote_event_rx.recv()).await {
-        if matches!(event, RemoteClientEvent::HandshakeComplete) {
+    while let Ok(Some(event)) =
+        timeout(Duration::from_millis(500), remote_notification_rx.recv()).await
+    {
+        if matches!(event, RemoteClientNotification::HandshakeComplete) {
             remote_handshake_complete = true;
             break;
         }
@@ -440,10 +443,7 @@ async fn test_e2e_psk_pairing_and_credential_request() {
         "UserClient should emit HandshakeComplete"
     );
 
-    // 10. Verify remote_client is ready
-    assert!(remote_client.is_ready(), "RemoteClient should be ready");
-
-    // 11. Spawn credential response handler for UserClient
+    // 10. Spawn credential response handler for UserClient
     let credential_handler = tokio::spawn(async move {
         while let Some(request) = request_rx.recv().await {
             if let UserClientRequest::CredentialRequest { query, reply, .. } = request {
@@ -482,7 +482,7 @@ async fn test_e2e_psk_pairing_and_credential_request() {
 
     // Cleanup
     credential_handler.abort();
-    remote_client.close().await;
+    drop(remote_client);
     drop(user_client);
 }
 
@@ -527,20 +527,21 @@ async fn test_e2e_fingerprint_pairing_and_credential_request() {
         .expect("Should get rendezvous token");
     let code = code.as_str().to_string();
 
-    // 6. Create event and response channels for RemoteClient
-    let (remote_event_tx, mut remote_event_rx) = mpsc::channel::<RemoteClientEvent>(32);
-    let (_remote_response_tx, remote_response_rx) = mpsc::channel::<RemoteClientResponse>(32);
+    // 6. Create notification and request channels for RemoteClient
+    let (remote_notification_tx, mut remote_notification_rx) =
+        mpsc::channel::<RemoteClientNotification>(32);
+    let (remote_request_tx, mut _remote_request_rx) = mpsc::channel::<RemoteClientRequest>(32);
 
     // 7. Create RemoteClient with DefaultProxyClient
     let remote_proxy = create_proxy_client(addr, None);
     let remote_session_store = MockSessionStore::new();
 
-    let mut remote_client = RemoteClient::new(
+    let remote_client = RemoteClient::connect(
         Box::new(remote_identity),
         Box::new(remote_session_store),
-        remote_event_tx.clone(),
-        remote_response_rx,
         Box::new(remote_proxy),
+        remote_notification_tx,
+        remote_request_tx,
     )
     .await
     .expect("RemoteClient should connect");
@@ -563,7 +564,7 @@ async fn test_e2e_fingerprint_pairing_and_credential_request() {
     // 9. Pair with handshake using rendezvous code (verify_fingerprint=false on remote side)
     let paired_fingerprint = timeout(
         Duration::from_secs(15),
-        remote_client.pair_with_handshake(&code, false),
+        remote_client.pair_with_handshake(code, false),
     )
     .await
     .expect("Pairing should not timeout")
@@ -571,8 +572,10 @@ async fn test_e2e_fingerprint_pairing_and_credential_request() {
 
     // 10. Verify HandshakeFingerprint was emitted on remote side (informational)
     let mut got_fingerprint = false;
-    while let Ok(Some(event)) = timeout(Duration::from_millis(500), remote_event_rx.recv()).await {
-        if matches!(event, RemoteClientEvent::HandshakeFingerprint { .. }) {
+    while let Ok(Some(event)) =
+        timeout(Duration::from_millis(500), remote_notification_rx.recv()).await
+    {
+        if matches!(event, RemoteClientNotification::HandshakeFingerprint { .. }) {
             got_fingerprint = true;
             break;
         }
@@ -582,19 +585,16 @@ async fn test_e2e_fingerprint_pairing_and_credential_request() {
         "RemoteClient should emit HandshakeFingerprint (informational)"
     );
 
-    // 11. Verify remote_client is ready
-    assert!(remote_client.is_ready(), "RemoteClient should be ready");
-
-    // 12. Verify session is cached
+    // 11. Verify session is cached
     assert!(
         remote_client
-            .session_store()
-            .has_session(&paired_fingerprint)
-            .await,
+            .has_session(paired_fingerprint)
+            .await
+            .expect("has_session should not fail"),
         "Session should be cached in RemoteClient's session store"
     );
 
-    // 13. Spawn credential response handler for UserClient
+    // 12. Spawn credential response handler for UserClient
     let mut request_rx = user_approval_task
         .await
         .expect("User approval task should complete");
@@ -633,7 +633,7 @@ async fn test_e2e_fingerprint_pairing_and_credential_request() {
 
     // Cleanup
     credential_handler.abort();
-    remote_client.close().await;
+    drop(remote_client);
     drop(user_client);
 }
 
@@ -686,18 +686,19 @@ async fn test_e2e_credential_request_denied() {
     let fingerprint = IdentityFingerprint(fp_array);
 
     // 6. Create RemoteClient
-    let (remote_event_tx, _remote_event_rx) = mpsc::channel::<RemoteClientEvent>(32);
-    let (_remote_response_tx, remote_response_rx) = mpsc::channel::<RemoteClientResponse>(32);
+    let (remote_notification_tx, _remote_notification_rx) =
+        mpsc::channel::<RemoteClientNotification>(32);
+    let (remote_request_tx, mut _remote_request_rx) = mpsc::channel::<RemoteClientRequest>(32);
 
     let remote_proxy = create_proxy_client(addr, None);
     let remote_session_store = MockSessionStore::new();
 
-    let mut remote_client = RemoteClient::new(
+    let remote_client = RemoteClient::connect(
         Box::new(remote_identity),
         Box::new(remote_session_store),
-        remote_event_tx,
-        remote_response_rx,
         Box::new(remote_proxy),
+        remote_notification_tx,
+        remote_request_tx,
     )
     .await
     .expect("RemoteClient should connect");
@@ -747,7 +748,7 @@ async fn test_e2e_credential_request_denied() {
 
     // Cleanup
     denial_handler.abort();
-    remote_client.close().await;
+    drop(remote_client);
     drop(user_client);
 }
 
@@ -800,18 +801,19 @@ async fn test_e2e_multiple_credential_requests() {
     let fingerprint = IdentityFingerprint(fp_array);
 
     // 6. Create RemoteClient
-    let (remote_event_tx, _remote_event_rx) = mpsc::channel::<RemoteClientEvent>(32);
-    let (_remote_response_tx, remote_response_rx) = mpsc::channel::<RemoteClientResponse>(32);
+    let (remote_notification_tx, _remote_notification_rx) =
+        mpsc::channel::<RemoteClientNotification>(32);
+    let (remote_request_tx, mut _remote_request_rx) = mpsc::channel::<RemoteClientRequest>(32);
 
     let remote_proxy = create_proxy_client(addr, None);
     let remote_session_store = MockSessionStore::new();
 
-    let mut remote_client = RemoteClient::new(
+    let remote_client = RemoteClient::connect(
         Box::new(remote_identity),
         Box::new(remote_session_store),
-        remote_event_tx,
-        remote_response_rx,
         Box::new(remote_proxy),
+        remote_notification_tx,
+        remote_request_tx,
     )
     .await
     .expect("RemoteClient should connect");
@@ -884,7 +886,7 @@ async fn test_e2e_multiple_credential_requests() {
 
     // Cleanup
     credential_handler.abort();
-    remote_client.close().await;
+    drop(remote_client);
     drop(user_client);
 }
 
@@ -939,9 +941,10 @@ async fn test_e2e_transport_state_persistence() {
     fp_array.copy_from_slice(&fp_bytes);
     let fingerprint = IdentityFingerprint(fp_array);
 
-    // 6. Create event and response channels for RemoteClient
-    let (remote_event_tx, mut remote_event_rx) = mpsc::channel::<RemoteClientEvent>(32);
-    let (_remote_response_tx, remote_response_rx) = mpsc::channel::<RemoteClientResponse>(32);
+    // 6. Create notification and request channels for RemoteClient
+    let (remote_notification_tx, mut remote_notification_rx) =
+        mpsc::channel::<RemoteClientNotification>(32);
+    let (remote_request_tx, mut _remote_request_rx) = mpsc::channel::<RemoteClientRequest>(32);
 
     // 7. Create RemoteClient with Arc<MockSessionStore> for later access
     let remote_proxy = create_proxy_client(addr, None);
@@ -949,12 +952,12 @@ async fn test_e2e_transport_state_persistence() {
     let session_store_clone = Arc::clone(&remote_session_store);
 
     // Reuse the module-level SharedSessionStore wrapper
-    let mut remote_client = RemoteClient::new(
+    let remote_client = RemoteClient::connect(
         Box::new(remote_identity),
         Box::new(SharedSessionStore(remote_session_store)),
-        remote_event_tx.clone(),
-        remote_response_rx,
         Box::new(remote_proxy),
+        remote_notification_tx,
+        remote_request_tx,
     )
     .await
     .expect("RemoteClient should connect");
@@ -970,8 +973,10 @@ async fn test_e2e_transport_state_persistence() {
 
     // 9. Verify HandshakeComplete events on both sides
     let mut remote_handshake_complete = false;
-    while let Ok(Some(event)) = timeout(Duration::from_millis(500), remote_event_rx.recv()).await {
-        if matches!(event, RemoteClientEvent::HandshakeComplete) {
+    while let Ok(Some(event)) =
+        timeout(Duration::from_millis(500), remote_notification_rx.recv()).await
+    {
+        if matches!(event, RemoteClientNotification::HandshakeComplete) {
             remote_handshake_complete = true;
             break;
         }
@@ -1020,7 +1025,7 @@ async fn test_e2e_transport_state_persistence() {
     );
 
     // Cleanup
-    remote_client.close().await;
+    drop(remote_client);
     drop(user_client);
 }
 
@@ -1079,16 +1084,17 @@ async fn test_e2e_multi_device_credential_response() {
     let user_fingerprint = IdentityFingerprint(fp_array);
 
     // 6. Create RemoteClient
-    let (remote_event_tx, mut remote_event_rx) = mpsc::channel::<RemoteClientEvent>(256);
-    let (_remote_response_tx, remote_response_rx) = mpsc::channel::<RemoteClientResponse>(256);
+    let (remote_notification_tx, mut remote_notification_rx) =
+        mpsc::channel::<RemoteClientNotification>(256);
+    let (remote_request_tx, mut _remote_request_rx) = mpsc::channel::<RemoteClientRequest>(256);
 
     let remote_proxy = create_proxy_client(addr, Some(remote_keypair));
-    let mut remote_client = RemoteClient::new(
+    let remote_client = RemoteClient::connect(
         Box::new(MockIdentityProvider::new()),
         Box::new(MockSessionStore::new()),
-        remote_event_tx,
-        remote_response_rx,
         Box::new(remote_proxy),
+        remote_notification_tx,
+        remote_request_tx,
     )
     .await
     .expect("RemoteClient should connect");
@@ -1103,8 +1109,10 @@ async fn test_e2e_multi_device_credential_response() {
     .expect("Pairing should succeed");
 
     // 8. Wait for handshake complete on both sides
-    while let Ok(Some(event)) = timeout(Duration::from_millis(500), remote_event_rx.recv()).await {
-        if matches!(event, RemoteClientEvent::HandshakeComplete) {
+    while let Ok(Some(event)) =
+        timeout(Duration::from_millis(500), remote_notification_rx.recv()).await
+    {
+        if matches!(event, RemoteClientNotification::HandshakeComplete) {
             break;
         }
     }
@@ -1225,7 +1233,7 @@ async fn test_e2e_multi_device_credential_response() {
     // Cleanup
     handler1.abort();
     handler2.abort();
-    remote_client.close().await;
+    drop(remote_client);
     drop(user_client1);
     drop(user_client2);
 }

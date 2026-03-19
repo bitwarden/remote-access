@@ -4,7 +4,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ap_client::{RemoteClientEvent, UserClientNotification};
+use ap_client::{RemoteClientNotification, UserClientNotification};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 
@@ -60,20 +60,20 @@ pub fn format_relative_time(timestamp: u64) -> String {
     }
 }
 
-/// Format a RemoteClientEvent as a styled `Message` for the TUI.
+/// Format a RemoteClientNotification as a styled `Message` for the TUI.
 ///
 /// Returns `None` for events that should not produce output.
 #[allow(clippy::string_slice)]
-pub fn format_connect_event(event: &RemoteClientEvent) -> Option<Message> {
-    match event {
-        RemoteClientEvent::Connecting { proxy_url } => Some(Message::rich(
+pub fn format_connect_notification(notification: &RemoteClientNotification) -> Option<Message> {
+    match notification {
+        RemoteClientNotification::Connecting { proxy_url } => Some(Message::rich(
             MessageKind::Status,
             vec![
                 Span::styled("Connecting to proxy: ", text()),
                 Span::styled(proxy_url.clone(), val_style()),
             ],
         )),
-        RemoteClientEvent::Connected { fingerprint } => {
+        RemoteClientNotification::Connected { fingerprint } => {
             let fp_hex = hex::encode(fingerprint.0);
             Some(Message::rich(
                 MessageKind::Success,
@@ -86,7 +86,7 @@ pub fn format_connect_event(event: &RemoteClientEvent) -> Option<Message> {
                 ],
             ))
         }
-        RemoteClientEvent::ReconnectingToSession { fingerprint } => {
+        RemoteClientNotification::ReconnectingToSession { fingerprint } => {
             let fp_hex = hex::encode(fingerprint.0);
             Some(Message::rich(
                 MessageKind::Status,
@@ -96,14 +96,14 @@ pub fn format_connect_event(event: &RemoteClientEvent) -> Option<Message> {
                 ],
             ))
         }
-        RemoteClientEvent::RendezvousResolving { code } => Some(Message::rich(
+        RemoteClientNotification::RendezvousResolving { code } => Some(Message::rich(
             MessageKind::Status,
             vec![
                 Span::styled("Resolving rendezvous code: ", text()),
                 Span::styled(code.clone(), val_style()),
             ],
         )),
-        RemoteClientEvent::RendezvousResolved { fingerprint } => {
+        RemoteClientNotification::RendezvousResolved { fingerprint } => {
             let fp_hex = hex::encode(fingerprint.0);
             Some(Message::rich(
                 MessageKind::Success,
@@ -113,7 +113,7 @@ pub fn format_connect_event(event: &RemoteClientEvent) -> Option<Message> {
                 ],
             ))
         }
-        RemoteClientEvent::PskMode { fingerprint } => {
+        RemoteClientNotification::PskMode { fingerprint } => {
             let fp_hex = hex::encode(fingerprint.0);
             Some(Message::rich(
                 MessageKind::Status,
@@ -123,23 +123,23 @@ pub fn format_connect_event(event: &RemoteClientEvent) -> Option<Message> {
                 ],
             ))
         }
-        RemoteClientEvent::HandshakeStart => Some(Message::new(
+        RemoteClientNotification::HandshakeStart => Some(Message::new(
             MessageKind::Status,
             "Starting secure channel handshake...",
         )),
-        RemoteClientEvent::HandshakeProgress { message } => Some(Message::rich(
+        RemoteClientNotification::HandshakeProgress { message } => Some(Message::rich(
             MessageKind::Status,
             vec![
                 Span::styled("Handshake: ", text()),
                 Span::styled(message.clone(), dim()),
             ],
         )),
-        RemoteClientEvent::HandshakeComplete => Some(Message::new(
+        RemoteClientNotification::HandshakeComplete => Some(Message::new(
             MessageKind::Success,
             "Secure channel established",
         )),
-        RemoteClientEvent::Ready { .. } => None,
-        RemoteClientEvent::CredentialRequestSent { query } => {
+        RemoteClientNotification::Ready { .. } => None,
+        RemoteClientNotification::CredentialRequestSent { query } => {
             let label = match query {
                 ap_client::CredentialQuery::Domain(d) => d.clone(),
                 ap_client::CredentialQuery::Id(id) => format!("id:{id}"),
@@ -154,7 +154,7 @@ pub fn format_connect_event(event: &RemoteClientEvent) -> Option<Message> {
                 ],
             ))
         }
-        RemoteClientEvent::CredentialReceived { credential } => Some(Message::rich(
+        RemoteClientNotification::CredentialReceived { credential } => Some(Message::rich(
             MessageKind::Success,
             vec![
                 Span::styled("Credential received for: ", text()),
@@ -167,7 +167,7 @@ pub fn format_connect_event(event: &RemoteClientEvent) -> Option<Message> {
                 ),
             ],
         )),
-        RemoteClientEvent::Error { message, context } => {
+        RemoteClientNotification::Error { message, context } => {
             let ctx = context.as_deref().unwrap_or("unknown");
             Some(Message::rich(
                 MessageKind::Error,
@@ -180,7 +180,7 @@ pub fn format_connect_event(event: &RemoteClientEvent) -> Option<Message> {
                 ],
             ))
         }
-        RemoteClientEvent::Disconnected { reason } => {
+        RemoteClientNotification::Disconnected { reason } => {
             let reason_str = reason.as_deref().unwrap_or("unknown");
             Some(Message::rich(
                 MessageKind::Error,
@@ -193,7 +193,7 @@ pub fn format_connect_event(event: &RemoteClientEvent) -> Option<Message> {
                 ],
             ))
         }
-        RemoteClientEvent::HandshakeFingerprint { fingerprint } => Some(Message::rich(
+        RemoteClientNotification::HandshakeFingerprint { fingerprint } => Some(Message::rich(
             MessageKind::Prompt,
             vec![
                 Span::styled(
@@ -206,11 +206,11 @@ pub fn format_connect_event(event: &RemoteClientEvent) -> Option<Message> {
                 Span::styled(" — Compare with the trusted device", dim()),
             ],
         )),
-        RemoteClientEvent::FingerprintVerified => Some(Message::new(
+        RemoteClientNotification::FingerprintVerified => Some(Message::new(
             MessageKind::Success,
             "Fingerprint verified successfully!",
         )),
-        RemoteClientEvent::FingerprintRejected { reason } => Some(Message::rich(
+        RemoteClientNotification::FingerprintRejected { reason } => Some(Message::rich(
             MessageKind::Error,
             vec![
                 Span::styled("Fingerprint rejected: ", Style::default().fg(Color::Red)),

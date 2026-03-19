@@ -1,7 +1,12 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 use ap_noise::{Ciphersuite, MultiDeviceTransport, Psk, ResponderHandshake};
 use ap_proxy_client::IncomingMessage;
@@ -255,7 +260,15 @@ impl UserClient {
             pending_rendezvous_reply: None,
         };
 
-        // Spawn the event loop
+        // Spawn the event loop — use spawn_local on WASM (no Tokio runtime)
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(inner.run_event_loop(
+            incoming_rx,
+            command_rx,
+            notification_tx,
+            request_tx,
+        ));
+        #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(inner.run_event_loop(incoming_rx, command_rx, notification_tx, request_tx));
 
         Ok(Self { command_tx })
