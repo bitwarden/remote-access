@@ -87,6 +87,7 @@ pub mod traits;
 pub mod types;
 
 mod clients;
+pub(crate) mod compat;
 
 pub use clients::remote_client::{
     RemoteClient, RemoteClientFingerprintReply, RemoteClientNotification, RemoteClientRequest,

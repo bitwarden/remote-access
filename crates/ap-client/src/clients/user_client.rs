@@ -441,7 +441,7 @@ impl UserClientInner {
                     };
                     let total_delay = delay + Duration::from_millis(jitter);
 
-                    tokio::time::sleep(total_delay).await;
+                    crate::compat::sleep(total_delay).await;
                 }
             }
         }
