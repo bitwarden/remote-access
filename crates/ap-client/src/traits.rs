@@ -84,26 +84,26 @@ pub trait IdentityProvider: Send + Sync {
 /// The keypair lives only in memory and is lost when the provider is dropped.
 ///
 /// ```
-/// use ap_client::EphemeralIdentityProvider;
+/// use ap_client::MemoryIdentityProvider;
 ///
-/// let identity = EphemeralIdentityProvider::new();
+/// let identity = MemoryIdentityProvider::new();
 /// ```
 ///
 /// To wrap an existing keypair:
 ///
 /// ```
-/// use ap_client::EphemeralIdentityProvider;
+/// use ap_client::MemoryIdentityProvider;
 /// use ap_proxy_protocol::IdentityKeyPair;
 ///
 /// let keypair = IdentityKeyPair::generate();
-/// let identity = EphemeralIdentityProvider::from_keypair(keypair);
+/// let identity = MemoryIdentityProvider::from_keypair(keypair);
 /// ```
 #[derive(Clone)]
-pub struct EphemeralIdentityProvider {
+pub struct MemoryIdentityProvider {
     keypair: IdentityKeyPair,
 }
 
-impl EphemeralIdentityProvider {
+impl MemoryIdentityProvider {
     /// Generate a new random ephemeral identity.
     pub fn new() -> Self {
         Self {
@@ -117,14 +117,14 @@ impl EphemeralIdentityProvider {
     }
 }
 
-impl Default for EphemeralIdentityProvider {
+impl Default for MemoryIdentityProvider {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl IdentityProvider for EphemeralIdentityProvider {
+impl IdentityProvider for MemoryIdentityProvider {
     async fn identity(&self) -> IdentityKeyPair {
         self.keypair.clone()
     }
