@@ -98,6 +98,7 @@ pub trait IdentityProvider: Send + Sync {
 /// let keypair = IdentityKeyPair::generate();
 /// let identity = EphemeralIdentityProvider::from_keypair(keypair);
 /// ```
+#[derive(Clone)]
 pub struct EphemeralIdentityProvider {
     keypair: IdentityKeyPair,
 }
