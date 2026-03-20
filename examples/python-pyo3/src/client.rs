@@ -1,20 +1,19 @@
 use pyo3::prelude::*;
 use tokio::sync::mpsc;
 
-use ap_proxy_client::ProxyClientConfig;
 use ap_client::{
-    DefaultProxyClient, IdentityFingerprint, IdentityProvider, Psk, RemoteClient,
-    RemoteClientNotification, SessionStore,
+    DefaultProxyClient, IdentityFingerprint, PskToken, RemoteClient, RemoteClientNotification,
+    ConnectionStore,
 };
 
-use crate::storage::{FileIdentityStorage, FileSessionCache};
+use crate::storage::{FileIdentityStorage, FileConnectionCache};
 use crate::types::{PyCredentialData, RemoteAccessError};
 
 /// A remote-access client backed by the full Rust crypto/protocol stack.
 ///
 /// Usage::
 ///
-///     client = RemoteClient("wss://rat1.lesspassword.dev", "python-remote")
+///     client = RemoteClient("wss://ap.lesspassword.dev", "python-remote")
 ///     client.connect(token="ABC-DEF-GHI")
 ///     cred = client.request_credential("example.com")
 ///     print(cred.username, cred.password)
@@ -37,7 +36,7 @@ impl PyRemoteClient {
     ///     proxy_url: WebSocket URL of the proxy server.
     ///     identity_name: Name for the identity keypair file (~/.bw-remote/{name}.key).
     #[new]
-    #[pyo3(signature = (proxy_url="wss://rat1.lesspassword.dev", identity_name="python-remote"))]
+    #[pyo3(signature = (proxy_url="wss://ap.lesspassword.dev", identity_name="python-remote"))]
     pub fn new(proxy_url: &str, identity_name: &str) -> PyResult<Self> {
         // Enable RUST_LOG for debugging
         let _ = tracing_subscriber::fmt()
@@ -65,8 +64,8 @@ impl PyRemoteClient {
     ///
     /// Args:
     ///     token: Rendezvous code (e.g. "ABC-DEF-GHI") or PSK token
-    ///            (<64hex>_<64hex>). If None, uses a cached session.
-    ///     session: Hex fingerprint of a specific cached session to reconnect.
+    ///            (<64hex>_<64hex>). If None, uses a cached connection.
+    ///     session: Hex fingerprint of a specific cached connection to reconnect.
     ///
     /// Returns:
     ///     The 6-char handshake fingerprint (for new connections) or None (cached).
@@ -80,19 +79,16 @@ impl PyRemoteClient {
         let identity = FileIdentityStorage::load_or_generate(&self.identity_name)
             .map_err(|e| RemoteAccessError::new_err(e.to_string()))?;
 
-        let session_store = FileSessionCache::load_or_create(&self.identity_name)
+        let connection_store = FileConnectionCache::load_or_create(&self.identity_name)
             .map_err(|e| RemoteAccessError::new_err(e.to_string()))?;
 
-        let proxy_client = Box::new(DefaultProxyClient::new(ProxyClientConfig {
-            proxy_url: self.proxy_url.clone(),
-            identity_keypair: Some(self.runtime.block_on(identity.identity())),
-        }));
+        let proxy_client = Box::new(DefaultProxyClient::from_url(self.proxy_url.clone()));
 
         // Create the client (connects to proxy, spawns event loop)
         let handle = py
             .allow_threads(|| {
                 self.runtime.block_on(async {
-                    RemoteClient::connect(Box::new(identity), Box::new(session_store), proxy_client)
+                    RemoteClient::connect(Box::new(identity), Box::new(connection_store), proxy_client)
                         .await
                 })
             })
@@ -107,15 +103,10 @@ impl PyRemoteClient {
                 self.runtime.block_on(async {
                     if let Some(token_str) = token {
                         // Parse token: PSK or rendezvous
-                        if token_str.contains('_') && token_str.len() == 129 {
-                            // PSK token: <64hex>_<64hex>
-                            let parts: Vec<&str> = token_str.split('_').collect();
-                            if parts.len() != 2 || parts[0].len() != 64 || parts[1].len() != 64 {
-                                return Err("Invalid PSK token format".to_string());
-                            }
-                            let psk =
-                                Psk::from_hex(parts[0]).map_err(|e| format!("Invalid PSK: {e}"))?;
-                            let fingerprint = parse_fingerprint_hex(parts[1])?;
+                        if PskToken::looks_like_psk_token(token_str) {
+                            let parsed = PskToken::parse(token_str)
+                                .map_err(|e| format!("Invalid PSK token: {e}"))?;
+                            let (psk, fingerprint) = parsed.into_parts();
 
                             client
                                 .pair_with_psk(psk, fingerprint)
@@ -132,34 +123,35 @@ impl PyRemoteClient {
                             Ok(Some(hex::encode(fp.0)))
                         }
                     } else if let Some(session_hex) = session {
-                        let fingerprint = parse_fingerprint_hex(session_hex)?;
+                        let fingerprint = IdentityFingerprint::from_hex(session_hex)
+                            .map_err(|e| format!("Invalid session fingerprint: {e}"))?;
                         client
-                            .load_cached_session(fingerprint)
+                            .load_cached_connection(fingerprint)
                             .await
                             .map_err(|e| e.to_string())?;
                         Ok(None)
                     } else {
                         // Auto-select cached session if exactly one exists
-                        let sessions = client
-                            .list_sessions()
+                        let connections = client
+                            .list_connections()
                             .await
                             .map_err(|e| e.to_string())?;
-                        if sessions.len() == 1 {
-                            let (fingerprint, _, _, _) = &sessions[0];
+                        if connections.len() == 1 {
+                            let fingerprint = connections[0].fingerprint;
                             client
-                                .load_cached_session(*fingerprint)
+                                .load_cached_connection(fingerprint)
                                 .await
                                 .map_err(|e| e.to_string())?;
                             Ok(None)
-                        } else if sessions.is_empty() {
+                        } else if connections.is_empty() {
                             Err(
-                                "No cached sessions — provide a token to start a new connection"
+                                "No cached connections — provide a token to start a new connection"
                                     .to_string(),
                             )
                         } else {
                             Err(format!(
-                                "Multiple cached sessions ({}) — specify one with session=",
-                                sessions.len()
+                                "Multiple cached connections ({}) — specify one with session=",
+                                connections.len()
                             ))
                         }
                     }
@@ -217,9 +209,9 @@ impl PyRemoteClient {
         self.ready
     }
 
-    /// Clear all cached sessions for this identity.
-    pub fn clear_sessions(&self) -> PyResult<()> {
-        let mut store = FileSessionCache::load_or_create(&self.identity_name)
+    /// Clear all cached connections for this identity.
+    pub fn clear_connections(&self) -> PyResult<()> {
+        let mut store = FileConnectionCache::load_or_create(&self.identity_name)
             .map_err(|e| RemoteAccessError::new_err(e.to_string()))?;
         self.runtime
             .block_on(store.clear())
@@ -227,30 +219,16 @@ impl PyRemoteClient {
         Ok(())
     }
 
-    /// List cached sessions. Returns a list of (fingerprint_hex, name, cached_at, last_connected_at).
-    pub fn list_sessions(&self) -> PyResult<Vec<(String, Option<String>, u64, u64)>> {
-        let store = FileSessionCache::load_or_create(&self.identity_name)
+    /// List cached connections. Returns a list of (fingerprint_hex, name, cached_at, last_connected_at).
+    pub fn list_connections(&self) -> PyResult<Vec<(String, Option<String>, u64, u64)>> {
+        let store = FileConnectionCache::load_or_create(&self.identity_name)
             .map_err(|e| RemoteAccessError::new_err(e.to_string()))?;
         Ok(self
             .runtime
-            .block_on(store.list_sessions())
+            .block_on(store.list())
             .into_iter()
-            .map(|(fp, name, cached, last)| (hex::encode(fp.0), name, cached, last))
+            .map(|s| (hex::encode(s.fingerprint.0), s.name, s.cached_at, s.last_connected_at))
             .collect())
     }
 }
 
-/// Parse a 64-char hex string into an IdentityFingerprint.
-fn parse_fingerprint_hex(hex_str: &str) -> Result<IdentityFingerprint, String> {
-    let clean = hex_str.replace(['-', ' ', ':'], "");
-    if clean.len() != 64 {
-        return Err(format!(
-            "Fingerprint must be 64 hex characters, got {}",
-            clean.len()
-        ));
-    }
-    let bytes = hex::decode(&clean).map_err(|e| format!("Invalid hex: {e}"))?;
-    let mut arr = [0u8; 32];
-    arr.copy_from_slice(&bytes);
-    Ok(IdentityFingerprint(arr))
-}

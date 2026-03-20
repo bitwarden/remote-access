@@ -1,29 +1,14 @@
-use ap_proxy_protocol::{Identity, IdentityFingerprint, IdentityKeyPair, RendezvousCode};
+use ap_proxy_protocol::{Identity, IdentityFingerprint, RendezvousCode};
 
 /// Configuration for creating a proxy client.
 ///
 /// # Examples
-///
-/// Create a client with a new identity:
 ///
 /// ```
 /// use ap_proxy_client::ProxyClientConfig;
 ///
 /// let config = ProxyClientConfig {
 ///     proxy_url: "ws://localhost:8080".to_string(),
-///     identity_keypair: None, // Will generate a new identity
-/// };
-/// ```
-///
-/// Create a client with an existing identity:
-///
-/// ```
-/// use ap_proxy_client::{ProxyClientConfig, IdentityKeyPair};
-///
-/// let keypair = IdentityKeyPair::generate();
-/// let config = ProxyClientConfig {
-///     proxy_url: "ws://localhost:8080".to_string(),
-///     identity_keypair: Some(keypair),
 /// };
 /// ```
 pub struct ProxyClientConfig {
@@ -35,15 +20,6 @@ pub struct ProxyClientConfig {
     /// - `"ws://localhost:8080"` - Local development
     /// - `"wss://proxy.example.com:443"` - Production with TLS
     pub proxy_url: String,
-
-    /// Optional identity keypair.
-    ///
-    /// If `None`, a new random identity will be generated on each connection.
-    /// If `Some`, the provided identity will be used for authentication.
-    ///
-    /// Use [`IdentityKeyPair::generate()`] to create a new identity, or
-    /// [`IdentityKeyPair::from_seed()`] to restore a previously saved identity.
-    pub identity_keypair: Option<IdentityKeyPair>,
 }
 
 /// Messages received by the client from the proxy server.
@@ -54,15 +30,14 @@ pub struct ProxyClientConfig {
 /// # Examples
 ///
 /// ```no_run
-/// use ap_proxy_client::{ProxyClientConfig, ProxyProtocolClient, IncomingMessage};
+/// use ap_proxy_client::{ProxyClientConfig, ProxyProtocolClient, IncomingMessage, IdentityKeyPair};
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let config = ProxyClientConfig {
 ///     proxy_url: "ws://localhost:8080".to_string(),
-///     identity_keypair: None,
 /// };
 /// let mut client = ProxyProtocolClient::new(config);
-/// let mut incoming = client.connect().await?;
+/// let mut incoming = client.connect(IdentityKeyPair::generate()).await?;
 ///
 /// while let Some(msg) = incoming.recv().await {
 ///     match msg {

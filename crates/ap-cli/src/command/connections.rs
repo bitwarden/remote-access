@@ -1,17 +1,17 @@
 //! Connection management commands
 //!
 //! Commands for managing connections and identity keys:
-//! - `connections list`: List cached sessions and identity fingerprints
-//! - `connections clear [sessions|all]`: Clear cached sessions and/or identity keys
+//! - `connections list`: List cached connections and identity fingerprints
+//! - `connections clear [connections|all]`: Clear cached connections and/or identity keys
 
-use ap_client::SessionStore;
+use ap_client::ConnectionStore;
 use clap::{Args, Subcommand, ValueEnum};
 use color_eyre::eyre::Result;
 use crossterm::style::Stylize;
 
 use super::color_choice;
 use super::util::format_relative_time;
-use crate::storage::{FileIdentityStorage, FileSessionCache};
+use crate::storage::{FileConnectionCache, FileIdentityStorage};
 
 /// Apply a style function only when color is enabled, otherwise return the plain string.
 fn styled(s: &str, style_fn: impl FnOnce(&str) -> crossterm::style::StyledContent<&str>) -> String {
@@ -50,9 +50,9 @@ pub enum ClientType {
 /// What to clear
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
 pub enum ClearScope {
-    /// Clear sessions only (keep identity key)
-    Sessions,
-    /// Clear sessions and delete identity key
+    /// Clear connections only (keep identity key)
+    Connections,
+    /// Clear connections and delete identity key
     #[default]
     All,
 }
@@ -70,13 +70,13 @@ pub struct ConnectionsArgs {
 
 #[derive(Subcommand)]
 enum ConnectionsCommands {
-    /// Clear cached sessions and/or identity keys
+    /// Clear cached connections and/or identity keys
     Clear {
-        /// What to clear: "sessions" (keep identity key) or "all" (sessions + identity key)
+        /// What to clear: "connections" (keep identity key) or "all" (connections + identity key)
         #[arg(default_value = "all")]
         scope: ClearScope,
     },
-    /// List cached sessions and identity info
+    /// List cached connections and identity info
     List,
 }
 
@@ -120,11 +120,11 @@ async fn clear_cache(client_type: Option<ClientType>, scope: ClearScope) -> Resu
     let sides = sides_for(client_type);
 
     for side in &sides {
-        // Always clear sessions
-        let mut cache = FileSessionCache::load_or_create(side.storage_name)?;
+        // Always clear connections
+        let mut cache = FileConnectionCache::load_or_create(side.storage_name)?;
         cache.clear().await?;
         println!(
-            "{} ({}) session cache cleared.",
+            "{} ({}) connection cache cleared.",
             side.label, side.description
         );
 
@@ -168,25 +168,25 @@ async fn list_cache(client_type: Option<ClientType>) -> Result<()> {
             ),
         };
 
-        // Load and display sessions
-        let cache = FileSessionCache::load_or_create(side.storage_name)?;
-        let mut sessions = cache.list_sessions().await;
+        // Load and display connections
+        let cache = FileConnectionCache::load_or_create(side.storage_name)?;
+        let mut connections = cache.list().await;
 
-        if sessions.is_empty() {
+        if connections.is_empty() {
             println!("  {}: {}", grey("Connections"), grey("(none)"));
         } else {
-            sessions.sort_by(|a, b| b.3.cmp(&a.3));
+            connections.sort_by(|a, b| b.last_connected_at.cmp(&a.last_connected_at));
             println!(
                 "  {}: ({} peer{})",
                 grey("Connections"),
-                sessions.len(),
-                if sessions.len() == 1 { "" } else { "s" }
+                connections.len(),
+                if connections.len() == 1 { "" } else { "s" }
             );
-            for (session_fp, name, cached_at, last_connected) in &sessions {
-                let fp = hex::encode(session_fp.0);
-                let paired_ago = format_relative_time(*cached_at);
-                let used_ago = format_relative_time(*last_connected);
-                if let Some(name) = name {
+            for connection in &connections {
+                let fp = hex::encode(connection.fingerprint.0);
+                let paired_ago = format_relative_time(connection.cached_at);
+                let used_ago = format_relative_time(connection.last_connected_at);
+                if let Some(name) = &connection.name {
                     println!("    {} {} {}", grey("-"), cyan_bold(name), grey(&fp));
                 } else {
                     println!("    {} {}", grey("-"), cyan(&fp));

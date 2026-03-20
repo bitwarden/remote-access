@@ -56,20 +56,33 @@ impl BitwardenProvider {
 /// Find `bw` on `$PATH`, falling back to a well-known location.
 /// Returns `None` only if neither is found.
 fn resolve_bw_path() -> Option<String> {
-    // Check $PATH first
-    let from_path = Command::new("which")
+    // Check $PATH first — use `where` on Windows, `which` on Unix
+    let which_cmd = if cfg!(target_os = "windows") {
+        "where"
+    } else {
+        "which"
+    };
+    let from_path = Command::new(which_cmd)
         .arg("bw")
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .map(|o| {
+            // `where` on Windows may return multiple lines; take the first one
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string()
+        })
         .filter(|s| !s.is_empty());
 
     if from_path.is_some() {
         return from_path;
     }
 
-    // Fall back to well-known location
+    // Fall back to well-known location (macOS Homebrew default)
     if std::path::Path::new(BW_FALLBACK_PATH).exists() {
         Some(BW_FALLBACK_PATH.to_string())
     } else {

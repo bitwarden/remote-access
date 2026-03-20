@@ -4,12 +4,10 @@
 //! and requesting credentials over a secure Noise Protocol channel.
 
 use ap_client::{
-    ClientError, ConnectionMode, DefaultProxyClient, IdentityFingerprint, IdentityProvider,
-    RemoteClient, RemoteClientFingerprintReply, RemoteClientNotification, RemoteClientRequest,
-    SessionStore,
+    ClientError, ConnectionInfo, ConnectionMode, ConnectionStore, DefaultProxyClient,
+    IdentityFingerprint, IdentityProvider, Psk, PskToken, RemoteClient,
+    RemoteClientFingerprintReply, RemoteClientNotification, RemoteClientRequest,
 };
-use ap_noise::Psk;
-use ap_proxy_client::ProxyClientConfig;
 use clap::Args;
 use color_eyre::eyre::{Result, bail};
 use crossterm::event::{Event, EventStream, KeyEventKind};
@@ -26,7 +24,8 @@ use super::tui::{
     App, AppAction, MessageKind, Mode, init_terminal, restore_terminal, wait_for_keypress,
 };
 use super::util::{format_connect_notification, format_relative_time};
-use crate::storage::{FileIdentityStorage, FileSessionCache, MemorySessionStore};
+use crate::storage::{FileConnectionCache, FileIdentityStorage};
+use ap_client::MemoryConnectionStore;
 
 use super::DEFAULT_PROXY_URL;
 
@@ -123,9 +122,9 @@ enum TokenType {
 
 /// Current phase of the connect command's interactive loop.
 enum Phase {
-    /// Choosing between new connection or cached session.
-    SessionSelect {
-        sorted_sessions: Vec<(IdentityFingerprint, Option<String>, u64, u64)>,
+    /// Choosing between new connection or cached connection.
+    ConnectionSelect {
+        sorted_connections: Vec<ConnectionInfo>,
     },
     /// Entering a token (rendezvous code or PSK).
     TokenInput,
@@ -139,17 +138,10 @@ enum Phase {
 
 /// Parse a token (rendezvous code or PSK token)
 fn parse_token(token: &str) -> Result<TokenType> {
-    if token.contains('_') && token.len() == 129 {
-        // PSK token: <64-char-hex>_<64-char-hex>
-        let parts: Vec<&str> = token.split('_').collect();
-        if parts.len() != 2 || parts[0].len() != 64 || parts[1].len() != 64 {
-            bail!("Invalid PSK token format (expected 64-char hex + underscore + 64-char hex)");
-        }
-
-        let psk = Psk::from_hex(parts[0])
-            .map_err(|e| color_eyre::eyre::eyre!("Invalid PSK in token: {}", e))?;
-        let fingerprint = parse_fingerprint_hex(parts[1])?;
-
+    if PskToken::looks_like_psk_token(token) {
+        let parsed = PskToken::parse(token)
+            .map_err(|e| color_eyre::eyre::eyre!("Invalid PSK token: {e}"))?;
+        let (psk, fingerprint) = parsed.into_parts();
         Ok(TokenType::Psk { psk, fingerprint })
     } else {
         // Rendezvous code (9 chars)
@@ -160,16 +152,14 @@ fn parse_token(token: &str) -> Result<TokenType> {
 
 /// Build pick-list labels for session selection.
 #[allow(clippy::string_slice)]
-fn session_pick_options(
-    sorted_sessions: &[(IdentityFingerprint, Option<String>, u64, u64)],
-) -> Vec<String> {
+fn connection_pick_options(sorted_connections: &[ConnectionInfo]) -> Vec<String> {
     let mut options = vec!["New connection (enter token)".to_string()];
-    for (fingerprint, _, _, last_connected) in sorted_sessions {
-        let short_hex = hex::encode(fingerprint.0)
+    for session in sorted_connections {
+        let short_hex = hex::encode(session.fingerprint.0)
             .chars()
             .take(12)
             .collect::<String>();
-        let relative_time = format_relative_time(*last_connected);
+        let relative_time = format_relative_time(session.last_connected_at);
         options.push(format!("Session {short_hex}  (last used: {relative_time})"));
     }
     options
@@ -237,7 +227,7 @@ fn spawn_pairing(
             Ok(())
         }),
         ConnectionMode::Existing { remote_fingerprint } => tokio::spawn(async move {
-            c.load_cached_session(remote_fingerprint).await?;
+            c.load_cached_connection(remote_fingerprint).await?;
             Ok(())
         }),
     }
@@ -255,18 +245,18 @@ async fn run_interactive_session(
     // Create identity provider and session store first
     let identity_provider: Box<dyn IdentityProvider> =
         Box::new(FileIdentityStorage::load_or_generate("remote_client")?);
-    let session_store: Box<dyn SessionStore> =
-        Box::new(FileSessionCache::load_or_create("remote_client")?);
+    let connection_store: Box<dyn ConnectionStore> =
+        Box::new(FileConnectionCache::load_or_create("remote_client")?);
 
-    // Get cached sessions from session store
-    let cached_sessions = session_store.list_sessions().await;
+    // Get cached connections from connection store
+    let mut cached_connections = connection_store.list().await;
 
     // Determine if we can skip straight to connecting based on CLI flags
     let cli_connection_mode = if session_fingerprint.is_some() || token.is_some() {
         Some(resolve_connection_mode(
             token.as_deref(),
             session_fingerprint.as_deref(),
-            &cached_sessions,
+            &cached_connections,
         )?)
     } else {
         None
@@ -281,7 +271,7 @@ async fn run_interactive_session(
     // When CLI flags provide a connection mode these are consumed immediately;
     // otherwise they are consumed when the user picks a session or enters a token.
     let mut deferred_identity: Option<Box<dyn IdentityProvider>> = Some(identity_provider);
-    let mut deferred_session_store: Option<Box<dyn SessionStore>> = Some(session_store);
+    let mut deferred_connection_store: Option<Box<dyn ConnectionStore>> = Some(connection_store);
     let deferred_proxy_url = proxy_url;
 
     let mut notification_rx: Option<mpsc::Receiver<RemoteClientNotification>> = None;
@@ -301,9 +291,9 @@ async fn run_interactive_session(
 
         match start_connection(
             deferred_identity.take().expect("identity consumed twice"),
-            deferred_session_store
+            deferred_connection_store
                 .take()
-                .expect("session store consumed twice"),
+                .expect("connection store consumed twice"),
             &deferred_proxy_url,
         )
         .await
@@ -321,22 +311,22 @@ async fn run_interactive_session(
         }
 
         Phase::Connecting
-    } else if !cached_sessions.is_empty() && !ephemeral_connection {
+    } else if !cached_connections.is_empty() && !ephemeral_connection {
         // Cached sessions available — show pick list
-        let mut sorted = cached_sessions.clone();
-        sorted.sort_by(|a, b| b.3.cmp(&a.3));
-        let options = session_pick_options(&sorted);
+        cached_connections.sort_by(|a, b| b.last_connected_at.cmp(&a.last_connected_at));
+        let sorted = cached_connections;
+        let options = connection_pick_options(&sorted);
         app.set_mode(Mode::Pick {
             title: "Select connection".to_string(),
             options,
             selected: 0,
         });
         app.footer = select_footer();
-        Phase::SessionSelect {
-            sorted_sessions: sorted,
+        Phase::ConnectionSelect {
+            sorted_connections: sorted,
         }
     } else {
-        // No cached sessions — prompt for token
+        // No cached connections — prompt for token
         app.push_msg(
             MessageKind::Prompt,
             "Enter a token (rendezvous code or PSK token):",
@@ -359,10 +349,10 @@ async fn run_interactive_session(
                         if let Some(action) = app.handle_key(key) {
                             match (&phase, action) {
                                 // ── Session selection (pick list) ──
-                                (Phase::SessionSelect { .. }, AppAction::Picked(idx)) => {
-                                    // Extract sorted_sessions before replacing phase
-                                    let sorted_sessions = match &phase {
-                                        Phase::SessionSelect { sorted_sessions } => sorted_sessions.clone(),
+                                (Phase::ConnectionSelect { .. }, AppAction::Picked(idx)) => {
+                                    // Extract sorted_connections before replacing phase
+                                    let sorted_connections = match &phase {
+                                        Phase::ConnectionSelect { sorted_connections } => sorted_connections.clone(),
                                         _ => unreachable!(),
                                     };
 
@@ -375,9 +365,9 @@ async fn run_interactive_session(
                                         app.commands = &["/exit"];
                                         phase = Phase::TokenInput;
                                     } else {
-                                        let (fingerprint, _, _, _) = &sorted_sessions[idx - 1];
+                                        let session = &sorted_connections[idx - 1];
                                         let mode = ConnectionMode::Existing {
-                                            remote_fingerprint: *fingerprint,
+                                            remote_fingerprint: session.fingerprint,
                                         };
 
                                         // Start connecting
@@ -387,7 +377,7 @@ async fn run_interactive_session(
 
                                         match start_connection(
                                             deferred_identity.take().expect("identity consumed twice"),
-                                            deferred_session_store.take().expect("session store consumed twice"),
+                                            deferred_connection_store.take().expect("connection store consumed twice"),
                                             &deferred_proxy_url,
                                         ).await {
                                             Ok((nrx, rrx, c)) => {
@@ -439,7 +429,7 @@ async fn run_interactive_session(
 
                                             match start_connection(
                                                 deferred_identity.take().expect("identity consumed twice"),
-                                                deferred_session_store.take().expect("session store consumed twice"),
+                                                deferred_connection_store.take().expect("connection store consumed twice"),
                                                 &deferred_proxy_url,
                                             ).await {
                                                 Ok((nrx, rrx, c)) => {
@@ -721,19 +711,19 @@ pub(super) async fn fetch_credential(
     let identity_provider: Box<dyn IdentityProvider> =
         Box::new(FileIdentityStorage::load_or_generate("remote_client")?);
 
-    let session_store: Box<dyn SessionStore> = if ephemeral_connection {
-        Box::new(MemorySessionStore::new())
+    let connection_store: Box<dyn ConnectionStore> = if ephemeral_connection {
+        Box::new(MemoryConnectionStore::new())
     } else {
-        Box::new(FileSessionCache::load_or_create("remote_client")?)
+        Box::new(FileConnectionCache::load_or_create("remote_client")?)
     };
 
-    let cached_sessions = session_store.list_sessions().await;
-    let mode = resolve_connection_mode(token, session_fingerprint, &cached_sessions)?;
+    let cached_connections = connection_store.list().await;
+    let mode = resolve_connection_mode(token, session_fingerprint, &cached_connections)?;
 
     info!("Connecting to proxy...");
 
     let (mut notification_rx, _request_rx, client) =
-        start_connection(identity_provider, session_store, proxy_url).await?;
+        start_connection(identity_provider, connection_store, proxy_url).await?;
 
     // Drain notifications in background (prevents channel backpressure)
     tokio::spawn(async move { while notification_rx.recv().await.is_some() {} });
@@ -757,9 +747,9 @@ pub(super) async fn fetch_credential(
         }
         ConnectionMode::Existing { remote_fingerprint } => {
             client
-                .load_cached_session(*remote_fingerprint)
+                .load_cached_connection(*remote_fingerprint)
                 .await
-                .map_err(|e| color_eyre::eyre::eyre!("Session reconnection failed: {}", e))?;
+                .map_err(|e| color_eyre::eyre::eyre!("Connection reconnection failed: {}", e))?;
         }
     }
 
@@ -825,19 +815,16 @@ async fn run_single_shot(
 /// so fingerprint verification requests can be handled without deadlocking.
 async fn start_connection(
     identity_provider: Box<dyn IdentityProvider>,
-    session_store: Box<dyn SessionStore>,
+    connection_store: Box<dyn ConnectionStore>,
     proxy_url: &str,
 ) -> Result<(
     mpsc::Receiver<RemoteClientNotification>,
     mpsc::Receiver<RemoteClientRequest>,
     RemoteClient,
 )> {
-    let proxy_client = Box::new(DefaultProxyClient::new(ProxyClientConfig {
-        proxy_url: proxy_url.to_string(),
-        identity_keypair: Some(identity_provider.identity().await),
-    }));
+    let proxy_client = Box::new(DefaultProxyClient::from_url(proxy_url.to_string()));
 
-    let handle = RemoteClient::connect(identity_provider, session_store, proxy_client)
+    let handle = RemoteClient::connect(identity_provider, connection_store, proxy_client)
         .await
         .map_err(|e| color_eyre::eyre::eyre!("Connection to proxy failed: {}", e))?;
 
@@ -864,39 +851,39 @@ fn validate_rendezvous_code(code: &str) -> Result<()> {
     Ok(())
 }
 
-/// Resolve a session hex prefix against cached sessions.
+/// Resolve a connection hex prefix against cached connections.
 ///
 /// Accepts a full 64-char hex fingerprint or any unique prefix (e.g. "a1b2c3").
 /// Returns the matching fingerprint, or an error if the prefix is ambiguous or not found.
-fn resolve_session_prefix(
+fn resolve_connection_prefix(
     prefix: &str,
-    cached_sessions: &[(IdentityFingerprint, Option<String>, u64, u64)],
+    cached_connections: &[ConnectionInfo],
 ) -> Result<IdentityFingerprint> {
     let clean_prefix = prefix.replace(['-', ' ', ':'], "").to_lowercase();
 
     if clean_prefix.is_empty() {
-        bail!("Session prefix must not be empty");
+        bail!("Connection prefix must not be empty");
     }
 
     if !clean_prefix.chars().all(|c| c.is_ascii_hexdigit()) {
-        bail!("Session prefix must be a hex string");
+        bail!("Connection prefix must be a hex string");
     }
 
-    let mut iter = cached_sessions
+    let mut iter = cached_connections
         .iter()
-        .filter(|(fp, _, _, _)| hex::encode(fp.0).starts_with(&clean_prefix))
-        .map(|(fp, _, _, _)| *fp);
+        .filter(|s| hex::encode(s.fingerprint.0).starts_with(&clean_prefix))
+        .map(|s| s.fingerprint);
 
     match (iter.next(), iter.next()) {
-        (None, _) => bail!("No cached session matches prefix: {prefix}"),
+        (None, _) => bail!("No cached connection matches prefix: {prefix}"),
         (Some(fp), None) => Ok(fp),
         (Some(_), Some(_)) => {
-            bail!("Ambiguous session prefix '{prefix}' — provide more characters")
+            bail!("Ambiguous connection prefix '{prefix}' — provide more characters")
         }
     }
 }
 
-/// Determine the connection mode from CLI flags and cached sessions.
+/// Determine the connection mode from CLI flags and cached connections.
 ///
 /// Pure decision logic — returns `Ok(mode)` or an error message instead of
 /// calling `std::process::exit`, making it testable from both the single-shot
@@ -904,12 +891,12 @@ fn resolve_session_prefix(
 fn resolve_connection_mode(
     token: Option<&str>,
     session_fingerprint: Option<&str>,
-    cached_sessions: &[(IdentityFingerprint, Option<String>, u64, u64)],
+    cached_connections: &[ConnectionInfo],
 ) -> Result<ConnectionMode> {
     if session_fingerprint.is_some() && token.is_some() {
         bail!("--session and --token are mutually exclusive")
     } else if let Some(session_hex) = session_fingerprint {
-        let fingerprint = resolve_session_prefix(session_hex, cached_sessions)?;
+        let fingerprint = resolve_connection_prefix(session_hex, cached_connections)?;
         Ok(ConnectionMode::Existing {
             remote_fingerprint: fingerprint,
         })
@@ -923,62 +910,66 @@ fn resolve_connection_mode(
                 remote_fingerprint: fingerprint,
             }),
         }
-    } else if cached_sessions.len() == 1 {
-        let (fingerprint, _, _, _) = &cached_sessions[0];
+    } else if cached_connections.len() == 1 {
         Ok(ConnectionMode::Existing {
-            remote_fingerprint: *fingerprint,
+            remote_fingerprint: cached_connections[0].fingerprint,
         })
-    } else if cached_sessions.is_empty() {
-        bail!("No cached sessions found — provide --token to start a new connection")
+    } else if cached_connections.is_empty() {
+        bail!("No cached connections found — provide --token to start a new connection")
     } else {
         bail!(
-            "Multiple cached sessions found — specify one with --session. \
-             Use `aac connections list` to see available sessions."
+            "Multiple cached connections found — specify one with --session. \
+             Use `aac connections list` to see available connections."
         )
     }
-}
-
-/// Parse a fingerprint from hex string
-#[allow(clippy::string_slice)]
-fn parse_fingerprint_hex(hex: &str) -> Result<IdentityFingerprint> {
-    // Remove any separators or whitespace
-    let clean_hex = hex.replace(['-', ' ', ':'], "");
-
-    if clean_hex.len() != 64 {
-        bail!("Fingerprint must be 64 hex characters (32 bytes)");
-    }
-
-    // SAFETY: clean_hex is validated to be 64 hex characters (ASCII only),
-    // so indexing at i*2 boundaries is safe.
-    let mut bytes = [0u8; 32];
-    for i in 0..32 {
-        let byte_str = &clean_hex[i * 2..i * 2 + 2];
-        bytes[i] = u8::from_str_radix(byte_str, 16)
-            .map_err(|_| color_eyre::eyre::eyre!("Invalid hex string"))?;
-    }
-
-    Ok(IdentityFingerprint(bytes))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Parse a fingerprint from hex string, stripping separators.
+    #[allow(clippy::string_slice)]
+    fn parse_fingerprint_hex(hex: &str) -> Result<IdentityFingerprint> {
+        let clean_hex = hex.replace(['-', ' ', ':'], "");
+
+        if clean_hex.len() != 64 {
+            bail!("Fingerprint must be 64 hex characters (32 bytes)");
+        }
+
+        // SAFETY: clean_hex is validated to be 64 hex characters (ASCII only),
+        // so indexing at i*2 boundaries is safe.
+        let mut bytes = [0u8; 32];
+        for i in 0..32 {
+            let byte_str = &clean_hex[i * 2..i * 2 + 2];
+            bytes[i] = u8::from_str_radix(byte_str, 16)
+                .map_err(|_| color_eyre::eyre::eyre!("Invalid hex string"))?;
+        }
+
+        Ok(IdentityFingerprint(bytes))
+    }
+
     /// Helper: create an IdentityFingerprint from a repeating byte.
     fn fp(byte: u8) -> IdentityFingerprint {
         IdentityFingerprint([byte; 32])
     }
 
-    /// Helper: build a minimal cached-session tuple.
-    fn session(byte: u8) -> (IdentityFingerprint, Option<String>, u64, u64) {
-        (fp(byte), None, 0, 0)
+    /// Helper: build a minimal cached-session ConnectionInfo.
+    fn connection(byte: u8) -> ConnectionInfo {
+        ConnectionInfo {
+            fingerprint: fp(byte),
+            name: None,
+            cached_at: 0,
+            last_connected_at: 0,
+            transport_state: None,
+        }
     }
 
     // ── resolve_connection_mode ─────────────────────────────────────
 
     #[test]
     fn resolve_mode_single_cached_session_auto_selects() {
-        let sessions = vec![session(0xaa)];
+        let sessions = vec![connection(0xaa)];
         let mode = resolve_connection_mode(None, None, &sessions).expect("should succeed");
         assert!(matches!(
             mode,
@@ -989,25 +980,25 @@ mod tests {
     }
 
     #[test]
-    fn resolve_mode_no_cached_sessions_errors() {
+    fn resolve_mode_no_cached_connections_errors() {
         let result = resolve_connection_mode(None, None, &[]);
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
-        assert!(msg.contains("No cached sessions found"));
+        assert!(msg.contains("No cached connections found"));
     }
 
     #[test]
-    fn resolve_mode_multiple_cached_sessions_errors() {
-        let sessions = vec![session(0xaa), session(0xbb)];
+    fn resolve_mode_multiple_cached_connections_errors() {
+        let sessions = vec![connection(0xaa), connection(0xbb)];
         let result = resolve_connection_mode(None, None, &sessions);
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
-        assert!(msg.contains("Multiple cached sessions found"));
+        assert!(msg.contains("Multiple cached connections found"));
     }
 
     #[test]
-    fn resolve_mode_session_prefix_selects_existing() {
-        let sessions = vec![session(0xaa), session(0xbb)];
+    fn resolve_mode_connection_prefix_selects_existing() {
+        let sessions = vec![connection(0xaa), connection(0xbb)];
         let prefix = &hex::encode([0xaa; 32])[..8]; // first 8 chars
         let mode = resolve_connection_mode(None, Some(prefix), &sessions).expect("should succeed");
         assert!(matches!(
@@ -1042,7 +1033,7 @@ mod tests {
 
     #[test]
     fn resolve_mode_token_takes_priority_over_single_cached() {
-        let sessions = vec![session(0xcc)];
+        let sessions = vec![connection(0xcc)];
         let mode =
             resolve_connection_mode(Some("XYZ789ABC"), None, &sessions).expect("should succeed");
         assert!(
@@ -1052,7 +1043,7 @@ mod tests {
 
     #[test]
     fn resolve_mode_session_and_token_both_provided_errors() {
-        let sessions = vec![session(0xaa), session(0xbb)];
+        let sessions = vec![connection(0xaa), connection(0xbb)];
         let prefix = &hex::encode([0xaa; 32])[..8];
         let result = resolve_connection_mode(Some("ABC123DEF"), Some(prefix), &sessions);
         assert!(result.is_err());
@@ -1060,28 +1051,28 @@ mod tests {
         assert!(msg.contains("mutually exclusive"));
     }
 
-    // ── resolve_session_prefix ──────────────────────────────────────
+    // ── resolve_connection_prefix ──────────────────────────────────────
 
     #[test]
     fn prefix_exact_full_hex_match() {
-        let sessions = vec![session(0xaa)];
+        let sessions = vec![connection(0xaa)];
         let full_hex = hex::encode([0xaa; 32]);
-        let result = resolve_session_prefix(&full_hex, &sessions).expect("should match");
+        let result = resolve_connection_prefix(&full_hex, &sessions).expect("should match");
         assert_eq!(result, fp(0xaa));
     }
 
     #[test]
     fn prefix_unique_short_match() {
-        let sessions = vec![session(0xaa), session(0xbb)];
-        let result = resolve_session_prefix("aa", &sessions).expect("should match");
+        let sessions = vec![connection(0xaa), connection(0xbb)];
+        let result = resolve_connection_prefix("aa", &sessions).expect("should match");
         assert_eq!(result, fp(0xaa));
     }
 
     #[test]
     fn prefix_ambiguous_errors() {
         // 0xaa and 0xab both start with 'a'
-        let sessions = vec![session(0xaa), session(0xab)];
-        let result = resolve_session_prefix("a", &sessions);
+        let sessions = vec![connection(0xaa), connection(0xab)];
+        let result = resolve_connection_prefix("a", &sessions);
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
         assert!(msg.contains("Ambiguous"));
@@ -1089,17 +1080,17 @@ mod tests {
 
     #[test]
     fn prefix_no_match_errors() {
-        let sessions = vec![session(0xaa)];
-        let result = resolve_session_prefix("ff", &sessions);
+        let sessions = vec![connection(0xaa)];
+        let result = resolve_connection_prefix("ff", &sessions);
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
-        assert!(msg.contains("No cached session"));
+        assert!(msg.contains("No cached connection"));
     }
 
     #[test]
     fn prefix_empty_errors() {
-        let sessions = vec![session(0xaa)];
-        let result = resolve_session_prefix("", &sessions);
+        let sessions = vec![connection(0xaa)];
+        let result = resolve_connection_prefix("", &sessions);
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
         assert!(msg.contains("must not be empty"));
@@ -1107,8 +1098,8 @@ mod tests {
 
     #[test]
     fn prefix_non_hex_errors() {
-        let sessions = vec![session(0xaa)];
-        let result = resolve_session_prefix("zzzz", &sessions);
+        let sessions = vec![connection(0xaa)];
+        let result = resolve_connection_prefix("zzzz", &sessions);
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
         assert!(msg.contains("hex string"));
@@ -1116,9 +1107,9 @@ mod tests {
 
     #[test]
     fn prefix_strips_separators() {
-        let sessions = vec![session(0xaa)];
+        let sessions = vec![connection(0xaa)];
         // "aa:aa" should normalize to "aaaa" and match
-        let result = resolve_session_prefix("aa:aa", &sessions).expect("should match");
+        let result = resolve_connection_prefix("aa:aa", &sessions).expect("should match");
         assert_eq!(result, fp(0xaa));
     }
 

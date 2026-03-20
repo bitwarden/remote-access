@@ -10,14 +10,14 @@ use web_time::Instant;
 
 use ap_noise::{Ciphersuite, MultiDeviceTransport, Psk, ResponderHandshake};
 use ap_proxy_client::IncomingMessage;
-use ap_proxy_protocol::{IdentityFingerprint, RendezvousCode};
+use ap_proxy_protocol::{IdentityFingerprint, IdentityKeyPair, RendezvousCode};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
 use tokio::sync::oneshot;
 
 use crate::proxy::ProxyClient;
-use crate::types::{CredentialData, PskId};
+use crate::types::{CredentialData, PskId, PskToken};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
@@ -27,36 +27,107 @@ const RECONNECT_BASE_DELAY: Duration = Duration::from_secs(2);
 const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(15 * 60);
 /// Maximum age for pending pairings before they are pruned.
 const PENDING_PAIRING_MAX_AGE: Duration = Duration::from_secs(10 * 60);
+/// Maximum number of messages buffered per peer while awaiting fingerprint verification.
+const AWAITING_VERIFICATION_BUFFER_LIMIT: usize = 100;
 
-/// The kind of pairing: rendezvous (null PSK) or PSK (real key).
-pub(crate) enum PairingKind {
-    /// Rendezvous pairing — uses a null PSK, requires fingerprint verification.
-    ///
-    /// The `reply` sender is `Some(...)` while waiting for the proxy's `RendezvousInfo`
-    /// response, and becomes `None` once the rendezvous code has been delivered.
-    Rendezvous {
-        reply: Option<oneshot::Sender<Result<RendezvousCode, ClientError>>>,
-    },
-    /// PSK pairing — uses a real pre-shared key, no fingerprint verification needed.
-    Psk { psk: Psk, psk_id: PskId },
+/// A pending PSK pairing waiting for an incoming handshake.
+struct PskPairing {
+    connection_name: Option<String>,
+    created_at: Instant,
+    psk: Psk,
 }
 
-/// A pending pairing waiting for an incoming handshake.
-pub(crate) struct PendingPairing {
-    /// Friendly name to assign to the session once paired.
+/// A pending rendezvous pairing waiting for an incoming handshake.
+struct RendezvousPairing {
     connection_name: Option<String>,
-    /// When this pairing was created (for pruning stale entries).
     created_at: Instant,
-    /// The kind of pairing.
-    kind: PairingKind,
+    /// Channel to deliver the rendezvous code — `Some` while awaiting, `None` after delivery.
+    code_tx: Option<oneshot::Sender<Result<RendezvousCode, ClientError>>>,
+}
+
+/// Manages pending pairings and verification message buffers.
+///
+/// Pairings track handshake setup (rendezvous codes, PSKs). Verification buffers
+/// hold messages from peers whose fingerprint is awaiting user approval — once
+/// approved the buffer is drained and replayed, on rejection it is discarded.
+struct PendingPairings {
+    /// PSK pairings keyed by their PskId for direct lookup.
+    psk_pairings: HashMap<PskId, PskPairing>,
+    /// At most one rendezvous pairing at a time.
+    rendezvous: Option<RendezvousPairing>,
+    /// Messages buffered per peer while awaiting fingerprint verification.
+    buffered_messages: HashMap<IdentityFingerprint, Vec<IncomingMessage>>,
+}
+
+impl PendingPairings {
+    fn new() -> Self {
+        Self {
+            psk_pairings: HashMap::new(),
+            rendezvous: None,
+            buffered_messages: HashMap::new(),
+        }
+    }
+
+    /// Remove pairings older than `PENDING_PAIRING_MAX_AGE`.
+    fn prune_stale(&mut self) {
+        self.psk_pairings
+            .retain(|_, p| p.created_at.elapsed() < PENDING_PAIRING_MAX_AGE);
+        if self
+            .rendezvous
+            .as_ref()
+            .is_some_and(|r| r.created_at.elapsed() >= PENDING_PAIRING_MAX_AGE)
+        {
+            self.rendezvous = None;
+        }
+    }
+
+    /// Take the pending rendezvous pairing, if any.
+    fn take_rendezvous(&mut self) -> Option<RendezvousPairing> {
+        self.rendezvous.take()
+    }
+
+    /// Start buffering messages for a source that is awaiting fingerprint verification.
+    fn prepare_buffering(&mut self, source: IdentityFingerprint) {
+        self.buffered_messages.insert(source, Vec::new());
+    }
+
+    /// Try to buffer a message for a source awaiting fingerprint verification.
+    /// Returns `None` if handled (buffered or dropped due to limit),
+    /// or `Some(msg)` if the source is not awaiting verification.
+    fn try_buffer_message(&mut self, msg: IncomingMessage) -> Option<IncomingMessage> {
+        let source = match &msg {
+            IncomingMessage::Send { source, .. } => source,
+            _ => return Some(msg),
+        };
+        if let Some(buffer) = self.buffered_messages.get_mut(source) {
+            if buffer.len() < AWAITING_VERIFICATION_BUFFER_LIMIT {
+                debug!(
+                    "Buffering message from {:?} pending fingerprint verification",
+                    source
+                );
+                buffer.push(msg);
+            } else {
+                warn!("Buffer limit reached for {:?}, dropping message", source);
+            }
+            None
+        } else {
+            Some(msg)
+        }
+    }
+
+    /// Remove and return buffered messages for a source.
+    /// Used to replay on approval or discard on rejection.
+    fn take_buffered_messages(&mut self, source: &IdentityFingerprint) -> Vec<IncomingMessage> {
+        self.buffered_messages.remove(source).unwrap_or_default()
+    }
 }
 
 use super::notify;
 use crate::{
     error::ClientError,
     traits::{
-        AuditConnectionType, AuditEvent, AuditLog, CredentialFieldSet, IdentityProvider,
-        NoOpAuditLog, SessionStore,
+        AuditConnectionType, AuditEvent, AuditLog, ConnectionInfo, ConnectionStore,
+        CredentialFieldSet, IdentityProvider, NoOpAuditLog,
     },
     types::{CredentialRequestPayload, CredentialResponsePayload, ProtocolMessage},
 };
@@ -245,12 +316,16 @@ impl UserClient {
     /// Pass `None` for `audit_log` to use a no-op logger.
     pub async fn connect(
         identity_provider: Box<dyn IdentityProvider>,
-        session_store: Box<dyn SessionStore>,
+        connection_store: Box<dyn ConnectionStore>,
         mut proxy_client: Box<dyn ProxyClient>,
         audit_log: Option<Box<dyn AuditLog>>,
     ) -> Result<UserClientHandle, ClientError> {
+        // Extract identity once — used for proxy auth, reconnection, and own fingerprint
+        let identity_keypair = identity_provider.identity().await;
+        let own_fingerprint = identity_keypair.identity().fingerprint();
+
         // Authenticate with the proxy (the async part — before spawn)
-        let incoming_rx = proxy_client.connect().await?;
+        let incoming_rx = proxy_client.connect(identity_keypair.clone()).await?;
 
         // Create channels
         let (notification_tx, notification_rx) = mpsc::channel(32);
@@ -259,16 +334,14 @@ impl UserClient {
         // Create command channel
         let (command_tx, command_rx) = mpsc::channel(32);
 
-        // Cache fingerprint before spawning (avoids repeated async calls)
-        let own_fingerprint = identity_provider.fingerprint().await;
-
         // Build the inner state
         let inner = UserClientInner {
-            session_store,
+            connection_store,
             proxy_client,
+            identity_keypair,
             own_fingerprint,
             transports: HashMap::new(),
-            pending_pairings: Vec::new(),
+            pending_pairings: PendingPairings::new(),
             audit_log: audit_log.unwrap_or_else(|| Box::new(NoOpAuditLog)),
         };
 
@@ -326,14 +399,16 @@ impl UserClient {
 
 /// All mutable state for the user client, owned by the spawned event loop task.
 struct UserClientInner {
-    session_store: Box<dyn SessionStore>,
+    connection_store: Box<dyn ConnectionStore>,
     proxy_client: Box<dyn ProxyClient>,
+    /// Our identity keypair (needed for reconnection).
+    identity_keypair: IdentityKeyPair,
     /// Our own identity fingerprint (cached at construction time).
     own_fingerprint: IdentityFingerprint,
     /// Map of fingerprint -> transport
     transports: HashMap<IdentityFingerprint, MultiDeviceTransport>,
-    /// Pending pairings awaiting incoming handshakes.
-    pending_pairings: Vec<PendingPairing>,
+    /// Pending pairings and verification message buffers.
+    pending_pairings: PendingPairings,
     /// Audit logger for security-relevant events
     audit_log: Box<dyn AuditLog>,
 }
@@ -390,12 +465,19 @@ impl UserClientInner {
                     }
                 }
                 Some(reply) = pending_replies.next() => {
-                    if let Err(e) = self.process_pending_reply(reply, &notification_tx).await {
-                        warn!("Error processing pending reply: {}", e);
-                        notify!(notification_tx, UserClientNotification::Error {
-                            message: e.to_string(),
-                            context: Some("process_pending_reply".to_string()),
-                        });
+                    match self.process_pending_reply(reply, &notification_tx, &request_tx).await {
+                        Ok(futs) => {
+                            for fut in futs {
+                                pending_replies.push(fut);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Error processing pending reply: {}", e);
+                            notify!(notification_tx, UserClientNotification::Error {
+                                message: e.to_string(),
+                                context: Some("process_pending_reply".to_string()),
+                            });
+                        }
                     }
                 }
                 cmd = command_rx.recv() => {
@@ -428,7 +510,11 @@ impl UserClientInner {
             // Disconnect (ignore errors — connection may already be dead)
             let _ = self.proxy_client.disconnect().await;
 
-            match self.proxy_client.connect().await {
+            match self
+                .proxy_client
+                .connect(self.identity_keypair.clone())
+                .await
+            {
                 Ok(new_rx) => {
                     debug!("Reconnected to proxy on attempt {}", attempt);
                     return Ok(new_rx);
@@ -465,11 +551,15 @@ impl UserClientInner {
         notification_tx: &mpsc::Sender<UserClientNotification>,
         request_tx: &mpsc::Sender<UserClientRequest>,
     ) -> Result<Option<PendingReplyFuture>, ClientError> {
+        // If this source is awaiting fingerprint verification, buffer the message
+        let Some(msg) = self.pending_pairings.try_buffer_message(msg) else {
+            return Ok(None);
+        };
+
         match msg {
             IncomingMessage::Send {
                 source, payload, ..
             } => {
-                // Parse payload as ProtocolMessage
                 let text = String::from_utf8(payload)
                     .map_err(|e| ClientError::Serialization(format!("Invalid UTF-8: {e}")))?;
 
@@ -507,20 +597,10 @@ impl UserClientInner {
                 }
             }
             IncomingMessage::RendezvousInfo(code) => {
-                // Find the pending rendezvous pairing that is still awaiting a reply
-                let idx = self
-                    .pending_pairings
-                    .iter()
-                    .position(|p| matches!(&p.kind, PairingKind::Rendezvous { reply: Some(_) }));
-
-                if let Some(idx) = idx {
-                    // Take the reply sender out, leaving the pairing in place with reply: None
-                    let pairing = &mut self.pending_pairings[idx];
-                    if let PairingKind::Rendezvous { reply } = &mut pairing.kind {
-                        if let Some(sender) = reply.take() {
-                            debug!("Completed rendezvous pairing via handle, code: {}", code);
-                            let _ = sender.send(Ok(code));
-                        }
+                if let Some(pairing) = &mut self.pending_pairings.rendezvous {
+                    if let Some(sender) = pairing.code_tx.take() {
+                        debug!("Completed rendezvous pairing via handle, code: {}", code);
+                        let _ = sender.send(Ok(code));
                     }
                 } else {
                     debug!("Received RendezvousInfo but no pending rendezvous pairing found");
@@ -548,8 +628,8 @@ impl UserClientInner {
         debug!("Received handshake init from source: {:?}", source);
         notify!(notification_tx, UserClientNotification::HandshakeStart {});
 
-        // Check if this is an existing/cached session (bypass pairing lookup)
-        let is_new_connection = !self.session_store.has_session(&source).await;
+        // Check if this is an existing/cached connection (bypass pairing lookup)
+        let is_new_connection = self.connection_store.get(&source).await.is_none();
 
         // Determine which PSK to use and find the matching pairing.
         let (psk_for_handshake, matched_pairing_name, is_psk_connection) = if !is_new_connection {
@@ -557,21 +637,13 @@ impl UserClientInner {
             (None, None, false)
         } else {
             // New connection — look up and consume a pending pairing
-            Self::prune_stale_pairings(&mut self.pending_pairings);
+            self.pending_pairings.prune_stale();
 
             match &psk_id {
                 Some(id) => {
                     // PSK mode — find matching pairing by psk_id
-                    let idx = self.pending_pairings.iter().position(
-                        |p| matches!(&p.kind, PairingKind::Psk { psk_id: pid, .. } if pid == id),
-                    );
-                    if let Some(idx) = idx {
-                        let pairing = self.pending_pairings.remove(idx);
-                        let psk = match pairing.kind {
-                            PairingKind::Psk { psk, .. } => psk,
-                            PairingKind::Rendezvous { .. } => unreachable!(),
-                        };
-                        (Some(psk), pairing.connection_name, true)
+                    if let Some(pairing) = self.pending_pairings.psk_pairings.remove(id) {
+                        (Some(pairing.psk), pairing.connection_name, true)
                     } else {
                         warn!("No matching PSK pairing for psk_id: {}", id);
                         return Err(ClientError::InvalidState {
@@ -581,15 +653,15 @@ impl UserClientInner {
                     }
                 }
                 None => {
-                    // Rendezvous mode — find a confirmed rendezvous pairing
-                    // (one whose reply has already been sent, i.e. reply is None)
-                    let idx = self
-                        .pending_pairings
-                        .iter()
-                        .position(|p| matches!(p.kind, PairingKind::Rendezvous { reply: None }));
-                    let connection_name =
-                        idx.and_then(|i| self.pending_pairings.remove(i).connection_name);
-                    (None, connection_name, false)
+                    // Rendezvous mode — take the pending rendezvous pairing
+                    if let Some(pairing) = self.pending_pairings.take_rendezvous() {
+                        (None, pairing.connection_name, false)
+                    } else {
+                        return Err(ClientError::InvalidState {
+                            expected: "pending rendezvous pairing".to_string(),
+                            current: "no pending rendezvous pairing".to_string(),
+                        });
+                    }
                 }
             }
         };
@@ -605,6 +677,9 @@ impl UserClientInner {
 
         if is_new_connection && !is_psk_connection {
             // New rendezvous connection: require fingerprint verification.
+            // Buffer messages from this source until verification completes.
+            self.pending_pairings.prepare_buffering(source);
+
             let (tx, rx) = oneshot::channel();
 
             if request_tx.capacity() == 0 {
@@ -631,11 +706,19 @@ impl UserClientInner {
 
             Ok(Some(fut))
         } else if !is_new_connection {
-            // Existing/cached session: already verified on first connection.
+            // Existing/cached connection: already verified on first connection.
+            // Get existing connection to preserve name and cached_at, update transport.
+            let existing = self.connection_store.get(&source).await;
+            let now = crate::compat::now_seconds();
             self.transports.insert(source, transport.clone());
-            self.session_store.cache_session(source).await?;
-            self.session_store
-                .save_transport_state(&source, transport)
+            self.connection_store
+                .save(ConnectionInfo {
+                    fingerprint: source,
+                    name: existing.as_ref().and_then(|s| s.name.clone()),
+                    cached_at: existing.as_ref().map_or(now, |s| s.cached_at),
+                    last_connected_at: now,
+                    transport_state: Some(transport),
+                })
                 .await?;
 
             self.audit_log
@@ -675,34 +758,30 @@ impl UserClientInner {
         }
     }
 
-    /// Remove pending pairings older than `PENDING_PAIRING_MAX_AGE`.
-    fn prune_stale_pairings(pairings: &mut Vec<PendingPairing>) {
-        pairings.retain(|p| p.created_at.elapsed() < PENDING_PAIRING_MAX_AGE);
-    }
-
-    /// Accept a new connection: cache session, store transport, set name, and audit
+    /// Accept a new connection: cache connection, store transport, set name, and audit
     async fn accept_new_connection(
         &mut self,
         fingerprint: IdentityFingerprint,
         transport: MultiDeviceTransport,
-        session_name: Option<&str>,
+        connection_name: Option<&str>,
         connection_type: AuditConnectionType,
     ) -> Result<(), ClientError> {
+        let now = crate::compat::now_seconds();
         self.transports.insert(fingerprint, transport.clone());
-        self.session_store.cache_session(fingerprint).await?;
-        if let Some(name) = session_name {
-            self.session_store
-                .set_session_name(&fingerprint, name.to_owned())
-                .await?;
-        }
-        self.session_store
-            .save_transport_state(&fingerprint, transport)
+        self.connection_store
+            .save(ConnectionInfo {
+                fingerprint,
+                name: connection_name.map(|s| s.to_owned()),
+                cached_at: now,
+                last_connected_at: now,
+                transport_state: Some(transport),
+            })
             .await?;
 
         self.audit_log
             .write(AuditEvent::ConnectionEstablished {
                 remote_identity: &fingerprint,
-                remote_name: session_name,
+                remote_name: connection_name,
                 connection_type,
             })
             .await;
@@ -720,16 +799,15 @@ impl UserClientInner {
     ) -> Result<Option<PendingReplyFuture>, ClientError> {
         if !self.transports.contains_key(&source) {
             debug!("Loading transport state for source: {:?}", source);
-            let session = self
-                .session_store
-                .load_transport_state(&source)
-                .await?
-                .ok_or_else(|| {
-                    ClientError::SessionCache(format!(
-                        "Missing transport state for cached session {source:?}"
-                    ))
-                })?;
-            self.transports.insert(source, session);
+            let connection = self.connection_store.get(&source).await.ok_or_else(|| {
+                ClientError::ConnectionCache(format!("Missing cached connection {source:?}"))
+            })?;
+            let transport = connection.transport_state.ok_or_else(|| {
+                ClientError::ConnectionCache(format!(
+                    "Missing transport state for cached connection {source:?}"
+                ))
+            })?;
+            self.transports.insert(source, transport);
         }
 
         // Get transport for this source
@@ -809,7 +887,8 @@ impl UserClientInner {
         &mut self,
         reply: PendingReply,
         notification_tx: &mpsc::Sender<UserClientNotification>,
-    ) -> Result<(), ClientError> {
+        request_tx: &mpsc::Sender<UserClientRequest>,
+    ) -> Result<Vec<PendingReplyFuture>, ClientError> {
         match reply {
             PendingReply::FingerprintVerification {
                 source,
@@ -823,6 +902,7 @@ impl UserClientInner {
                     connection_name,
                     reply,
                     notification_tx,
+                    request_tx,
                 )
                 .await
             }
@@ -833,7 +913,8 @@ impl UserClientInner {
                 reply,
             } => {
                 self.process_credential_reply(source, request_id, query, reply, notification_tx)
-                    .await
+                    .await?;
+                Ok(Vec::new())
             }
         }
     }
@@ -856,34 +937,14 @@ impl UserClientInner {
                 }
 
                 // Prune stale pairings
-                Self::prune_stale_pairings(&mut self.pending_pairings);
+                self.pending_pairings.prune_stale();
 
-                // If there's already a pending rendezvous pairing awaiting its code,
-                // error the old one rather than silently overwriting it
-                if let Some(old_idx) = self
-                    .pending_pairings
-                    .iter()
-                    .position(|p| matches!(&p.kind, PairingKind::Rendezvous { reply: Some(_) }))
-                {
-                    let old = self.pending_pairings.remove(old_idx);
-                    if let PairingKind::Rendezvous {
-                        reply: Some(old_reply),
-                    } = old.kind
-                    {
-                        warn!("Replacing existing pending rendezvous pairing");
-                        let _ = old_reply.send(Err(ClientError::InvalidState {
-                            expected: "single pending rendezvous".to_string(),
-                            current: "replaced by new rendezvous request".to_string(),
-                        }));
-                    }
-                }
-
-                // Push the new pairing immediately — reply will be completed
-                // when RendezvousInfo arrives from the proxy
-                self.pending_pairings.push(PendingPairing {
+                // Replace any existing rendezvous pairing — the old sender drops,
+                // causing the receiver to get a RecvError (maps to ChannelClosed)
+                self.pending_pairings.rendezvous = Some(RendezvousPairing {
                     connection_name: name,
                     created_at: Instant::now(),
-                    kind: PairingKind::Rendezvous { reply: Some(reply) },
+                    code_tx: Some(reply),
                 });
 
                 // Emit notification so the caller knows a code is being requested
@@ -901,16 +962,17 @@ impl UserClientInner {
     async fn generate_psk_token(&mut self, name: Option<String>) -> Result<String, ClientError> {
         let psk = Psk::generate();
         let psk_id = psk.id();
-        let token = format!("{}_{}", psk.to_hex(), hex::encode(self.own_fingerprint.0));
+        let token = PskToken::new(psk.clone(), self.own_fingerprint).to_string();
 
-        let pairing = PendingPairing {
-            connection_name: name,
-            created_at: Instant::now(),
-            kind: PairingKind::Psk { psk, psk_id },
-        };
-
-        Self::prune_stale_pairings(&mut self.pending_pairings);
-        self.pending_pairings.push(pairing);
+        self.pending_pairings.prune_stale();
+        self.pending_pairings.psk_pairings.insert(
+            psk_id,
+            PskPairing {
+                connection_name: name,
+                created_at: Instant::now(),
+                psk,
+            },
+        );
         debug!("Created PSK pairing, token generated");
 
         Ok(token)
@@ -924,18 +986,19 @@ impl UserClientInner {
         connection_name: Option<String>,
         reply: Result<FingerprintVerificationReply, oneshot::error::RecvError>,
         notification_tx: &mpsc::Sender<UserClientNotification>,
-    ) -> Result<(), ClientError> {
+        request_tx: &mpsc::Sender<UserClientRequest>,
+    ) -> Result<Vec<PendingReplyFuture>, ClientError> {
         match reply {
             Ok(FingerprintVerificationReply {
                 approved: true,
                 name,
             }) => {
                 // Use the name from the reply, falling back to the pairing name
-                let session_name = name.or(connection_name);
+                let conn_name = name.or(connection_name);
                 self.accept_new_connection(
                     source,
                     transport,
-                    session_name.as_deref(),
+                    conn_name.as_deref(),
                     AuditConnectionType::Rendezvous,
                 )
                 .await?;
@@ -944,42 +1007,66 @@ impl UserClientInner {
                     notification_tx,
                     UserClientNotification::FingerprintVerified {}
                 );
+
+                // Drain and replay buffered messages
+                let mut futures = Vec::new();
+                for msg in self.pending_pairings.take_buffered_messages(&source) {
+                    match self.handle_incoming(msg, notification_tx, request_tx).await {
+                        Ok(Some(fut)) => futures.push(fut),
+                        Ok(None) => {}
+                        Err(e) => {
+                            warn!("Error processing buffered message: {}", e);
+                        }
+                    }
+                }
+
+                Ok(futures)
             }
             Ok(FingerprintVerificationReply {
                 approved: false, ..
             }) => {
-                self.audit_log
-                    .write(AuditEvent::ConnectionRejected {
-                        remote_identity: &source,
-                    })
-                    .await;
-
-                notify!(
+                self.reject_fingerprint(
+                    &source,
+                    "User rejected fingerprint verification",
                     notification_tx,
-                    UserClientNotification::FingerprintRejected {
-                        reason: "User rejected fingerprint verification".to_string(),
-                    }
-                );
+                )
+                .await;
+                Ok(Vec::new())
             }
             Err(_) => {
-                // Oneshot sender was dropped without replying — treat as rejection
                 warn!("Fingerprint verification reply channel dropped, treating as rejection");
-                self.audit_log
-                    .write(AuditEvent::ConnectionRejected {
-                        remote_identity: &source,
-                    })
-                    .await;
-
-                notify!(
+                self.reject_fingerprint(
+                    &source,
+                    "Verification cancelled (reply dropped)",
                     notification_tx,
-                    UserClientNotification::FingerprintRejected {
-                        reason: "Verification cancelled (reply dropped)".to_string(),
-                    }
-                );
+                )
+                .await;
+                Ok(Vec::new())
             }
         }
+    }
 
-        Ok(())
+    /// Reject a fingerprint verification: discard buffered messages, audit, and notify.
+    async fn reject_fingerprint(
+        &mut self,
+        source: &IdentityFingerprint,
+        reason: &str,
+        notification_tx: &mpsc::Sender<UserClientNotification>,
+    ) {
+        self.pending_pairings.take_buffered_messages(source);
+
+        self.audit_log
+            .write(AuditEvent::ConnectionRejected {
+                remote_identity: source,
+            })
+            .await;
+
+        notify!(
+            notification_tx,
+            UserClientNotification::FingerprintRejected {
+                reason: reason.to_string(),
+            }
+        );
     }
 
     /// Process a credential request reply.

@@ -26,7 +26,7 @@ pub use connections::ConnectionsArgs;
 pub use listen::ListenArgs;
 pub use run::RunArgs;
 
-const DEFAULT_PROXY_URL: &str = "wss://rat1.lesspassword.dev";
+const DEFAULT_PROXY_URL: &str = "wss://ap.lesspassword.dev";
 
 /// Build a version string like "0.3.0 (abc1234)" when GIT_HASH is set by CI,
 /// or just "0.3.0" for local dev builds.

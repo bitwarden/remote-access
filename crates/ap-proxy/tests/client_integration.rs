@@ -1,5 +1,5 @@
 use ap_proxy::server::ProxyServer;
-use ap_proxy_client::{IdentityKeyPair, IncomingMessage, ProxyClientConfig, ProxyProtocolClient};
+use ap_proxy_client::{IdentityKeyPair, IncomingMessage, ProxyProtocolClient};
 use std::net::SocketAddr;
 
 /// Small delay to allow the server to finish registering a connection after
@@ -24,13 +24,11 @@ async fn start_test_server() -> SocketAddr {
 async fn test_client_connect_and_authenticate() {
     let addr = start_test_server().await;
 
-    let config = ProxyClientConfig {
-        proxy_url: format!("ws://{addr}"),
-        identity_keypair: None, // Generate new identity
-    };
-
-    let mut client = ProxyProtocolClient::new(config);
-    let _incoming = client.connect().await.expect("should connect");
+    let mut client = ProxyProtocolClient::from_url(format!("ws://{addr}"));
+    let _incoming = client
+        .connect(IdentityKeyPair::generate())
+        .await
+        .expect("should connect");
 
     assert!(client.is_authenticated().await);
 
@@ -45,21 +43,17 @@ async fn test_client_connect_and_authenticate() {
 async fn test_two_clients_messaging() {
     let addr = start_test_server().await;
 
-    // Create two clients
-    let config_a = ProxyClientConfig {
-        proxy_url: format!("ws://{addr}"),
-        identity_keypair: None,
-    };
-    let config_b = ProxyClientConfig {
-        proxy_url: format!("ws://{addr}"),
-        identity_keypair: None,
-    };
+    let mut client_a = ProxyProtocolClient::from_url(format!("ws://{addr}"));
+    let mut client_b = ProxyProtocolClient::from_url(format!("ws://{addr}"));
 
-    let mut client_a = ProxyProtocolClient::new(config_a);
-    let mut client_b = ProxyProtocolClient::new(config_b);
-
-    let mut incoming_a = client_a.connect().await.expect("client A should connect");
-    let mut incoming_b = client_b.connect().await.expect("client B should connect");
+    let mut incoming_a = client_a
+        .connect(IdentityKeyPair::generate())
+        .await
+        .expect("client A should connect");
+    let mut incoming_b = client_b
+        .connect(IdentityKeyPair::generate())
+        .await
+        .expect("client B should connect");
     tokio::time::sleep(POST_CONNECT_DELAY).await;
 
     let fingerprint_a = client_a.fingerprint();
@@ -135,13 +129,11 @@ async fn test_two_clients_messaging() {
 async fn test_rendezvous_request() {
     let addr = start_test_server().await;
 
-    let config = ProxyClientConfig {
-        proxy_url: format!("ws://{addr}"),
-        identity_keypair: None,
-    };
-
-    let mut client = ProxyProtocolClient::new(config);
-    let mut incoming = client.connect().await.expect("should connect");
+    let mut client = ProxyProtocolClient::from_url(format!("ws://{addr}"));
+    let mut incoming = client
+        .connect(IdentityKeyPair::generate())
+        .await
+        .expect("should connect");
 
     // Request rendezvous code
     client.request_rendezvous().await.ok(); // Sends GetRendezvous
@@ -169,13 +161,11 @@ async fn test_rendezvous_request() {
 async fn test_disconnect_cleanup() {
     let addr = start_test_server().await;
 
-    let config = ProxyClientConfig {
-        proxy_url: format!("ws://{addr}"),
-        identity_keypair: None,
-    };
-
-    let mut client = ProxyProtocolClient::new(config);
-    client.connect().await.expect("should connect");
+    let mut client = ProxyProtocolClient::from_url(format!("ws://{addr}"));
+    client
+        .connect(IdentityKeyPair::generate())
+        .await
+        .expect("should connect");
 
     assert!(client.is_authenticated().await);
 
@@ -188,20 +178,17 @@ async fn test_disconnect_cleanup() {
 async fn test_multiple_messages() {
     let addr = start_test_server().await;
 
-    let config_a = ProxyClientConfig {
-        proxy_url: format!("ws://{addr}"),
-        identity_keypair: None,
-    };
-    let config_b = ProxyClientConfig {
-        proxy_url: format!("ws://{addr}"),
-        identity_keypair: None,
-    };
+    let mut client_a = ProxyProtocolClient::from_url(format!("ws://{addr}"));
+    let mut client_b = ProxyProtocolClient::from_url(format!("ws://{addr}"));
 
-    let mut client_a = ProxyProtocolClient::new(config_a);
-    let mut client_b = ProxyProtocolClient::new(config_b);
-
-    let _incoming_a = client_a.connect().await.expect("client A should connect");
-    let mut incoming_b = client_b.connect().await.expect("client B should connect");
+    let _incoming_a = client_a
+        .connect(IdentityKeyPair::generate())
+        .await
+        .expect("client A should connect");
+    let mut incoming_b = client_b
+        .connect(IdentityKeyPair::generate())
+        .await
+        .expect("client B should connect");
     tokio::time::sleep(POST_CONNECT_DELAY).await;
 
     let fingerprint_a = client_a.fingerprint();
@@ -255,21 +242,17 @@ async fn test_multiple_clients_same_identity_can_connect() {
     let shared_keypair = IdentityKeyPair::generate();
     let cose_bytes = shared_keypair.to_cose();
 
-    // Create two clients with the same identity
-    let config_a = ProxyClientConfig {
-        proxy_url: format!("ws://{addr}"),
-        identity_keypair: Some(IdentityKeyPair::from_cose(&cose_bytes).unwrap()),
-    };
-    let config_b = ProxyClientConfig {
-        proxy_url: format!("ws://{addr}"),
-        identity_keypair: Some(IdentityKeyPair::from_cose(&cose_bytes).unwrap()),
-    };
+    let mut client_a = ProxyProtocolClient::from_url(format!("ws://{addr}"));
+    let mut client_b = ProxyProtocolClient::from_url(format!("ws://{addr}"));
 
-    let mut client_a = ProxyProtocolClient::new(config_a);
-    let mut client_b = ProxyProtocolClient::new(config_b);
-
-    let _incoming_a = client_a.connect().await.expect("client A should connect");
-    let _incoming_b = client_b.connect().await.expect("client B should connect");
+    let _incoming_a = client_a
+        .connect(IdentityKeyPair::from_cose(&cose_bytes).unwrap())
+        .await
+        .expect("client A should connect");
+    let _incoming_b = client_b
+        .connect(IdentityKeyPair::from_cose(&cose_bytes).unwrap())
+        .await
+        .expect("client B should connect");
 
     // Both should be authenticated
     assert!(client_a.is_authenticated().await);
@@ -298,36 +281,20 @@ async fn test_messages_broadcast_to_all_same_identity_connections() {
     let user_keypair = IdentityKeyPair::generate();
     let user_cose = user_keypair.to_cose();
 
-    // Create two user clients with the same identity
-    let config_user_a = ProxyClientConfig {
-        proxy_url: format!("ws://{addr}"),
-        identity_keypair: Some(IdentityKeyPair::from_cose(&user_cose).unwrap()),
-    };
-    let config_user_b = ProxyClientConfig {
-        proxy_url: format!("ws://{addr}"),
-        identity_keypair: Some(IdentityKeyPair::from_cose(&user_cose).unwrap()),
-    };
-
-    // Create a sender with different identity
-    let config_sender = ProxyClientConfig {
-        proxy_url: format!("ws://{addr}"),
-        identity_keypair: None,
-    };
-
-    let mut user_client_a = ProxyProtocolClient::new(config_user_a);
-    let mut user_client_b = ProxyProtocolClient::new(config_user_b);
-    let mut sender_client = ProxyProtocolClient::new(config_sender);
+    let mut user_client_a = ProxyProtocolClient::from_url(format!("ws://{addr}"));
+    let mut user_client_b = ProxyProtocolClient::from_url(format!("ws://{addr}"));
+    let mut sender_client = ProxyProtocolClient::from_url(format!("ws://{addr}"));
 
     let mut incoming_user_a = user_client_a
-        .connect()
+        .connect(IdentityKeyPair::from_cose(&user_cose).unwrap())
         .await
         .expect("user A should connect");
     let mut incoming_user_b = user_client_b
-        .connect()
+        .connect(IdentityKeyPair::from_cose(&user_cose).unwrap())
         .await
         .expect("user B should connect");
     let _incoming_sender = sender_client
-        .connect()
+        .connect(IdentityKeyPair::generate())
         .await
         .expect("sender should connect");
     tokio::time::sleep(POST_CONNECT_DELAY).await;
@@ -405,36 +372,20 @@ async fn test_cleanup_when_one_connection_disconnects() {
     let user_keypair = IdentityKeyPair::generate();
     let user_cose = user_keypair.to_cose();
 
-    // Create two user clients with the same identity
-    let config_user_a = ProxyClientConfig {
-        proxy_url: format!("ws://{addr}"),
-        identity_keypair: Some(IdentityKeyPair::from_cose(&user_cose).unwrap()),
-    };
-    let config_user_b = ProxyClientConfig {
-        proxy_url: format!("ws://{addr}"),
-        identity_keypair: Some(IdentityKeyPair::from_cose(&user_cose).unwrap()),
-    };
-
-    // Create a sender with different identity
-    let config_sender = ProxyClientConfig {
-        proxy_url: format!("ws://{addr}"),
-        identity_keypair: None,
-    };
-
-    let mut user_client_a = ProxyProtocolClient::new(config_user_a);
-    let mut user_client_b = ProxyProtocolClient::new(config_user_b);
-    let mut sender_client = ProxyProtocolClient::new(config_sender);
+    let mut user_client_a = ProxyProtocolClient::from_url(format!("ws://{addr}"));
+    let mut user_client_b = ProxyProtocolClient::from_url(format!("ws://{addr}"));
+    let mut sender_client = ProxyProtocolClient::from_url(format!("ws://{addr}"));
 
     let _incoming_user_a = user_client_a
-        .connect()
+        .connect(IdentityKeyPair::from_cose(&user_cose).unwrap())
         .await
         .expect("user A should connect");
     let mut incoming_user_b = user_client_b
-        .connect()
+        .connect(IdentityKeyPair::from_cose(&user_cose).unwrap())
         .await
         .expect("user B should connect");
     let _incoming_sender = sender_client
-        .connect()
+        .connect(IdentityKeyPair::generate())
         .await
         .expect("sender should connect");
     tokio::time::sleep(POST_CONNECT_DELAY).await;

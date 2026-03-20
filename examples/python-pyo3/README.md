@@ -36,7 +36,7 @@ Or with a PSK token:
 python3 pair.py --token "<64hex_psk>_<64hex_fingerprint>"
 ```
 
-This clears any existing cached session and pairs with the listener. Only one session is kept at a time.
+This clears any existing cached connection and pairs with the listener. Only one connection is kept at a time.
 
 ### 3. Request a credential
 
@@ -44,21 +44,21 @@ This clears any existing cached session and pairs with the listener. Only one se
 python3 get.py --domain example.com
 ```
 
-Uses the cached session from step 2. Approve the request on the listen side.
+Uses the cached connection from step 2. Approve the request on the listen side.
 
 ## Programmatic Usage
 
 ```python
 from bw_remote_rs import RemoteClient
 
-# Pair (clears previous session)
-client = RemoteClient(proxy_url="wss://rat1.lesspassword.dev")
-client.clear_sessions()
+# Pair (clears previous connection)
+client = RemoteClient(proxy_url="wss://ap.lesspassword.dev")
+client.clear_connections()
 client.connect(token="ABC-DEF-GHI")
 client.close()
 
-# Later — request a credential using cached session
-client = RemoteClient(proxy_url="wss://rat1.lesspassword.dev")
+# Later — request a credential using cached connection
+client = RemoteClient(proxy_url="wss://ap.lesspassword.dev")
 client.connect()
 cred = client.request_credential("example.com")
 print(f"Username: {cred.username}")
@@ -72,11 +72,11 @@ The API is **synchronous** — all async Rust operations are handled internally.
 
 | File | Purpose |
 |------|---------|
-| `pair.py` | Pair with a listening peer (clears and replaces cached session) |
-| `get.py` | Request a credential using the cached session |
+| `pair.py` | Pair with a listening peer (clears and replaces cached connection) |
+| `get.py` | Request a credential using the cached connection |
 | `src/lib.rs` | PyO3 module definition, `connect_and_request()` one-shot helper |
 | `src/client.rs` | `PyRemoteClient` — wraps Rust `RemoteClient` with a synchronous Python API |
-| `src/storage.rs` | `FileIdentityStorage` + `FileSessionCache` — file-based identity and session persistence |
+| `src/storage.rs` | `FileIdentityStorage` + `FileConnectionCache` — file-based identity and connection persistence |
 | `src/types.rs` | `PyCredentialData` + `RemoteAccessError` — Python-facing types |
 
 All crypto, handshake, and transport logic is delegated to the workspace crates (`bw-noise-protocol`, `bw-rat-client`, `bw-proxy-client`).

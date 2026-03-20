@@ -17,7 +17,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Request a credential via Bitwarden Remote Access (Rust backend)"
     )
-    parser.add_argument("--proxy", default="wss://rat1.lesspassword.dev", help="Proxy server URL")
+    parser.add_argument("--proxy", default="wss://ap.lesspassword.dev", help="Proxy server URL")
     parser.add_argument("--domain", required=True, help="Domain to request credentials for")
     parser.add_argument(
         "--identity", default="python-remote",

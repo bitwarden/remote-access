@@ -4,11 +4,10 @@
 //! approving connection requests from remote clients.
 
 use ap_client::{
-    CredentialData, CredentialRequestReply, DefaultProxyClient, FingerprintVerificationReply,
-    IdentityProvider, SessionStore, UserClient, UserClientNotification, UserClientRequest,
+    ConnectionInfo, ConnectionStore, CredentialData, CredentialRequestReply, DefaultProxyClient,
+    FingerprintVerificationReply, IdentityProvider, UserClient, UserClientNotification,
+    UserClientRequest,
 };
-use ap_proxy_client::ProxyClientConfig;
-use ap_proxy_protocol::IdentityFingerprint;
 use clap::Args;
 use color_eyre::eyre::Result;
 use crossterm::event::{Event, EventStream, KeyEventKind};
@@ -22,7 +21,7 @@ use super::tui::{
 };
 use super::util::{format_listen_notification, format_relative_time, val_style};
 use crate::providers::{CredentialProvider, LookupResult, ProviderStatus};
-use crate::storage::{FileIdentityStorage, FileSessionCache};
+use crate::storage::{FileConnectionCache, FileIdentityStorage};
 
 use super::DEFAULT_PROXY_URL;
 
@@ -49,7 +48,7 @@ impl ListenArgs {
     /// Execute the listen command
     pub async fn run(self, log_rx: Option<super::tui_tracing::LogReceiver>) -> Result<()> {
         let mut provider = crate::providers::create_provider(&self.provider)?;
-        run_user_client_session(self.proxy_url, self.psk, &mut *provider, log_rx).await
+        run_user_client_loop(self.proxy_url, self.psk, &mut *provider, log_rx).await
     }
 }
 
@@ -79,7 +78,7 @@ enum Phase {
 /// Whether the event loop exited normally or because `/pair` was requested.
 enum EventLoopExit {
     Quit,
-    NewSession { name: Option<String> },
+    NewConnection { name: Option<String> },
 }
 
 /// Map a [`ProviderStatus`] to TUI header spans and apply them.
@@ -140,20 +139,21 @@ fn apply_status_spans(app: &mut App, name: &str, status: &ProviderStatus) {
     }
 }
 
-type SessionInfo = (IdentityFingerprint, Option<String>, u64, u64);
-
 /// Reload the session list from disk (the client may have updated it).
-async fn reload_sessions() -> Vec<SessionInfo> {
-    match FileSessionCache::load_or_create("user_client") {
-        Ok(cache) => cache.list_sessions().await,
+async fn reload_connections() -> Vec<ConnectionInfo> {
+    match FileConnectionCache::load_or_create("user_client") {
+        Ok(cache) => cache.list().await,
         Err(_) => Vec::new(),
     }
 }
 
 /// Build session info messages for display in the TUI.
-fn session_info_messages(sessions: &[SessionInfo], pending_label: Option<&str>) -> Vec<Message> {
+fn connection_info_messages(
+    sessions: &[ConnectionInfo],
+    pending_label: Option<&str>,
+) -> Vec<Message> {
     let mut sorted = sessions.to_vec();
-    sorted.sort_by(|a, b| b.3.cmp(&a.3));
+    sorted.sort_by(|a, b| b.last_connected_at.cmp(&a.last_connected_at));
 
     let mut msgs = vec![Message::rich(
         MessageKind::Listening,
@@ -164,15 +164,15 @@ fn session_info_messages(sessions: &[SessionInfo], pending_label: Option<&str>) 
                 .add_modifier(Modifier::BOLD),
         )],
     )];
-    for (fingerprint, name, cached_at, last_connected_at) in &sorted {
-        let short_hex = hex::encode(fingerprint.0)
+    for session in &sorted {
+        let short_hex = hex::encode(session.fingerprint.0)
             .chars()
             .take(12)
             .collect::<String>();
-        let created = format_relative_time(*cached_at);
-        let last_used = format_relative_time(*last_connected_at);
+        let created = format_relative_time(session.cached_at);
+        let last_used = format_relative_time(session.last_connected_at);
         let mut spans = vec![Span::raw("  ")];
-        if let Some(name) = name {
+        if let Some(name) = &session.name {
             spans.push(Span::styled(
                 name.clone(),
                 Style::default()
@@ -231,15 +231,15 @@ async fn run_event_loop(
     reader: &mut EventStream,
     mut notification_rx: mpsc::Receiver<UserClientNotification>,
     mut request_rx: mpsc::Receiver<UserClientRequest>,
-    sessions: &[SessionInfo],
-    pending_session_name: &Option<String>,
+    sessions: &[ConnectionInfo],
+    pending_connection_name: &Option<String>,
     provider: &mut dyn CredentialProvider,
     log_rx: &mut Option<super::tui_tracing::LogReceiver>,
 ) -> Result<EventLoopExit> {
     let mut phase = Phase::Idle;
 
     // Seed session info panel for this iteration
-    app.set_session_panel(session_info_messages(sessions, None));
+    app.set_connection_panel(connection_info_messages(sessions, None));
     app.enter_idle(idle_footer(), IDLE_COMMANDS);
 
     let mut tick_interval = tokio::time::interval(std::time::Duration::from_millis(150));
@@ -263,7 +263,7 @@ async fn run_event_loop(
                                     let name = s.strip_prefix("/pair ")
                                         .map(|n| n.trim().to_string())
                                         .filter(|n| !n.is_empty());
-                                    break EventLoopExit::NewSession { name };
+                                    break EventLoopExit::NewConnection { name };
                                 }
                                 (Phase::Idle, AppAction::Submit(s)) if s == "/exit" => {
                                     break EventLoopExit::Quit;
@@ -318,7 +318,7 @@ async fn run_event_loop(
                                             let _ = reply.send(FingerprintVerificationReply { approved: false, name: None });
                                             app.push_msg(MessageKind::Error, "Fingerprint rejected");
                                             app.enter_idle(idle_footer(), IDLE_COMMANDS);
-                                        } else if let Some(name) = pending_session_name.clone() {
+                                        } else if let Some(name) = pending_connection_name.clone() {
                                             // Name was pre-set via /pair — send immediately
                                             let _ = reply.send(FingerprintVerificationReply { approved: true, name: Some(name) });
                                             app.push_msg(MessageKind::Success, "Fingerprint approved");
@@ -398,8 +398,8 @@ async fn run_event_loop(
                             UserClientNotification::SessionRefreshed { .. }
                             | UserClientNotification::FingerprintVerified { .. } => {
                                 // Session store was updated — reload from disk
-                                let fresh = reload_sessions().await;
-                                app.set_session_panel(session_info_messages(&fresh, None));
+                                let fresh = reload_connections().await;
+                                app.set_connection_panel(connection_info_messages(&fresh, None));
                             }
                             _ => {}
                         }
@@ -442,7 +442,7 @@ async fn run_event_loop(
                             // Enter confirmation phase
                             phase = Phase::FingerprintConfirm { reply };
                             app.commands = &[];
-                            let description = match pending_session_name {
+                            let description = match pending_connection_name {
                                 Some(name) => Line::from(vec![
                                     Span::styled("Device: ", Style::default().fg(Color::DarkGray)),
                                     Span::styled(
@@ -496,10 +496,10 @@ async fn run_event_loop(
                                     app.commands = &[];
                                     let device_label = sessions
                                         .iter()
-                                        .find(|(fp, _, _, _)| *fp == identity)
-                                        .map(|(fp, name, _, _)| {
-                                            name.clone().unwrap_or_else(|| {
-                                                hex::encode(fp.0)
+                                        .find(|s| s.fingerprint == identity)
+                                        .map(|s| {
+                                            s.name.clone().unwrap_or_else(|| {
+                                                hex::encode(s.fingerprint.0)
                                                     .chars()
                                                     .take(12)
                                                     .collect::<String>()
@@ -563,7 +563,7 @@ async fn run_event_loop(
 }
 
 /// Run the user client interactive session
-async fn run_user_client_session(
+async fn run_user_client_loop(
     proxy_url: String,
     psk_mode: bool,
     provider: &mut dyn CredentialProvider,
@@ -571,8 +571,8 @@ async fn run_user_client_session(
 ) -> Result<()> {
     // First iteration: if cached sessions exist, listen on those immediately.
     // On `/pair`, we loop back and start a fresh rendezvous/psk session.
-    let mut force_new_session = false;
-    let mut pending_session_name: Option<String> = None;
+    let mut force_new_connection = false;
+    let mut pending_connection_name: Option<String> = None;
 
     // Create TUI state once — it survives across `/pair` restarts.
     let mut app = App::new();
@@ -605,20 +605,17 @@ async fn run_user_client_session(
 
     loop {
         let identity_provider = Box::new(FileIdentityStorage::load_or_generate("user_client")?);
-        let session_cache = FileSessionCache::load_or_create("user_client")?;
-        let session_store = Box::new(session_cache);
-        let cached_sessions = session_store.list_sessions().await;
+        let connection_cache = FileConnectionCache::load_or_create("user_client")?;
+        let connection_store = Box::new(connection_cache);
+        let cached_connections = connection_store.list().await;
 
-        let has_cached = !cached_sessions.is_empty() && !force_new_session;
+        let has_cached = !cached_connections.is_empty() && !force_new_connection;
 
-        let proxy_client = Box::new(DefaultProxyClient::new(ProxyClientConfig {
-            proxy_url: proxy_url.clone(),
-            identity_keypair: Some(identity_provider.identity().await),
-        }));
+        let proxy_client = Box::new(DefaultProxyClient::from_url(proxy_url.clone()));
 
         let handle = UserClient::connect(
             identity_provider as Box<dyn IdentityProvider>,
-            session_store as Box<dyn SessionStore>,
+            connection_store as Box<dyn ConnectionStore>,
             proxy_client,
             None,
         )
@@ -629,9 +626,9 @@ async fn run_user_client_session(
         let request_rx = handle.requests;
 
         if !has_cached {
-            let client_session_name = pending_session_name.clone();
+            let client_connection_name = pending_connection_name.clone();
             if psk_mode {
-                let token = client.get_psk_token(client_session_name).await?;
+                let token = client.get_psk_token(client_connection_name).await?;
                 app.push_rich(Message::rich(
                     MessageKind::Prompt,
                     vec![
@@ -649,7 +646,7 @@ async fn run_user_client_session(
                     ],
                 ));
             } else {
-                let code = client.get_rendezvous_token(client_session_name).await?;
+                let code = client.get_rendezvous_token(client_connection_name).await?;
                 app.push_rich(Message::rich(
                     MessageKind::Prompt,
                     vec![
@@ -667,8 +664,8 @@ async fn run_user_client_session(
                     ],
                 ));
             }
-            app.set_session_panel(session_info_messages(
-                &cached_sessions,
+            app.set_connection_panel(connection_info_messages(
+                &cached_connections,
                 Some("New session  (awaiting connection)"),
             ));
         }
@@ -679,16 +676,16 @@ async fn run_user_client_session(
             &mut reader,
             notification_rx,
             request_rx,
-            &cached_sessions,
-            &pending_session_name,
+            &cached_connections,
+            &pending_connection_name,
             provider,
             &mut log_rx,
         )
         .await?
         {
-            EventLoopExit::NewSession { name } => {
-                force_new_session = true;
-                pending_session_name = name;
+            EventLoopExit::NewConnection { name } => {
+                force_new_connection = true;
+                pending_connection_name = name;
                 // Drop the client handle — event loop shuts down when all handles are dropped
                 drop(client);
                 continue;

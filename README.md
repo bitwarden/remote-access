@@ -1,14 +1,9 @@
 <p align="center">
-  <br>
-  <br>
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="assets/logo-light.svg">
     <img alt="Bitwarden Agent Access" src="assets/logo-light.svg" height="80">
   </picture>
-  <br>
-  <br>
-  <br>
 </p>
 
 
@@ -68,7 +63,8 @@ curl -fsSL "https://raw.githubusercontent.com/bitwarden/agent-access/main/exampl
 ## Examples
 
 * [OpenClaw skill](examples/skills/agent-access/SKILL.md)
-* Automated script requesting an API-token.
+* [Fetch credential via `aac connect`](examples/shell/get-credential.sh) — parse JSON output with `jq` and pipe to `docker login`
+* [Connect to PostgreSQL via `aac run`](examples/shell/psql-connect.sh) — inject `PGUSER`/`PGPASSWORD` as env vars directly into `psql`
 * Github Action
 
 ### Use from your code

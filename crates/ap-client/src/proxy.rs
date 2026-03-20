@@ -5,8 +5,8 @@
 
 use ap_proxy_client::IncomingMessage;
 #[cfg(feature = "native-websocket")]
-use ap_proxy_client::{ProxyClientConfig, ProxyProtocolClient};
-use ap_proxy_protocol::{IdentityFingerprint, RendezvousCode};
+use ap_proxy_client::ProxyProtocolClient;
+use ap_proxy_protocol::{IdentityFingerprint, IdentityKeyPair, RendezvousCode};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
@@ -16,7 +16,10 @@ use crate::error::ClientError;
 #[async_trait]
 pub trait ProxyClient: Send + Sync {
     /// Connect to the proxy server, returning a receiver for incoming messages
-    async fn connect(&mut self) -> Result<mpsc::UnboundedReceiver<IncomingMessage>, ClientError>;
+    async fn connect(
+        &mut self,
+        identity: IdentityKeyPair,
+    ) -> Result<mpsc::UnboundedReceiver<IncomingMessage>, ClientError>;
 
     /// Request a rendezvous code from the proxy server
     async fn request_rendezvous(&self) -> Result<(), ClientError>;
@@ -43,9 +46,9 @@ pub struct DefaultProxyClient {
 
 #[cfg(feature = "native-websocket")]
 impl DefaultProxyClient {
-    pub fn new(config: ProxyClientConfig) -> Self {
+    pub fn from_url(proxy_url: String) -> Self {
         Self {
-            inner: ProxyProtocolClient::new(config),
+            inner: ProxyProtocolClient::from_url(proxy_url),
         }
     }
 }
@@ -53,8 +56,14 @@ impl DefaultProxyClient {
 #[cfg(feature = "native-websocket")]
 #[async_trait]
 impl ProxyClient for DefaultProxyClient {
-    async fn connect(&mut self) -> Result<mpsc::UnboundedReceiver<IncomingMessage>, ClientError> {
-        self.inner.connect().await.map_err(ClientError::from)
+    async fn connect(
+        &mut self,
+        identity: IdentityKeyPair,
+    ) -> Result<mpsc::UnboundedReceiver<IncomingMessage>, ClientError> {
+        self.inner
+            .connect(identity)
+            .await
+            .map_err(ClientError::from)
     }
 
     async fn request_rendezvous(&self) -> Result<(), ClientError> {

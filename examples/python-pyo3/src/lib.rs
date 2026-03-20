@@ -12,7 +12,7 @@ use types::{PyCredentialData, RemoteAccessError};
 /// Convenience one-shot helper that creates a client, connects, requests,
 /// and closes — all in one call.
 #[pyfunction]
-#[pyo3(signature = (domain, token=None, session=None, proxy_url="wss://rat1.lesspassword.dev", identity_name="python-remote"))]
+#[pyo3(signature = (domain, token=None, session=None, proxy_url="wss://ap.lesspassword.dev", identity_name="python-remote"))]
 fn connect_and_request(
     py: Python<'_>,
     domain: &str,

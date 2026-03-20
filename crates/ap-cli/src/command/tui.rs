@@ -195,8 +195,8 @@ pub struct App {
     pub vault_status: Option<Vec<Span<'static>>>,
     /// Label shown in the header subtitle (e.g. "Remote client" or "User client").
     pub client_label: &'static str,
-    /// Persistent session-info panel rendered above the input area.
-    pub session_panel: Vec<Message>,
+    /// Persistent connection-info panel rendered above the input area.
+    pub connection_panel: Vec<Message>,
     /// When true, input characters are masked with `*` (for password entry).
     pub password_mode: bool,
     /// Index of the currently highlighted suggestion (None = no highlight).
@@ -218,7 +218,7 @@ impl App {
             client_label: "Remote client",
             account_name: None,
             vault_status: None,
-            session_panel: Vec::new(),
+            connection_panel: Vec::new(),
             password_mode: false,
             suggestion_idx: None,
             scroll_offset: 0,
@@ -254,9 +254,9 @@ impl App {
         self.commands = commands;
     }
 
-    /// Replace the persistent session-info panel content.
-    pub fn set_session_panel(&mut self, messages: Vec<Message>) {
-        self.session_panel = messages;
+    /// Replace the persistent connection-info panel content.
+    pub fn set_connection_panel(&mut self, messages: Vec<Message>) {
+        self.connection_panel = messages;
     }
 
     /// Advance the animation tick (call periodically from the event loop).
@@ -426,20 +426,20 @@ impl App {
             filtered.len() as u16 + 2 // border + items
         };
 
-        let session_panel_height = if self.session_panel.is_empty() {
+        let connection_panel_height = if self.connection_panel.is_empty() {
             0
         } else {
-            self.session_panel.len() as u16 + 2 // border + items
+            self.connection_panel.len() as u16 + 2 // border + items
         };
 
         let chunks = Layout::vertical([
-            Constraint::Length(5),                    // header (shield + title)
-            Constraint::Length(1),                    // separator
-            Constraint::Fill(1),                      // messages
-            Constraint::Length(session_panel_height), // session info panel
-            Constraint::Length(suggestion_height),    // suggestions (0 when hidden)
-            Constraint::Length(input_height),         // input panel
-            Constraint::Length(1),                    // footer
+            Constraint::Length(5),                       // header (shield + title)
+            Constraint::Length(1),                       // separator
+            Constraint::Fill(1),                         // messages
+            Constraint::Length(connection_panel_height), // connection info panel
+            Constraint::Length(suggestion_height),       // suggestions (0 when hidden)
+            Constraint::Length(input_height),            // input panel
+            Constraint::Length(1),                       // footer
         ])
         .split(area);
 
@@ -458,8 +458,8 @@ impl App {
         self.draw_messages(frame, chunks[2]);
 
         // ── Session info panel ──
-        if !self.session_panel.is_empty() {
-            self.draw_session_panel(frame, chunks[3]);
+        if !self.connection_panel.is_empty() {
+            self.draw_connection_panel(frame, chunks[3]);
         }
 
         // ── Suggestions panel ──
@@ -563,9 +563,13 @@ impl App {
         frame.render_widget(messages, area);
     }
 
-    fn draw_session_panel(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
+    fn draw_connection_panel(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
         let tick = self.tick;
-        let lines: Vec<Line<'_>> = self.session_panel.iter().map(|m| m.to_line(tick)).collect();
+        let lines: Vec<Line<'_>> = self
+            .connection_panel
+            .iter()
+            .map(|m| m.to_line(tick))
+            .collect();
         let widget = Paragraph::new(lines).block(
             Block::default()
                 .borders(Borders::ALL)

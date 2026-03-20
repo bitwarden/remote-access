@@ -51,9 +51,9 @@ pub enum ClientError {
     #[error("Serialization error: {0}")]
     Serialization(String),
 
-    /// Session cache error
-    #[error("Session cache error: {0}")]
-    SessionCache(String),
+    /// Connection cache error
+    #[error("Connection cache error: {0}")]
+    ConnectionCache(String),
 
     /// Keypair storage error
     #[error("Keypair storage error: {0}")]
@@ -83,9 +83,9 @@ pub enum ClientError {
     #[error("Invalid state: expected {expected}, got {current}")]
     InvalidState { expected: String, current: String },
 
-    /// Session not found for fingerprint
-    #[error("Session not found for fingerprint")]
-    SessionNotFound,
+    /// Connection not found for fingerprint
+    #[error("Connection not found for fingerprint")]
+    ConnectionNotFound,
 }
 
 impl From<ap_noise::error::NoiseProtocolError> for ClientError {

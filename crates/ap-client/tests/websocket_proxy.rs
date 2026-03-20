@@ -3,18 +3,16 @@
 //! These tests exercise the complete protocol stack using a real WebSocket proxy server,
 //! covering PSK and fingerprint-based pairing modes as well as credential exchange.
 
-use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Mutex;
+use std::sync::Arc;
 
 use ap_client::{
-    CredentialData, CredentialRequestReply, DefaultProxyClient, FingerprintVerificationReply,
-    IdentityProvider, Psk, RemoteClient, RemoteClientHandle, RemoteClientNotification,
-    SessionStore, UserClient, UserClientHandle, UserClientNotification, UserClientRequest,
+    ConnectionInfo, ConnectionStore, ConnectionUpdate, CredentialData, CredentialRequestReply,
+    DefaultProxyClient, FingerprintVerificationReply, MemoryConnectionStore,
+    MemoryIdentityProvider, PskToken, RemoteClient, RemoteClientHandle, RemoteClientNotification,
+    UserClient, UserClientHandle, UserClientNotification, UserClientRequest,
 };
-use ap_noise::MultiDeviceTransport;
 use ap_proxy::server::ProxyServer;
-use ap_proxy_client::ProxyClientConfig;
 use ap_proxy_protocol::{IdentityFingerprint, IdentityKeyPair};
 use tokio::time::{Duration, timeout};
 
@@ -22,280 +20,30 @@ use tokio::time::{Duration, timeout};
 // Test Infrastructure - Mock Implementations
 // ============================================================================
 
-/// Simple wrapper around a generated IdentityKeyPair
-struct MockIdentityProvider {
-    keypair: IdentityKeyPair,
-}
+// Uses MemoryIdentityProvider from the library instead of a local mock
 
-impl MockIdentityProvider {
-    fn new() -> Self {
-        Self {
-            keypair: IdentityKeyPair::generate(),
-        }
-    }
-
-    fn with_keypair(keypair: IdentityKeyPair) -> Self {
-        Self { keypair }
-    }
-}
-
-#[async_trait::async_trait]
-impl IdentityProvider for MockIdentityProvider {
-    async fn identity(&self) -> IdentityKeyPair {
-        self.keypair.clone()
-    }
-}
-
-/// Session entry with cached_at timestamp
-#[derive(Clone)]
-struct SessionEntry {
-    fingerprint: IdentityFingerprint,
-    name: Option<String>,
-    #[allow(dead_code)]
-    cached_at: u64,
-    last_connected_at: u64,
-    transport_state: Option<MultiDeviceTransport>,
-}
-
-/// In-memory HashMap-based session store
-struct MockSessionStore {
-    sessions: Mutex<HashMap<IdentityFingerprint, SessionEntry>>,
-}
-
-impl MockSessionStore {
-    fn new() -> Self {
-        Self {
-            sessions: Mutex::new(HashMap::new()),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl SessionStore for MockSessionStore {
-    async fn has_session(&self, fingerprint: &IdentityFingerprint) -> bool {
-        self.sessions
-            .lock()
-            .expect("Lock should not be poisoned")
-            .contains_key(fingerprint)
-    }
-
-    async fn cache_session(
-        &mut self,
-        fingerprint: IdentityFingerprint,
-    ) -> Result<(), ap_client::ClientError> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
-        let mut sessions = self.sessions.lock().expect("Lock should not be poisoned");
-        sessions.insert(
-            fingerprint,
-            SessionEntry {
-                fingerprint,
-                name: None,
-                cached_at: now,
-                last_connected_at: now,
-                transport_state: None,
-            },
-        );
-        Ok(())
-    }
-
-    async fn remove_session(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-    ) -> Result<(), ap_client::ClientError> {
-        self.sessions
-            .lock()
-            .expect("Lock should not be poisoned")
-            .remove(fingerprint);
-        Ok(())
-    }
-
-    async fn clear(&mut self) -> Result<(), ap_client::ClientError> {
-        self.sessions
-            .lock()
-            .expect("Lock should not be poisoned")
-            .clear();
-        Ok(())
-    }
-
-    async fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64, u64)> {
-        self.sessions
-            .lock()
-            .expect("Lock should not be poisoned")
-            .values()
-            .map(|e| {
-                (
-                    e.fingerprint,
-                    e.name.clone(),
-                    e.cached_at,
-                    e.last_connected_at,
-                )
-            })
-            .collect()
-    }
-
-    async fn set_session_name(
-        &mut self,
-        _fingerprint: &IdentityFingerprint,
-        _name: String,
-    ) -> Result<(), ap_client::ClientError> {
-        Ok(())
-    }
-
-    async fn update_last_connected(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-    ) -> Result<(), ap_client::ClientError> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
-        let mut sessions = self.sessions.lock().expect("Lock should not be poisoned");
-        if let Some(entry) = sessions.get_mut(fingerprint) {
-            entry.last_connected_at = now;
-        }
-        Ok(())
-    }
-
-    async fn save_transport_state(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-        transport_state: MultiDeviceTransport,
-    ) -> Result<(), ap_client::ClientError> {
-        let mut sessions = self.sessions.lock().expect("Lock should not be poisoned");
-        if let Some(entry) = sessions.get_mut(fingerprint) {
-            entry.transport_state = Some(transport_state);
-        }
-        Ok(())
-    }
-
-    async fn load_transport_state(
-        &self,
-        fingerprint: &IdentityFingerprint,
-    ) -> Result<Option<MultiDeviceTransport>, ap_client::ClientError> {
-        let sessions = self.sessions.lock().expect("Lock should not be poisoned");
-        Ok(sessions
-            .get(fingerprint)
-            .and_then(|e| e.transport_state.clone()))
-    }
-}
-
-/// Wrapper to share MockSessionStore via Arc.
+/// Wrapper to share a MemoryConnectionStore via Arc<tokio::sync::Mutex>.
 ///
-/// This works because MockSessionStore uses interior mutability (Mutex<HashMap>),
-/// so no outer Mutex is needed. The async trait methods can delegate directly.
-struct SharedSessionStore(std::sync::Arc<MockSessionStore>);
+/// Needed by multi-device tests where multiple clients share the same connection store.
+/// Uses tokio::sync::Mutex (whose MutexGuard is Send) to avoid Send issues in async trait methods.
+struct SharedConnectionStore(Arc<tokio::sync::Mutex<MemoryConnectionStore>>);
 
 #[async_trait::async_trait]
-impl SessionStore for SharedSessionStore {
-    async fn has_session(&self, fingerprint: &IdentityFingerprint) -> bool {
-        self.0.has_session(fingerprint).await
+impl ConnectionStore for SharedConnectionStore {
+    async fn get(&self, fingerprint: &IdentityFingerprint) -> Option<ConnectionInfo> {
+        self.0.lock().await.get(fingerprint).await
     }
 
-    async fn cache_session(
-        &mut self,
-        fingerprint: IdentityFingerprint,
-    ) -> Result<(), ap_client::ClientError> {
-        // MockSessionStore uses interior mutability, so &self is sufficient
-        let store = std::sync::Arc::get_mut(&mut self.0);
-        // In tests, Arc is never shared at the point of mutation through SessionStore,
-        // so get_mut succeeds. If it doesn't, fall back to direct field access.
-        if let Some(store) = store {
-            store.cache_session(fingerprint).await
-        } else {
-            // Fallback: direct interior-mutability access
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let mut sessions = self.0.sessions.lock().expect("Lock should not be poisoned");
-            sessions.insert(
-                fingerprint,
-                SessionEntry {
-                    fingerprint,
-                    name: None,
-                    cached_at: now,
-                    last_connected_at: now,
-                    transport_state: None,
-                },
-            );
-            Ok(())
-        }
+    async fn save(&mut self, connection: ConnectionInfo) -> Result<(), ap_client::ClientError> {
+        self.0.lock().await.save(connection).await
     }
 
-    async fn remove_session(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-    ) -> Result<(), ap_client::ClientError> {
-        self.0
-            .sessions
-            .lock()
-            .expect("Lock should not be poisoned")
-            .remove(fingerprint);
-        Ok(())
+    async fn update(&mut self, update: ConnectionUpdate) -> Result<(), ap_client::ClientError> {
+        self.0.lock().await.update(update).await
     }
 
-    async fn clear(&mut self) -> Result<(), ap_client::ClientError> {
-        self.0
-            .sessions
-            .lock()
-            .expect("Lock should not be poisoned")
-            .clear();
-        Ok(())
-    }
-
-    async fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64, u64)> {
-        self.0.list_sessions().await
-    }
-
-    async fn set_session_name(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-        name: String,
-    ) -> Result<(), ap_client::ClientError> {
-        let mut sessions = self.0.sessions.lock().expect("Lock should not be poisoned");
-        if let Some(entry) = sessions.get_mut(fingerprint) {
-            entry.name = Some(name);
-        }
-        Ok(())
-    }
-
-    async fn update_last_connected(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-    ) -> Result<(), ap_client::ClientError> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let mut sessions = self.0.sessions.lock().expect("Lock should not be poisoned");
-        if let Some(entry) = sessions.get_mut(fingerprint) {
-            entry.last_connected_at = now;
-        }
-        Ok(())
-    }
-
-    async fn save_transport_state(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-        transport_state: MultiDeviceTransport,
-    ) -> Result<(), ap_client::ClientError> {
-        let mut sessions = self.0.sessions.lock().expect("Lock should not be poisoned");
-        if let Some(entry) = sessions.get_mut(fingerprint) {
-            entry.transport_state = Some(transport_state);
-        }
-        Ok(())
-    }
-
-    async fn load_transport_state(
-        &self,
-        fingerprint: &IdentityFingerprint,
-    ) -> Result<Option<MultiDeviceTransport>, ap_client::ClientError> {
-        self.0.load_transport_state(fingerprint).await
+    async fn list(&self) -> Vec<ConnectionInfo> {
+        self.0.lock().await.list().await
     }
 }
 
@@ -317,11 +65,8 @@ async fn start_test_server() -> SocketAddr {
 }
 
 /// Create a DefaultProxyClient connected to the given address
-fn create_proxy_client(addr: SocketAddr, keypair: Option<IdentityKeyPair>) -> DefaultProxyClient {
-    DefaultProxyClient::new(ProxyClientConfig {
-        proxy_url: format!("ws://{addr}"),
-        identity_keypair: keypair,
-    })
+fn create_proxy_client(addr: SocketAddr) -> DefaultProxyClient {
+    DefaultProxyClient::from_url(format!("ws://{addr}"))
 }
 
 /// Create a test credential for use in tests
@@ -347,14 +92,12 @@ async fn test_e2e_psk_pairing_and_credential_request() {
     let addr = start_test_server().await;
 
     // 2. Create identities
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
-
-    let user_keypair = user_identity.identity().await;
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     // 3. Create UserClient with DefaultProxyClient
-    let user_proxy = create_proxy_client(addr, Some(user_keypair));
-    let user_session_store = MockSessionStore::new();
+    let user_proxy = create_proxy_client(addr);
+    let user_connection_store = MemoryConnectionStore::new();
 
     let UserClientHandle {
         client: user_client,
@@ -362,7 +105,7 @@ async fn test_e2e_psk_pairing_and_credential_request() {
         requests: mut request_rx,
     } = UserClient::connect(
         Box::new(user_identity),
-        Box::new(user_session_store),
+        Box::new(user_connection_store),
         Box::new(user_proxy),
         None,
     )
@@ -375,18 +118,14 @@ async fn test_e2e_psk_pairing_and_credential_request() {
         .await
         .expect("Should generate PSK token");
 
-    // Parse token: format is <psk_hex>_<fingerprint_hex>
-    let parts: Vec<&str> = token.split('_').collect();
-    assert_eq!(parts.len(), 2, "Token should have format psk_fingerprint");
-    let psk = Psk::from_hex(parts[0]).expect("Should parse PSK");
-    let fp_bytes = hex::decode(parts[1]).expect("Should decode fingerprint hex");
-    let mut fp_array = [0u8; 32];
-    fp_array.copy_from_slice(&fp_bytes);
-    let fingerprint = IdentityFingerprint(fp_array);
+    // Parse token
+    let (psk, fingerprint) = PskToken::parse(&token)
+        .expect("Should parse PSK token")
+        .into_parts();
 
     // 5. Create RemoteClient with DefaultProxyClient
-    let remote_proxy = create_proxy_client(addr, None);
-    let remote_session_store = MockSessionStore::new();
+    let remote_proxy = create_proxy_client(addr);
+    let remote_connection_store = MemoryConnectionStore::new();
 
     let RemoteClientHandle {
         client: remote_client,
@@ -394,7 +133,7 @@ async fn test_e2e_psk_pairing_and_credential_request() {
         requests: mut _remote_request_rx,
     } = RemoteClient::connect(
         Box::new(remote_identity),
-        Box::new(remote_session_store),
+        Box::new(remote_connection_store),
         Box::new(remote_proxy),
     )
     .await
@@ -490,14 +229,12 @@ async fn test_e2e_fingerprint_pairing_and_credential_request() {
     let addr = start_test_server().await;
 
     // 2. Create identities
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
-
-    let user_keypair = user_identity.identity().await;
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     // 3. Create UserClient with DefaultProxyClient
-    let user_proxy = create_proxy_client(addr, Some(user_keypair));
-    let user_session_store = MockSessionStore::new();
+    let user_proxy = create_proxy_client(addr);
+    let user_connection_store = MemoryConnectionStore::new();
 
     let UserClientHandle {
         client: user_client,
@@ -505,7 +242,7 @@ async fn test_e2e_fingerprint_pairing_and_credential_request() {
         requests: mut request_rx,
     } = UserClient::connect(
         Box::new(user_identity),
-        Box::new(user_session_store),
+        Box::new(user_connection_store),
         Box::new(user_proxy),
         None,
     )
@@ -520,8 +257,8 @@ async fn test_e2e_fingerprint_pairing_and_credential_request() {
     let code = code.as_str().to_string();
 
     // 5. Create RemoteClient with DefaultProxyClient
-    let remote_proxy = create_proxy_client(addr, None);
-    let remote_session_store = MockSessionStore::new();
+    let remote_proxy = create_proxy_client(addr);
+    let remote_connection_store = MemoryConnectionStore::new();
 
     let RemoteClientHandle {
         client: remote_client,
@@ -529,7 +266,7 @@ async fn test_e2e_fingerprint_pairing_and_credential_request() {
         requests: mut _remote_request_rx,
     } = RemoteClient::connect(
         Box::new(remote_identity),
-        Box::new(remote_session_store),
+        Box::new(remote_connection_store),
         Box::new(remote_proxy),
     )
     .await
@@ -574,13 +311,13 @@ async fn test_e2e_fingerprint_pairing_and_credential_request() {
         "RemoteClient should emit HandshakeFingerprint (informational)"
     );
 
-    // 11. Verify session is cached
+    // 11. Verify connection is cached
     assert!(
         remote_client
-            .has_session(paired_fingerprint)
+            .has_connection(paired_fingerprint)
             .await
-            .expect("has_session should not fail"),
-        "Session should be cached in RemoteClient's session store"
+            .expect("has_connection should not fail"),
+        "Connection should be cached in RemoteClient's connection store"
     );
 
     // 12. Spawn credential response handler for UserClient
@@ -636,14 +373,12 @@ async fn test_e2e_credential_request_denied() {
     let addr = start_test_server().await;
 
     // 2. Create identities
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
-
-    let user_keypair = user_identity.identity().await;
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     // 3. Create UserClient with DefaultProxyClient
-    let user_proxy = create_proxy_client(addr, Some(user_keypair));
-    let user_session_store = MockSessionStore::new();
+    let user_proxy = create_proxy_client(addr);
+    let user_connection_store = MemoryConnectionStore::new();
 
     let UserClientHandle {
         client: user_client,
@@ -651,7 +386,7 @@ async fn test_e2e_credential_request_denied() {
         requests: mut request_rx,
     } = UserClient::connect(
         Box::new(user_identity),
-        Box::new(user_session_store),
+        Box::new(user_connection_store),
         Box::new(user_proxy),
         None,
     )
@@ -664,17 +399,14 @@ async fn test_e2e_credential_request_denied() {
         .await
         .expect("Should generate PSK token");
 
-    // Parse token: format is <psk_hex>_<fingerprint_hex>
-    let parts: Vec<&str> = token.split('_').collect();
-    let psk = Psk::from_hex(parts[0]).expect("Should parse PSK");
-    let fp_bytes = hex::decode(parts[1]).expect("Should decode fingerprint hex");
-    let mut fp_array = [0u8; 32];
-    fp_array.copy_from_slice(&fp_bytes);
-    let fingerprint = IdentityFingerprint(fp_array);
+    // Parse token
+    let (psk, fingerprint) = PskToken::parse(&token)
+        .expect("Should parse PSK token")
+        .into_parts();
 
     // 5. Create RemoteClient
-    let remote_proxy = create_proxy_client(addr, None);
-    let remote_session_store = MockSessionStore::new();
+    let remote_proxy = create_proxy_client(addr);
+    let remote_connection_store = MemoryConnectionStore::new();
 
     let RemoteClientHandle {
         client: remote_client,
@@ -682,7 +414,7 @@ async fn test_e2e_credential_request_denied() {
         requests: mut _remote_request_rx,
     } = RemoteClient::connect(
         Box::new(remote_identity),
-        Box::new(remote_session_store),
+        Box::new(remote_connection_store),
         Box::new(remote_proxy),
     )
     .await
@@ -747,14 +479,12 @@ async fn test_e2e_multiple_credential_requests() {
     let addr = start_test_server().await;
 
     // 2. Create identities
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
-
-    let user_keypair = user_identity.identity().await;
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     // 3. Create UserClient with DefaultProxyClient
-    let user_proxy = create_proxy_client(addr, Some(user_keypair));
-    let user_session_store = MockSessionStore::new();
+    let user_proxy = create_proxy_client(addr);
+    let user_connection_store = MemoryConnectionStore::new();
 
     let UserClientHandle {
         client: user_client,
@@ -762,7 +492,7 @@ async fn test_e2e_multiple_credential_requests() {
         requests: mut request_rx,
     } = UserClient::connect(
         Box::new(user_identity),
-        Box::new(user_session_store),
+        Box::new(user_connection_store),
         Box::new(user_proxy),
         None,
     )
@@ -775,17 +505,14 @@ async fn test_e2e_multiple_credential_requests() {
         .await
         .expect("Should generate PSK token");
 
-    // Parse token: format is <psk_hex>_<fingerprint_hex>
-    let parts: Vec<&str> = token.split('_').collect();
-    let psk = Psk::from_hex(parts[0]).expect("Should parse PSK");
-    let fp_bytes = hex::decode(parts[1]).expect("Should decode fingerprint hex");
-    let mut fp_array = [0u8; 32];
-    fp_array.copy_from_slice(&fp_bytes);
-    let fingerprint = IdentityFingerprint(fp_array);
+    // Parse token
+    let (psk, fingerprint) = PskToken::parse(&token)
+        .expect("Should parse PSK token")
+        .into_parts();
 
     // 5. Create RemoteClient
-    let remote_proxy = create_proxy_client(addr, None);
-    let remote_session_store = MockSessionStore::new();
+    let remote_proxy = create_proxy_client(addr);
+    let remote_connection_store = MemoryConnectionStore::new();
 
     let RemoteClientHandle {
         client: remote_client,
@@ -793,7 +520,7 @@ async fn test_e2e_multiple_credential_requests() {
         requests: mut _remote_request_rx,
     } = RemoteClient::connect(
         Box::new(remote_identity),
-        Box::new(remote_session_store),
+        Box::new(remote_connection_store),
         Box::new(remote_proxy),
     )
     .await
@@ -877,20 +604,16 @@ async fn test_e2e_multiple_credential_requests() {
 
 #[tokio::test]
 async fn test_e2e_transport_state_persistence() {
-    use std::sync::Arc;
-
     // 1. Start real proxy server
     let addr = start_test_server().await;
 
     // 2. Create identities
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
-
-    let user_keypair = user_identity.identity().await;
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     // 3. Create UserClient with DefaultProxyClient
-    let user_proxy = create_proxy_client(addr, Some(user_keypair));
-    let user_session_store = MockSessionStore::new();
+    let user_proxy = create_proxy_client(addr);
+    let user_connection_store = MemoryConnectionStore::new();
 
     let UserClientHandle {
         client: user_client,
@@ -898,7 +621,7 @@ async fn test_e2e_transport_state_persistence() {
         requests: _request_rx,
     } = UserClient::connect(
         Box::new(user_identity),
-        Box::new(user_session_store),
+        Box::new(user_connection_store),
         Box::new(user_proxy),
         None,
     )
@@ -912,27 +635,23 @@ async fn test_e2e_transport_state_persistence() {
         .expect("Should generate PSK token");
 
     // Parse token: format is <psk_hex>_<fingerprint_hex>
-    let parts: Vec<&str> = token.split('_').collect();
-    assert_eq!(parts.len(), 2, "Token should have format psk_fingerprint");
-    let psk = Psk::from_hex(parts[0]).expect("Should parse PSK");
-    let fp_bytes = hex::decode(parts[1]).expect("Should decode fingerprint hex");
-    let mut fp_array = [0u8; 32];
-    fp_array.copy_from_slice(&fp_bytes);
-    let fingerprint = IdentityFingerprint(fp_array);
+    let (psk, fingerprint) = PskToken::parse(&token)
+        .expect("Should parse PSK token")
+        .into_parts();
 
-    // 5. Create RemoteClient with Arc<MockSessionStore> for later access
-    let remote_proxy = create_proxy_client(addr, None);
-    let remote_session_store = Arc::new(MockSessionStore::new());
-    let session_store_clone = Arc::clone(&remote_session_store);
+    // 5. Create RemoteClient with shared connection store for later access
+    let remote_proxy = create_proxy_client(addr);
+    let remote_connection_store = Arc::new(tokio::sync::Mutex::new(MemoryConnectionStore::new()));
+    let connection_store_clone = Arc::clone(&remote_connection_store);
 
-    // Reuse the module-level SharedSessionStore wrapper
+    // Reuse the module-level SharedConnectionStore wrapper
     let RemoteClientHandle {
         client: remote_client,
         notifications: mut remote_notification_rx,
         requests: mut _remote_request_rx,
     } = RemoteClient::connect(
         Box::new(remote_identity),
-        Box::new(SharedSessionStore(remote_session_store)),
+        Box::new(SharedConnectionStore(remote_connection_store)),
         Box::new(remote_proxy),
     )
     .await
@@ -975,18 +694,22 @@ async fn test_e2e_transport_state_persistence() {
         "UserClient should emit HandshakeComplete"
     );
 
-    // 10. Load transport state from session store and verify it was saved
-    let transport_state = session_store_clone
-        .load_transport_state(&fingerprint)
+    // 10. Load connection from connection store and verify transport state was saved
+    let connection = connection_store_clone
+        .lock()
         .await
-        .expect("Should load transport state");
+        .get(&fingerprint)
+        .await
+        .expect("Connection should exist in store");
 
-    // 11. Assert the state is Some (transport object, not bytes)
+    // 11. Assert the transport state is Some
     assert!(
-        transport_state.is_some(),
+        connection.transport_state.is_some(),
         "Transport state should be saved after pairing"
     );
-    let mut restored_transport = transport_state.expect("Transport state should be present");
+    let mut restored_transport = connection
+        .transport_state
+        .expect("Transport state should be present");
 
     // 12. Verify the restored transport can encrypt (proving it's a valid transport)
     let test_message = b"test message for persistence verification";
@@ -1011,32 +734,27 @@ async fn test_e2e_transport_state_persistence() {
 
 #[tokio::test]
 async fn test_e2e_multi_device_credential_response() {
-    use std::sync::Arc;
-
     // 1. Start real proxy server
     let addr = start_test_server().await;
 
     // 2. Create identities - same user identity for both devices
     let user_keypair = IdentityKeyPair::generate();
-    let remote_keypair = IdentityKeyPair::generate();
-
-    // Clone keypair for device 2
     let user_keypair_device2 = user_keypair.clone();
 
     // 3. Create UserClient Device 1 with DefaultProxyClient
-    let user_proxy1 = create_proxy_client(addr, Some(user_keypair.clone()));
+    let user_proxy1 = create_proxy_client(addr);
 
-    // Use Arc<MockSessionStore> for later access to transport state
-    let user_session_store1 = Arc::new(MockSessionStore::new());
-    let session_store_clone = Arc::clone(&user_session_store1);
+    // Use Arc for shared access between multiple UserClient devices
+    let user_connection_store1 = Arc::new(tokio::sync::Mutex::new(MemoryConnectionStore::new()));
+    let connection_store_clone = Arc::clone(&user_connection_store1);
 
     let UserClientHandle {
         client: user_client1,
         notifications: mut notification_rx1,
         requests: mut request_rx1,
     } = UserClient::connect(
-        Box::new(MockIdentityProvider::with_keypair(user_keypair)),
-        Box::new(SharedSessionStore(Arc::clone(&user_session_store1))),
+        Box::new(MemoryIdentityProvider::from_keypair(user_keypair)),
+        Box::new(SharedConnectionStore(Arc::clone(&user_connection_store1))),
         Box::new(user_proxy1),
         None,
     )
@@ -1049,23 +767,20 @@ async fn test_e2e_multi_device_credential_response() {
         .await
         .expect("Should generate PSK token");
 
-    // Parse token: format is <psk_hex>_<fingerprint_hex>
-    let parts: Vec<&str> = token.split('_').collect();
-    let psk = Psk::from_hex(parts[0]).expect("Should parse PSK");
-    let fp_bytes = hex::decode(parts[1]).expect("Should decode fingerprint hex");
-    let mut fp_array = [0u8; 32];
-    fp_array.copy_from_slice(&fp_bytes);
-    let user_fingerprint = IdentityFingerprint(fp_array);
+    // Parse token
+    let (psk, user_fingerprint) = PskToken::parse(&token)
+        .expect("Should parse PSK token")
+        .into_parts();
 
     // 6. Create RemoteClient
-    let remote_proxy = create_proxy_client(addr, Some(remote_keypair));
+    let remote_proxy = create_proxy_client(addr);
     let RemoteClientHandle {
         client: remote_client,
         notifications: mut remote_notification_rx,
         requests: mut _remote_request_rx,
     } = RemoteClient::connect(
-        Box::new(MockIdentityProvider::new()),
-        Box::new(MockSessionStore::new()),
+        Box::new(MemoryIdentityProvider::new()),
+        Box::new(MemoryConnectionStore::new()),
         Box::new(remote_proxy),
     )
     .await
@@ -1094,15 +809,15 @@ async fn test_e2e_multi_device_credential_response() {
         }
     }
 
-    // 9. Create UserClient Device 2 with SHARED session store
-    let user_proxy2 = create_proxy_client(addr, Some(user_keypair_device2.clone()));
+    // 9. Create UserClient Device 2 with SHARED connection store
+    let user_proxy2 = create_proxy_client(addr);
     let UserClientHandle {
         client: user_client2,
         notifications: mut notification_rx2,
         requests: mut request_rx2,
     } = UserClient::connect(
-        Box::new(MockIdentityProvider::with_keypair(user_keypair_device2)),
-        Box::new(SharedSessionStore(Arc::clone(&session_store_clone))),
+        Box::new(MemoryIdentityProvider::from_keypair(user_keypair_device2)),
+        Box::new(SharedConnectionStore(Arc::clone(&connection_store_clone))),
         Box::new(user_proxy2),
         None,
     )

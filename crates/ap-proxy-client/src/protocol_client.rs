@@ -43,16 +43,15 @@ type WsSource = futures_util::stream::SplitStream<WsStream>;
 /// Basic usage:
 ///
 /// ```no_run
-/// use ap_proxy_client::{ProxyClientConfig, ProxyProtocolClient, IncomingMessage};
+/// use ap_proxy_client::{ProxyClientConfig, ProxyProtocolClient, IncomingMessage, IdentityKeyPair};
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create and connect
 /// let config = ProxyClientConfig {
 ///     proxy_url: "ws://localhost:8080".to_string(),
-///     identity_keypair: None,
 /// };
 /// let mut client = ProxyProtocolClient::new(config);
-/// let mut incoming = client.connect().await?;
+/// let mut incoming = client.connect(IdentityKeyPair::generate()).await?;
 ///
 /// // Handle messages
 /// tokio::spawn(async move {
@@ -74,7 +73,7 @@ type WsSource = futures_util::stream::SplitStream<WsStream>;
 pub struct ProxyProtocolClient {
     // Configuration
     config: ProxyClientConfig,
-    identity: Arc<IdentityKeyPair>,
+    identity: Option<Arc<IdentityKeyPair>>,
 
     // Connection state
     state: Arc<Mutex<ClientState>>,
@@ -91,49 +90,22 @@ impl ProxyProtocolClient {
     /// Create a new proxy client with the given configuration.
     ///
     /// This does not establish a connection - call [`connect()`](ProxyProtocolClient::connect)
-    /// to connect and authenticate.
-    ///
-    /// If `config.identity_keypair` is `None`, a new random identity will be generated.
-    /// Otherwise, the provided identity will be used for authentication.
+    /// to connect and authenticate with an identity.
     ///
     /// # Examples
-    ///
-    /// Create client with new identity:
     ///
     /// ```
     /// use ap_proxy_client::{ProxyClientConfig, ProxyProtocolClient};
     ///
     /// let config = ProxyClientConfig {
     ///     proxy_url: "ws://localhost:8080".to_string(),
-    ///     identity_keypair: None, // Will generate new identity
-    /// };
-    /// let client = ProxyProtocolClient::new(config);
-    /// println!("Client fingerprint: {:?}", client.fingerprint());
-    /// ```
-    ///
-    /// Create client with existing identity:
-    ///
-    /// ```
-    /// use ap_proxy_client::{ProxyClientConfig, ProxyProtocolClient, IdentityKeyPair};
-    ///
-    /// let keypair = IdentityKeyPair::generate();
-    /// let config = ProxyClientConfig {
-    ///     proxy_url: "ws://localhost:8080".to_string(),
-    ///     identity_keypair: Some(keypair),
     /// };
     /// let client = ProxyProtocolClient::new(config);
     /// ```
-    pub fn new(mut config: ProxyClientConfig) -> Self {
-        let identity = Arc::new(
-            config
-                .identity_keypair
-                .take()
-                .unwrap_or_else(IdentityKeyPair::generate),
-        );
-
+    pub fn new(config: ProxyClientConfig) -> Self {
         Self {
             config,
-            identity,
+            identity: None,
             state: Arc::new(Mutex::new(ClientState::Disconnected)),
             outgoing_tx: None,
             read_task_handle: None,
@@ -141,16 +113,23 @@ impl ProxyProtocolClient {
         }
     }
 
+    /// Create a new proxy client from just a URL.
+    ///
+    /// Convenience constructor equivalent to `new(ProxyClientConfig { proxy_url })`.
+    pub fn from_url(proxy_url: String) -> Self {
+        Self::new(ProxyClientConfig { proxy_url })
+    }
+
     /// Connect to the proxy server and perform authentication.
     ///
-    /// Establishes a WebSocket connection, completes the challenge-response authentication,
-    /// and returns a channel for receiving incoming messages.
+    /// Establishes a WebSocket connection, completes the challenge-response authentication
+    /// using the provided identity, and returns a channel for receiving incoming messages.
     ///
     /// # Authentication Flow
     ///
     /// 1. Connect to WebSocket at the configured URL
     /// 2. Receive authentication challenge from server
-    /// 3. Sign challenge with client's private key
+    /// 3. Sign challenge with the provided identity's private key
     /// 4. Send signed response to server
     /// 5. Server verifies signature and accepts connection
     ///
@@ -169,17 +148,16 @@ impl ProxyProtocolClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use ap_proxy_client::{ProxyClientConfig, ProxyProtocolClient, IncomingMessage};
+    /// use ap_proxy_client::{ProxyClientConfig, ProxyProtocolClient, IncomingMessage, IdentityKeyPair};
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let config = ProxyClientConfig {
     ///     proxy_url: "ws://localhost:8080".to_string(),
-    ///     identity_keypair: None,
     /// };
     /// let mut client = ProxyProtocolClient::new(config);
     ///
     /// // Connect and get incoming message channel
-    /// let mut incoming = client.connect().await?;
+    /// let mut incoming = client.connect(IdentityKeyPair::generate()).await?;
     ///
     /// // Handle messages
     /// while let Some(msg) = incoming.recv().await {
@@ -190,6 +168,7 @@ impl ProxyProtocolClient {
     /// ```
     pub async fn connect(
         &mut self,
+        identity: IdentityKeyPair,
     ) -> Result<mpsc::UnboundedReceiver<IncomingMessage>, ProxyError> {
         // Check not already connected
         {
@@ -198,6 +177,10 @@ impl ProxyProtocolClient {
                 return Err(ProxyError::AlreadyConnected);
             }
         }
+
+        // Store the identity
+        let identity = Arc::new(identity);
+        self.identity = Some(Arc::clone(&identity));
 
         // Connect WebSocket
         let (ws_stream, _) = connect_async(&self.config.proxy_url)
@@ -230,7 +213,7 @@ impl ProxyProtocolClient {
             ws_source,
             outgoing_tx.clone(),
             incoming_tx,
-            Arc::clone(&self.identity),
+            identity,
             self.state.clone(),
             auth_tx,
             last_pong,
@@ -289,15 +272,14 @@ impl ProxyProtocolClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use ap_proxy_client::{ProxyClientConfig, ProxyProtocolClient};
+    /// use ap_proxy_client::{ProxyClientConfig, ProxyProtocolClient, IdentityKeyPair};
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = ProxyClientConfig {
     /// #     proxy_url: "ws://localhost:8080".to_string(),
-    /// #     identity_keypair: None,
     /// # };
     /// let mut client = ProxyProtocolClient::new(config);
-    /// client.connect().await?;
+    /// client.connect(IdentityKeyPair::generate()).await?;
     ///
     /// // Get destination fingerprint from rendezvous lookup
     /// // let destination = ...; // from IncomingMessage::IdentityInfo
@@ -371,15 +353,11 @@ impl ProxyProtocolClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use ap_proxy_client::{ProxyClientConfig, ProxyProtocolClient, IncomingMessage};
+    /// use ap_proxy_client::{ProxyProtocolClient, IncomingMessage, IdentityKeyPair};
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let config = ProxyClientConfig {
-    /// #     proxy_url: "ws://localhost:8080".to_string(),
-    /// #     identity_keypair: None,
-    /// # };
-    /// let mut client = ProxyProtocolClient::new(config);
-    /// let mut incoming = client.connect().await?;
+    /// let mut client = ProxyProtocolClient::from_url("ws://localhost:8080".to_string());
+    /// let mut incoming = client.connect(IdentityKeyPair::generate()).await?;
     ///
     /// // Request a code
     /// client.request_rendezvous().await?;
@@ -440,15 +418,11 @@ impl ProxyProtocolClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use ap_proxy_client::{ProxyClientConfig, ProxyProtocolClient, IncomingMessage, RendezvousCode};
+    /// use ap_proxy_client::{ProxyProtocolClient, IncomingMessage, IdentityKeyPair, RendezvousCode};
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let config = ProxyClientConfig {
-    /// #     proxy_url: "ws://localhost:8080".to_string(),
-    /// #     identity_keypair: None,
-    /// # };
-    /// let mut client = ProxyProtocolClient::new(config);
-    /// let mut incoming = client.connect().await?;
+    /// let mut client = ProxyProtocolClient::from_url("ws://localhost:8080".to_string());
+    /// let mut incoming = client.connect(IdentityKeyPair::generate()).await?;
     ///
     /// // Get code from user (e.g., QR scan, text input)
     /// let code = RendezvousCode::from_string("ABC-DEF-GHI".to_string());
@@ -509,18 +483,25 @@ impl ProxyProtocolClient {
     ///
     /// # Examples
     ///
-    /// ```
-    /// use ap_proxy_client::{ProxyClientConfig, ProxyProtocolClient};
+    /// ```no_run
+    /// use ap_proxy_client::{ProxyClientConfig, ProxyProtocolClient, IdentityKeyPair};
     ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let config = ProxyClientConfig {
     ///     proxy_url: "ws://localhost:8080".to_string(),
-    ///     identity_keypair: None,
     /// };
-    /// let client = ProxyProtocolClient::new(config);
+    /// let mut client = ProxyProtocolClient::new(config);
+    /// client.connect(IdentityKeyPair::generate()).await?;
     /// println!("My fingerprint: {:?}", client.fingerprint());
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn fingerprint(&self) -> IdentityFingerprint {
-        self.identity.identity().fingerprint()
+        self.identity
+            .as_ref()
+            .expect("fingerprint() requires a prior connect()")
+            .identity()
+            .fingerprint()
     }
 
     /// Check if the client is currently authenticated.
@@ -531,18 +512,17 @@ impl ProxyProtocolClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use ap_proxy_client::{ProxyClientConfig, ProxyProtocolClient};
+    /// use ap_proxy_client::{ProxyClientConfig, ProxyProtocolClient, IdentityKeyPair};
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let config = ProxyClientConfig {
-    /// #     proxy_url: "ws://localhost:8080".to_string(),
-    /// #     identity_keypair: None,
-    /// # };
+    /// let config = ProxyClientConfig {
+    ///     proxy_url: "ws://localhost:8080".to_string(),
+    /// };
     /// let mut client = ProxyProtocolClient::new(config);
     ///
     /// assert!(!client.is_authenticated().await);
     ///
-    /// client.connect().await?;
+    /// client.connect(IdentityKeyPair::generate()).await?;
     /// assert!(client.is_authenticated().await);
     ///
     /// client.disconnect().await?;
@@ -566,15 +546,14 @@ impl ProxyProtocolClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use ap_proxy_client::{ProxyClientConfig, ProxyProtocolClient};
+    /// use ap_proxy_client::{ProxyClientConfig, ProxyProtocolClient, IdentityKeyPair};
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = ProxyClientConfig {
     /// #     proxy_url: "ws://localhost:8080".to_string(),
-    /// #     identity_keypair: None,
     /// # };
     /// let mut client = ProxyProtocolClient::new(config);
-    /// client.connect().await?;
+    /// client.connect(IdentityKeyPair::generate()).await?;
     ///
     /// // Do work...
     ///

@@ -12,7 +12,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 
 use super::notify;
-use crate::traits::{IdentityProvider, SessionStore};
+use crate::traits::{ConnectionInfo, ConnectionStore, ConnectionUpdate, IdentityProvider};
 use crate::{
     error::ClientError,
     types::{
@@ -130,9 +130,6 @@ pub enum RemoteClientRequest {
 // Command channel for RemoteClient handle → event loop communication
 // =============================================================================
 
-/// Type alias matching `SessionStore::list_sessions()` return type.
-type SessionList = Vec<(IdentityFingerprint, Option<String>, u64, u64)>;
-
 /// Commands sent from a `RemoteClient` handle to the running event loop.
 enum RemoteClientCommand {
     PairWithHandshake {
@@ -145,7 +142,7 @@ enum RemoteClientCommand {
         remote_fingerprint: IdentityFingerprint,
         reply: oneshot::Sender<Result<(), ClientError>>,
     },
-    LoadCachedSession {
+    LoadCachedConnection {
         remote_fingerprint: IdentityFingerprint,
         reply: oneshot::Sender<Result<(), ClientError>>,
     },
@@ -153,10 +150,10 @@ enum RemoteClientCommand {
         query: CredentialQuery,
         reply: oneshot::Sender<Result<CredentialData, ClientError>>,
     },
-    ListSessions {
-        reply: oneshot::Sender<SessionList>,
+    ListConnections {
+        reply: oneshot::Sender<Vec<ConnectionInfo>>,
     },
-    HasSession {
+    HasConnection {
         fingerprint: IdentityFingerprint,
         reply: oneshot::Sender<bool>,
     },
@@ -195,13 +192,14 @@ impl RemoteClient {
     /// methods to establish a secure channel:
     /// - [`pair_with_handshake()`](Self::pair_with_handshake) for rendezvous-based pairing
     /// - [`pair_with_psk()`](Self::pair_with_psk) for PSK-based pairing
-    /// - [`load_cached_session()`](Self::load_cached_session) for reconnecting with a cached session
+    /// - [`load_cached_connection()`](Self::load_cached_connection) for reconnecting with a cached connection
     pub async fn connect(
         identity_provider: Box<dyn IdentityProvider>,
-        session_store: Box<dyn SessionStore>,
+        connection_store: Box<dyn ConnectionStore>,
         mut proxy_client: Box<dyn ProxyClient>,
     ) -> Result<RemoteClientHandle, ClientError> {
-        let own_fingerprint = identity_provider.fingerprint().await;
+        let identity_keypair = identity_provider.identity().await;
+        let own_fingerprint = identity_keypair.identity().fingerprint();
 
         debug!("Connecting to proxy with identity {:?}", own_fingerprint);
 
@@ -210,7 +208,7 @@ impl RemoteClient {
 
         notify!(notification_tx, RemoteClientNotification::Connecting);
 
-        let incoming_rx = proxy_client.connect().await?;
+        let incoming_rx = proxy_client.connect(identity_keypair).await?;
 
         notify!(
             notification_tx,
@@ -226,7 +224,7 @@ impl RemoteClient {
 
         // Build inner state
         let inner = RemoteClientInner {
-            session_store,
+            connection_store,
             proxy_client,
             transport: None,
             remote_fingerprint: None,
@@ -294,17 +292,17 @@ impl RemoteClient {
         rx.await.map_err(|_| ClientError::ChannelClosed)?
     }
 
-    /// Reconnect to a remote device using a cached session.
+    /// Reconnect to a remote device using a cached connection.
     ///
-    /// Verifies the session exists in the session store and reconnects
+    /// Verifies the connection exists in the connection store and reconnects
     /// without requiring fingerprint verification.
-    pub async fn load_cached_session(
+    pub async fn load_cached_connection(
         &self,
         remote_fingerprint: IdentityFingerprint,
     ) -> Result<(), ClientError> {
         let (tx, rx) = oneshot::channel();
         self.command_tx
-            .send(RemoteClientCommand::LoadCachedSession {
+            .send(RemoteClientCommand::LoadCachedConnection {
                 remote_fingerprint,
                 reply: tx,
             })
@@ -329,23 +327,24 @@ impl RemoteClient {
         rx.await.map_err(|_| ClientError::ChannelClosed)?
     }
 
-    /// List all cached sessions.
-    pub async fn list_sessions(
-        &self,
-    ) -> Result<Vec<(IdentityFingerprint, Option<String>, u64, u64)>, ClientError> {
+    /// List all cached connections.
+    pub async fn list_connections(&self) -> Result<Vec<ConnectionInfo>, ClientError> {
         let (tx, rx) = oneshot::channel();
         self.command_tx
-            .send(RemoteClientCommand::ListSessions { reply: tx })
+            .send(RemoteClientCommand::ListConnections { reply: tx })
             .await
             .map_err(|_| ClientError::ChannelClosed)?;
         rx.await.map_err(|_| ClientError::ChannelClosed)
     }
 
-    /// Check if a session exists for a fingerprint.
-    pub async fn has_session(&self, fingerprint: IdentityFingerprint) -> Result<bool, ClientError> {
+    /// Check if a connection exists for a fingerprint.
+    pub async fn has_connection(
+        &self,
+        fingerprint: IdentityFingerprint,
+    ) -> Result<bool, ClientError> {
         let (tx, rx) = oneshot::channel();
         self.command_tx
-            .send(RemoteClientCommand::HasSession {
+            .send(RemoteClientCommand::HasConnection {
                 fingerprint,
                 reply: tx,
             })
@@ -361,7 +360,7 @@ impl RemoteClient {
 
 /// All mutable state for the remote client, owned by the spawned event loop task.
 struct RemoteClientInner {
-    session_store: Box<dyn SessionStore>,
+    connection_store: Box<dyn ConnectionStore>,
     proxy_client: Box<dyn ProxyClient>,
     transport: Option<MultiDeviceTransport>,
     remote_fingerprint: Option<IdentityFingerprint>,
@@ -450,12 +449,12 @@ impl RemoteClientInner {
                     .await;
                 let _ = reply.send(result);
             }
-            RemoteClientCommand::LoadCachedSession {
+            RemoteClientCommand::LoadCachedConnection {
                 remote_fingerprint,
                 reply,
             } => {
                 let result = self
-                    .do_load_cached_session(remote_fingerprint, notification_tx)
+                    .do_load_cached_connection(remote_fingerprint, notification_tx)
                     .await;
                 let _ = reply.send(result);
             }
@@ -465,12 +464,12 @@ impl RemoteClientInner {
                     .await;
                 let _ = reply.send(result);
             }
-            RemoteClientCommand::ListSessions { reply } => {
-                let sessions = self.session_store.list_sessions().await;
-                let _ = reply.send(sessions);
+            RemoteClientCommand::ListConnections { reply } => {
+                let connections = self.connection_store.list().await;
+                let _ = reply.send(connections);
             }
-            RemoteClientCommand::HasSession { fingerprint, reply } => {
-                let has = self.session_store.has_session(&fingerprint).await;
+            RemoteClientCommand::HasConnection { fingerprint, reply } => {
+                let has = self.connection_store.get(&fingerprint).await.is_some();
                 let _ = reply.send(has);
             }
         }
@@ -621,14 +620,20 @@ impl RemoteClientInner {
 
     // ── Cached session reconnection ──────────────────────────────────
 
-    async fn do_load_cached_session(
+    async fn do_load_cached_connection(
         &mut self,
         remote_fingerprint: IdentityFingerprint,
         notification_tx: &mpsc::Sender<RemoteClientNotification>,
     ) -> Result<(), ClientError> {
-        if !self.session_store.has_session(&remote_fingerprint).await {
-            return Err(ClientError::SessionNotFound);
-        }
+        let connection = self
+            .connection_store
+            .get(&remote_fingerprint)
+            .await
+            .ok_or(ClientError::ConnectionNotFound)?;
+
+        let transport = connection
+            .transport_state
+            .ok_or(ClientError::ConnectionNotFound)?;
 
         notify!(
             notification_tx,
@@ -636,12 +641,6 @@ impl RemoteClientInner {
                 fingerprint: remote_fingerprint,
             }
         );
-
-        let transport = self
-            .session_store
-            .load_transport_state(&remote_fingerprint)
-            .await?
-            .ok_or(ClientError::SessionNotFound)?;
 
         notify!(notification_tx, RemoteClientNotification::HandshakeComplete);
 
@@ -652,13 +651,11 @@ impl RemoteClientInner {
         );
 
         // Update last_connected_at
-        self.session_store
-            .update_last_connected(&remote_fingerprint)
-            .await?;
-
-        // Save transport state and store locally
-        self.session_store
-            .save_transport_state(&remote_fingerprint, transport.clone())
+        self.connection_store
+            .update(ConnectionUpdate {
+                fingerprint: remote_fingerprint,
+                last_connected_at: crate::compat::now_seconds(),
+            })
             .await?;
 
         self.transport = Some(transport);
@@ -671,7 +668,7 @@ impl RemoteClientInner {
             }
         );
 
-        debug!("Reconnected to cached session");
+        debug!("Reconnected to cached connection");
         Ok(())
     }
 
@@ -683,12 +680,15 @@ impl RemoteClientInner {
         remote_fingerprint: IdentityFingerprint,
         notification_tx: &mpsc::Sender<RemoteClientNotification>,
     ) -> Result<(), ClientError> {
-        // Cache session
-        self.session_store.cache_session(remote_fingerprint).await?;
-
-        // Save transport state for session resumption
-        self.session_store
-            .save_transport_state(&remote_fingerprint, transport.clone())
+        let now = crate::compat::now_seconds();
+        self.connection_store
+            .save(ConnectionInfo {
+                fingerprint: remote_fingerprint,
+                name: None,
+                cached_at: now,
+                last_connected_at: now,
+                transport_state: Some(transport.clone()),
+            })
             .await?;
 
         // Store transport and remote fingerprint

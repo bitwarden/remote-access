@@ -53,3 +53,8 @@ pub(crate) fn now_millis() -> u64 {
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
 }
+
+/// Return current time as seconds since UNIX epoch (cross-platform).
+pub(crate) fn now_seconds() -> u64 {
+    now_millis() / 1000
+}

@@ -1,19 +1,17 @@
 //! Integration tests for ap-client pairing flows
 //!
 //! These tests verify the PSK and fingerprint-based pairing modes
-//! using mock implementations of the identity provider, session store, and proxy.
+//! using mock implementations of the identity provider, connection store, and proxy.
 
-use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
 
 use ap_client::{
     ClientError, CredentialRequestReply, FingerprintVerificationReply, IdentityProvider,
-    ProxyClient, Psk, RemoteClient, RemoteClientFingerprintReply, RemoteClientHandle,
-    RemoteClientNotification, RemoteClientRequest, SessionStore, UserClient, UserClientHandle,
-    UserClientNotification, UserClientRequest,
+    MemoryConnectionStore, MemoryIdentityProvider, ProxyClient, PskToken, RemoteClient,
+    RemoteClientFingerprintReply, RemoteClientHandle, RemoteClientNotification,
+    RemoteClientRequest, UserClient, UserClientHandle, UserClientNotification, UserClientRequest,
 };
-use ap_noise::{MultiDeviceTransport, PersistentTransportState};
 use ap_proxy_client::IncomingMessage;
 use ap_proxy_protocol::{IdentityFingerprint, IdentityKeyPair, RendezvousCode};
 use async_trait::async_trait;
@@ -24,174 +22,7 @@ use tokio::time::{Duration, timeout};
 // Mock Implementations
 // ============================================================================
 
-/// Simple wrapper around a generated IdentityKeyPair
-struct MockIdentityProvider {
-    keypair: IdentityKeyPair,
-}
-
-impl MockIdentityProvider {
-    fn new() -> Self {
-        Self {
-            keypair: IdentityKeyPair::generate(),
-        }
-    }
-}
-
-#[async_trait]
-impl IdentityProvider for MockIdentityProvider {
-    async fn identity(&self) -> IdentityKeyPair {
-        self.keypair.clone()
-    }
-}
-
-/// Session entry with cached_at timestamp
-#[derive(Clone)]
-struct SessionEntry {
-    fingerprint: IdentityFingerprint,
-    name: Option<String>,
-    #[allow(dead_code)]
-    cached_at: u64,
-    last_connected_at: u64,
-    transport_state: Option<Vec<u8>>,
-}
-
-/// In-memory HashMap-based session store
-struct MockSessionStore {
-    sessions: Mutex<HashMap<IdentityFingerprint, SessionEntry>>,
-}
-
-impl MockSessionStore {
-    fn new() -> Self {
-        Self {
-            sessions: Mutex::new(HashMap::new()),
-        }
-    }
-}
-
-#[async_trait]
-impl SessionStore for MockSessionStore {
-    async fn has_session(&self, fingerprint: &IdentityFingerprint) -> bool {
-        self.sessions
-            .lock()
-            .expect("Lock should not be poisoned")
-            .contains_key(fingerprint)
-    }
-
-    async fn cache_session(
-        &mut self,
-        fingerprint: IdentityFingerprint,
-    ) -> Result<(), ap_client::ClientError> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
-        let mut sessions = self.sessions.lock().expect("Lock should not be poisoned");
-        sessions.insert(
-            fingerprint,
-            SessionEntry {
-                fingerprint,
-                name: None,
-                cached_at: now,
-                last_connected_at: now,
-                transport_state: None,
-            },
-        );
-        Ok(())
-    }
-
-    async fn remove_session(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-    ) -> Result<(), ap_client::ClientError> {
-        self.sessions
-            .lock()
-            .expect("Lock should not be poisoned")
-            .remove(fingerprint);
-        Ok(())
-    }
-
-    async fn clear(&mut self) -> Result<(), ap_client::ClientError> {
-        self.sessions
-            .lock()
-            .expect("Lock should not be poisoned")
-            .clear();
-        Ok(())
-    }
-
-    async fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64, u64)> {
-        self.sessions
-            .lock()
-            .expect("Lock should not be poisoned")
-            .values()
-            .map(|e| {
-                (
-                    e.fingerprint,
-                    e.name.clone(),
-                    e.cached_at,
-                    e.last_connected_at,
-                )
-            })
-            .collect()
-    }
-
-    async fn set_session_name(
-        &mut self,
-        _fingerprint: &IdentityFingerprint,
-        _name: String,
-    ) -> Result<(), ap_client::ClientError> {
-        Ok(())
-    }
-
-    async fn update_last_connected(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-    ) -> Result<(), ap_client::ClientError> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
-        let mut sessions = self.sessions.lock().expect("Lock should not be poisoned");
-        if let Some(entry) = sessions.get_mut(fingerprint) {
-            entry.last_connected_at = now;
-        }
-        Ok(())
-    }
-
-    async fn save_transport_state(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-        transport_state: MultiDeviceTransport,
-    ) -> Result<(), ap_client::ClientError> {
-        let mut sessions = self.sessions.lock().expect("Lock should not be poisoned");
-        if let Some(entry) = sessions.get_mut(fingerprint) {
-            entry.transport_state = Some(
-                PersistentTransportState::from(&transport_state)
-                    .to_bytes()
-                    .expect("Should serialize transport state"),
-            );
-        }
-        Ok(())
-    }
-
-    async fn load_transport_state(
-        &self,
-        fingerprint: &IdentityFingerprint,
-    ) -> Result<Option<MultiDeviceTransport>, ap_client::ClientError> {
-        let sessions = self.sessions.lock().expect("Lock should not be poisoned");
-        Ok(sessions.get(fingerprint).and_then(|e| {
-            PersistentTransportState::from_bytes(
-                e.transport_state
-                    .as_ref()
-                    .expect("Transport state should exist")
-                    .as_slice(),
-            )
-            .ok()
-            .map(|state| MultiDeviceTransport::from(state))
-        }))
-    }
-}
+// Uses MemoryIdentityProvider from the library instead of a local mock
 
 /// Mock proxy client that relays messages through channels
 struct MockProxyClient {
@@ -240,6 +71,7 @@ impl MockProxyClient {
 impl ProxyClient for MockProxyClient {
     async fn connect(
         &mut self,
+        _identity: IdentityKeyPair,
     ) -> Result<mpsc::UnboundedReceiver<IncomingMessage>, ap_client::ClientError> {
         self.incoming_rx
             .take()
@@ -357,8 +189,8 @@ fn create_mock_proxy_pair(
 #[tokio::test]
 async fn test_psk_pairing() {
     // Create identities
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     let user_fingerprint = user_identity.fingerprint().await;
     let remote_fingerprint = remote_identity.fingerprint().await;
@@ -366,9 +198,9 @@ async fn test_psk_pairing() {
     // Create mock proxy pair
     let (user_proxy, remote_proxy) = create_mock_proxy_pair(user_fingerprint, remote_fingerprint);
 
-    // Create session stores
-    let user_session_store = MockSessionStore::new();
-    let remote_session_store = MockSessionStore::new();
+    // Create connection stores
+    let user_connection_store = MemoryConnectionStore::new();
+    let remote_connection_store = MemoryConnectionStore::new();
 
     // Create and connect UserClient (already listening)
     let UserClientHandle {
@@ -377,7 +209,7 @@ async fn test_psk_pairing() {
         requests: _request_rx,
     } = UserClient::connect(
         Box::new(user_identity),
-        Box::new(user_session_store),
+        Box::new(user_connection_store),
         Box::new(user_proxy),
         None,
     )
@@ -390,14 +222,10 @@ async fn test_psk_pairing() {
         .await
         .expect("Should generate PSK token");
 
-    // Parse token: format is <psk_hex>_<fingerprint_hex>
-    let parts: Vec<&str> = token.split('_').collect();
-    assert_eq!(parts.len(), 2, "Token should have format psk_fingerprint");
-    let psk = Psk::from_hex(parts[0]).expect("Should parse PSK");
-    let fp_bytes = hex::decode(parts[1]).expect("Should decode fingerprint hex");
-    let mut fp_array = [0u8; 32];
-    fp_array.copy_from_slice(&fp_bytes);
-    let fingerprint = IdentityFingerprint(fp_array);
+    // Parse token
+    let (psk, fingerprint) = PskToken::parse(&token)
+        .expect("Should parse PSK token")
+        .into_parts();
 
     // Create and connect RemoteClient
     let RemoteClientHandle {
@@ -406,7 +234,7 @@ async fn test_psk_pairing() {
         requests: _remote_request_rx,
     } = RemoteClient::connect(
         Box::new(remote_identity),
-        Box::new(remote_session_store),
+        Box::new(remote_connection_store),
         Box::new(remote_proxy),
     )
     .await
@@ -450,13 +278,13 @@ async fn test_psk_pairing() {
         "UserClient should emit HandshakeComplete"
     );
 
-    // Verify session is cached
+    // Verify connection is cached
     assert!(
         remote_client
-            .has_session(fingerprint)
+            .has_connection(fingerprint)
             .await
-            .expect("has_session should not fail"),
-        "Session should be cached in RemoteClient's session store"
+            .expect("has_connection should not fail"),
+        "Connection should be cached in RemoteClient's connection store"
     );
 
     // Cleanup
@@ -468,8 +296,8 @@ async fn test_psk_pairing() {
 #[tokio::test]
 async fn test_fingerprint_pairing() {
     // Create identities
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     let user_fingerprint = user_identity.fingerprint().await;
     let remote_fingerprint = remote_identity.fingerprint().await;
@@ -483,9 +311,9 @@ async fn test_fingerprint_pairing() {
     user_proxy.set_rendezvous_code(rendezvous_code.clone());
     remote_proxy.set_peer_fingerprint(user_fingerprint);
 
-    // Create session stores
-    let user_session_store = MockSessionStore::new();
-    let remote_session_store = MockSessionStore::new();
+    // Create connection stores
+    let user_connection_store = MemoryConnectionStore::new();
+    let remote_connection_store = MemoryConnectionStore::new();
 
     // Create and connect UserClient (already listening)
     let UserClientHandle {
@@ -494,7 +322,7 @@ async fn test_fingerprint_pairing() {
         requests: mut request_rx,
     } = UserClient::connect(
         Box::new(user_identity),
-        Box::new(user_session_store),
+        Box::new(user_connection_store),
         Box::new(user_proxy),
         None,
     )
@@ -515,7 +343,7 @@ async fn test_fingerprint_pairing() {
         requests: _remote_request_rx,
     } = RemoteClient::connect(
         Box::new(remote_identity),
-        Box::new(remote_session_store),
+        Box::new(remote_connection_store),
         Box::new(remote_proxy),
     )
     .await
@@ -547,13 +375,13 @@ async fn test_fingerprint_pairing() {
     // The pairing should succeed
     let paired_fingerprint = pair_result.expect("Pairing should succeed");
 
-    // Verify session is cached
+    // Verify connection is cached
     assert!(
         remote_client
-            .has_session(paired_fingerprint)
+            .has_connection(paired_fingerprint)
             .await
-            .expect("has_session should not fail"),
-        "Session should be cached in RemoteClient's session store"
+            .expect("has_connection should not fail"),
+        "Connection should be cached in RemoteClient's connection store"
     );
 
     // Check that HandshakeFingerprint was emitted on remote side (informational)
@@ -624,7 +452,10 @@ impl ReconnectingMockProxyClient {
 
 #[async_trait]
 impl ProxyClient for ReconnectingMockProxyClient {
-    async fn connect(&mut self) -> Result<mpsc::UnboundedReceiver<IncomingMessage>, ClientError> {
+    async fn connect(
+        &mut self,
+        _identity: IdentityKeyPair,
+    ) -> Result<mpsc::UnboundedReceiver<IncomingMessage>, ClientError> {
         let call_num = self.connect_calls.fetch_add(1, Ordering::SeqCst) + 1;
 
         if call_num == 1 {
@@ -684,8 +515,8 @@ async fn run_reconnection_test(fail_count: u32) -> (Vec<UserClientNotification>,
     // Pause time so exponential backoff sleeps resolve instantly
     tokio::time::pause();
 
-    let identity = MockIdentityProvider::new();
-    let session_store = MockSessionStore::new();
+    let identity = MemoryIdentityProvider::new();
+    let connection_store = MemoryConnectionStore::new();
 
     let proxy = ReconnectingMockProxyClient::new(fail_count, Duration::from_millis(10));
     let connect_calls = Arc::clone(&proxy.connect_calls);
@@ -696,7 +527,7 @@ async fn run_reconnection_test(fail_count: u32) -> (Vec<UserClientNotification>,
         requests: _request_rx,
     } = UserClient::connect(
         Box::new(identity),
-        Box::new(session_store),
+        Box::new(connection_store),
         Box::new(proxy),
         None,
     )
@@ -803,8 +634,8 @@ async fn test_user_client_reconnects_after_failures() {
 #[tokio::test]
 async fn test_fingerprint_pairing_both_sides_verify() {
     // Create identities
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     let user_fingerprint = user_identity.fingerprint().await;
     let remote_fingerprint = remote_identity.fingerprint().await;
@@ -818,9 +649,9 @@ async fn test_fingerprint_pairing_both_sides_verify() {
     user_proxy.set_rendezvous_code(rendezvous_code.clone());
     remote_proxy.set_peer_fingerprint(user_fingerprint);
 
-    // Create session stores
-    let user_session_store = MockSessionStore::new();
-    let remote_session_store = MockSessionStore::new();
+    // Create connection stores
+    let user_connection_store = MemoryConnectionStore::new();
+    let remote_connection_store = MemoryConnectionStore::new();
 
     // Create and connect UserClient (already listening)
     let UserClientHandle {
@@ -829,7 +660,7 @@ async fn test_fingerprint_pairing_both_sides_verify() {
         requests: mut request_rx,
     } = UserClient::connect(
         Box::new(user_identity),
-        Box::new(user_session_store),
+        Box::new(user_connection_store),
         Box::new(user_proxy),
         None,
     )
@@ -850,7 +681,7 @@ async fn test_fingerprint_pairing_both_sides_verify() {
         requests: mut remote_request_rx,
     } = RemoteClient::connect(
         Box::new(remote_identity),
-        Box::new(remote_session_store),
+        Box::new(remote_connection_store),
         Box::new(remote_proxy),
     )
     .await
@@ -891,13 +722,13 @@ async fn test_fingerprint_pairing_both_sides_verify() {
     // The pairing should succeed
     let paired_fingerprint = pair_result.expect("Pairing should succeed");
 
-    // Verify session is cached
+    // Verify connection is cached
     assert!(
         remote_client
-            .has_session(paired_fingerprint)
+            .has_connection(paired_fingerprint)
             .await
-            .expect("has_session should not fail"),
-        "Session should be cached in RemoteClient's session store"
+            .expect("has_connection should not fail"),
+        "Connection should be cached in RemoteClient's connection store"
     );
 
     // Verify remote side emitted FingerprintVerified
@@ -947,8 +778,8 @@ async fn test_fingerprint_pairing_both_sides_verify() {
 #[tokio::test]
 async fn test_dual_mode_psk_pairing_with_both_modes_pending() {
     // Create identities
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     let user_fingerprint = user_identity.fingerprint().await;
     let remote_fingerprint = remote_identity.fingerprint().await;
@@ -959,8 +790,8 @@ async fn test_dual_mode_psk_pairing_with_both_modes_pending() {
     // Set up rendezvous so get_rendezvous_token doesn't hang
     user_proxy.set_rendezvous_code(RendezvousCode::from_string("DUAL12345".to_string()));
 
-    let user_session_store = MockSessionStore::new();
-    let remote_session_store = MockSessionStore::new();
+    let user_connection_store = MemoryConnectionStore::new();
+    let remote_connection_store = MemoryConnectionStore::new();
 
     // Create UserClient (already listening)
     let UserClientHandle {
@@ -969,7 +800,7 @@ async fn test_dual_mode_psk_pairing_with_both_modes_pending() {
         requests: _request_rx,
     } = UserClient::connect(
         Box::new(user_identity),
-        Box::new(user_session_store),
+        Box::new(user_connection_store),
         Box::new(user_proxy),
         None,
     )
@@ -988,13 +819,9 @@ async fn test_dual_mode_psk_pairing_with_both_modes_pending() {
         .expect("Should get rendezvous token");
 
     // Parse PSK token
-    let parts: Vec<&str> = psk_token.split('_').collect();
-    assert_eq!(parts.len(), 2);
-    let psk = Psk::from_hex(parts[0]).expect("Should parse PSK");
-    let fp_bytes = hex::decode(parts[1]).expect("Should decode fingerprint hex");
-    let mut fp_array = [0u8; 32];
-    fp_array.copy_from_slice(&fp_bytes);
-    let user_fp_from_token = IdentityFingerprint(fp_array);
+    let (psk, user_fp_from_token) = PskToken::parse(&psk_token)
+        .expect("Should parse PSK token")
+        .into_parts();
 
     // Connect RemoteClient via PSK
     let RemoteClientHandle {
@@ -1003,7 +830,7 @@ async fn test_dual_mode_psk_pairing_with_both_modes_pending() {
         requests: _remote_request_rx,
     } = RemoteClient::connect(
         Box::new(remote_identity),
-        Box::new(remote_session_store),
+        Box::new(remote_connection_store),
         Box::new(remote_proxy),
     )
     .await
@@ -1058,16 +885,16 @@ async fn test_dual_mode_psk_pairing_with_both_modes_pending() {
 /// still succeed — proving `try_send` drops notifications instead of blocking.
 #[tokio::test]
 async fn test_notification_channel_not_blocking_event_loop() {
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     let user_fingerprint = user_identity.fingerprint().await;
     let remote_fingerprint = remote_identity.fingerprint().await;
 
     let (user_proxy, remote_proxy) = create_mock_proxy_pair(user_fingerprint, remote_fingerprint);
 
-    let user_session_store = MockSessionStore::new();
-    let remote_session_store = MockSessionStore::new();
+    let user_connection_store = MemoryConnectionStore::new();
+    let remote_connection_store = MemoryConnectionStore::new();
 
     // Connect UserClient
     let UserClientHandle {
@@ -1076,7 +903,7 @@ async fn test_notification_channel_not_blocking_event_loop() {
         requests: mut request_rx,
     } = UserClient::connect(
         Box::new(user_identity),
-        Box::new(user_session_store),
+        Box::new(user_connection_store),
         Box::new(user_proxy),
         None,
     )
@@ -1089,12 +916,9 @@ async fn test_notification_channel_not_blocking_event_loop() {
         .await
         .expect("Should generate PSK token");
 
-    let parts: Vec<&str> = token.split('_').collect();
-    let psk = Psk::from_hex(parts[0]).expect("Should parse PSK");
-    let fp_bytes = hex::decode(parts[1]).expect("Should decode fingerprint hex");
-    let mut fp_array = [0u8; 32];
-    fp_array.copy_from_slice(&fp_bytes);
-    let fingerprint = IdentityFingerprint(fp_array);
+    let (psk, fingerprint) = PskToken::parse(&token)
+        .expect("Should parse PSK token")
+        .into_parts();
 
     // Connect RemoteClient — intentionally never drain notifications
     let RemoteClientHandle {
@@ -1103,7 +927,7 @@ async fn test_notification_channel_not_blocking_event_loop() {
         requests: _remote_request_rx,
     } = RemoteClient::connect(
         Box::new(remote_identity),
-        Box::new(remote_session_store),
+        Box::new(remote_connection_store),
         Box::new(remote_proxy),
     )
     .await
@@ -1172,16 +996,16 @@ async fn test_notification_channel_not_blocking_event_loop() {
 /// `request_credential` to time out.
 #[tokio::test]
 async fn test_request_channel_backpressure() {
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     let user_fingerprint = user_identity.fingerprint().await;
     let remote_fingerprint = remote_identity.fingerprint().await;
 
     let (user_proxy, remote_proxy) = create_mock_proxy_pair(user_fingerprint, remote_fingerprint);
 
-    let user_session_store = MockSessionStore::new();
-    let remote_session_store = MockSessionStore::new();
+    let user_connection_store = MemoryConnectionStore::new();
+    let remote_connection_store = MemoryConnectionStore::new();
 
     // Connect UserClient — intentionally never drain requests
     let UserClientHandle {
@@ -1190,7 +1014,7 @@ async fn test_request_channel_backpressure() {
         requests: _request_rx, // deliberately NOT drained
     } = UserClient::connect(
         Box::new(user_identity),
-        Box::new(user_session_store),
+        Box::new(user_connection_store),
         Box::new(user_proxy),
         None,
     )
@@ -1203,12 +1027,9 @@ async fn test_request_channel_backpressure() {
         .await
         .expect("Should generate PSK token");
 
-    let parts: Vec<&str> = token.split('_').collect();
-    let psk = Psk::from_hex(parts[0]).expect("Should parse PSK");
-    let fp_bytes = hex::decode(parts[1]).expect("Should decode fingerprint hex");
-    let mut fp_array = [0u8; 32];
-    fp_array.copy_from_slice(&fp_bytes);
-    let fingerprint = IdentityFingerprint(fp_array);
+    let (psk, fingerprint) = PskToken::parse(&token)
+        .expect("Should parse PSK token")
+        .into_parts();
 
     // Connect RemoteClient
     let RemoteClientHandle {
@@ -1217,7 +1038,7 @@ async fn test_request_channel_backpressure() {
         requests: _remote_request_rx,
     } = RemoteClient::connect(
         Box::new(remote_identity),
-        Box::new(remote_session_store),
+        Box::new(remote_connection_store),
         Box::new(remote_proxy),
     )
     .await
@@ -1248,6 +1069,161 @@ async fn test_request_channel_backpressure() {
         "request_credential should time out when request channel is not drained (backpressure)"
     );
 
+    drop(remote_client);
+    drop(user_client);
+}
+
+// ============================================================================
+// Test: Credential request buffered during fingerprint verification
+// ============================================================================
+
+/// Verifies that a credential request sent by the RemoteClient *before* the
+/// UserClient has approved the fingerprint is buffered and replayed after
+/// approval, rather than being silently dropped.
+///
+/// Timeline:
+/// 1. Noise handshake completes on both sides
+/// 2. RemoteClient immediately sends a CredentialRequest (before fingerprint approval)
+/// 3. UserClient delays fingerprint approval by 100ms, ensuring the credential
+///    request arrives while the transport is still in the pending-verification state
+/// 4. After approval, the buffered credential request is replayed and handled normally
+#[tokio::test]
+async fn test_credential_request_buffered_during_fingerprint_verification() {
+    // Create identities
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
+
+    let user_fingerprint = user_identity.fingerprint().await;
+    let remote_fingerprint = remote_identity.fingerprint().await;
+
+    // Create mock proxy pair
+    let (mut user_proxy, mut remote_proxy) =
+        create_mock_proxy_pair(user_fingerprint, remote_fingerprint);
+
+    // Set up rendezvous code
+    let rendezvous_code = RendezvousCode::from_string("BUF123456".to_string());
+    user_proxy.set_rendezvous_code(rendezvous_code.clone());
+    remote_proxy.set_peer_fingerprint(user_fingerprint);
+
+    // Create connection stores
+    let user_connection_store = MemoryConnectionStore::new();
+    let remote_connection_store = MemoryConnectionStore::new();
+
+    // Create and connect UserClient
+    let UserClientHandle {
+        client: user_client,
+        notifications: _notification_rx,
+        requests: mut request_rx,
+    } = UserClient::connect(
+        Box::new(user_identity),
+        Box::new(user_connection_store),
+        Box::new(user_proxy),
+        None,
+    )
+    .await
+    .expect("UserClient should connect");
+
+    // Get rendezvous token
+    let code = user_client
+        .get_rendezvous_token(None)
+        .await
+        .expect("Should get rendezvous token");
+    let code = code.as_str().to_string();
+
+    // Create and connect RemoteClient
+    let RemoteClientHandle {
+        client: remote_client,
+        notifications: _remote_notification_rx,
+        requests: _remote_request_rx,
+    } = RemoteClient::connect(
+        Box::new(remote_identity),
+        Box::new(remote_connection_store),
+        Box::new(remote_proxy),
+    )
+    .await
+    .expect("RemoteClient should connect");
+
+    // Spawn task: pair then immediately request a credential (before fingerprint approval)
+    let remote_task = {
+        let remote_client = remote_client.clone();
+        tokio::spawn(async move {
+            // Complete the Noise handshake (returns once handshake finishes, NOT after fingerprint)
+            remote_client
+                .pair_with_handshake(code, false)
+                .await
+                .expect("Pairing should succeed");
+
+            // Immediately request a credential — the UserClient hasn't approved yet
+            let credential = remote_client
+                .request_credential(&ap_client::CredentialQuery::Domain(
+                    "buffered.example.com".to_string(),
+                ))
+                .await
+                .expect("Credential request should succeed after fingerprint approval");
+
+            credential
+        })
+    };
+
+    // Handle UserClient requests sequentially:
+    // 1. VerifyFingerprint — delay, then approve (so the credential request arrives while pending)
+    // 2. CredentialRequest — the replayed buffered message
+    let handler = tokio::spawn(async move {
+        // First: fingerprint verification with a delay
+        let request = timeout(Duration::from_secs(10), request_rx.recv())
+            .await
+            .expect("Should receive fingerprint request")
+            .expect("Channel should not be closed");
+
+        if let UserClientRequest::VerifyFingerprint { reply, .. } = request {
+            // Delay to ensure the RemoteClient's credential request arrives and is buffered
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let _ = reply.send(FingerprintVerificationReply {
+                approved: true,
+                name: None,
+            });
+        } else {
+            panic!("Expected VerifyFingerprint request, got: {request:?}");
+        }
+
+        // Second: credential request (replayed from buffer)
+        let request = timeout(Duration::from_secs(10), request_rx.recv())
+            .await
+            .expect("Should receive credential request (buffered and replayed)")
+            .expect("Channel should not be closed");
+
+        if let UserClientRequest::CredentialRequest { reply, .. } = request {
+            let _ = reply.send(CredentialRequestReply {
+                approved: true,
+                credential: Some(ap_client::CredentialData {
+                    username: Some("buffered_user".into()),
+                    password: Some("buffered_pass".into()),
+                    totp: None,
+                    uri: None,
+                    notes: None,
+                    credential_id: None,
+                    domain: Some("buffered.example.com".into()),
+                }),
+                credential_id: None,
+            });
+        } else {
+            panic!("Expected CredentialRequest, got: {request:?}");
+        }
+    });
+
+    // Wait for the remote task to complete and verify the credential
+    let credential = timeout(Duration::from_secs(15), remote_task)
+        .await
+        .expect("Remote task should not timeout")
+        .expect("Remote task should not panic");
+
+    assert_eq!(credential.username, Some("buffered_user".into()));
+    assert_eq!(credential.password, Some("buffered_pass".into()));
+    assert_eq!(credential.domain, Some("buffered.example.com".into()));
+
+    handler.await.expect("Handler task should complete");
+
+    // Cleanup
     drop(remote_client);
     drop(user_client);
 }

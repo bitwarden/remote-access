@@ -76,7 +76,7 @@ Use the bare domain of the website you need credentials for:
 | `--domain <DOMAIN>` | Website domain to fetch credentials for (required for non-interactive use) |
 | `--token <TOKEN>` | Pairing token — rendezvous or PSK (conflicts with `--session`) |
 | `--session <HEX>` | Session fingerprint or unique prefix (conflicts with `--token`) |
-| `--proxy-url <URL>` | WebSocket proxy address (default: `wss://rat1.lesspassword.dev`) |
+| `--proxy-url <URL>` | WebSocket proxy address (default: `wss://ap.lesspassword.dev`) |
 | `--output json\|text` | Output format (default: `text`; use `json` for programmatic access) |
 | `--no-cache` | Don't cache this session |
 | `--verify-fingerprint` | Require fingerprint verification |

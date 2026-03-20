@@ -54,7 +54,7 @@ Commands:
   help         Print this message or the help of the given subcommand(s)
 
 Options:
-      --proxy-url <PROXY_URL>  Proxy server URL [default: wss://rat1.lesspassword.dev]
+      --proxy-url <PROXY_URL>  Proxy server URL [default: wss://ap.lesspassword.dev]
       --token <TOKEN>          Token (rendezvous code or PSK token)
       --session <SESSION>      Session fingerprint to reconnect to (hex string)
       --no-cache               Disable session caching

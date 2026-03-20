@@ -6,16 +6,11 @@
 //! # Example
 //!
 //! ```no_run
-//! use ap_proxy_client::{ProxyClientConfig, ProxyProtocolClient, IncomingMessage};
+//! use ap_proxy_client::{ProxyProtocolClient, IncomingMessage, IdentityKeyPair};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let config = ProxyClientConfig {
-//!     proxy_url: "ws://localhost:8080".to_string(),
-//!     identity_keypair: None,
-//! };
-//!
-//! let mut client = ProxyProtocolClient::new(config);
-//! let mut incoming = client.connect().await?;
+//! let mut client = ProxyProtocolClient::from_url("ws://localhost:8080".to_string());
+//! let mut incoming = client.connect(IdentityKeyPair::generate()).await?;
 //!
 //! tokio::spawn(async move {
 //!     while let Some(msg) = incoming.recv().await {

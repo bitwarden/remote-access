@@ -4,63 +4,40 @@ use async_trait::async_trait;
 
 use crate::error::ClientError;
 
-/// Trait for session cache storage implementations
+/// A cached connection record containing all connection data.
+#[derive(Debug, Clone)]
+pub struct ConnectionInfo {
+    pub fingerprint: IdentityFingerprint,
+    pub name: Option<String>,
+    pub cached_at: u64,
+    pub last_connected_at: u64,
+    pub transport_state: Option<MultiDeviceTransport>,
+}
+
+/// Lightweight update for an existing connection (no full read needed).
+#[derive(Debug, Clone, Copy)]
+pub struct ConnectionUpdate {
+    pub fingerprint: IdentityFingerprint,
+    pub last_connected_at: u64,
+}
+
+/// Trait for connection cache storage implementations.
 ///
-/// Provides an abstraction for storing and retrieving approved remote fingerprints.
+/// Provides an abstraction for storing and retrieving approved remote connections.
 /// Implementations must be thread-safe for use in async contexts.
 #[async_trait]
-pub trait SessionStore: Send + Sync {
-    /// Check if a fingerprint exists in the cache
-    async fn has_session(&self, fingerprint: &IdentityFingerprint) -> bool;
+pub trait ConnectionStore: Send + Sync {
+    /// Get a connection by fingerprint, returning `None` if not found.
+    async fn get(&self, fingerprint: &IdentityFingerprint) -> Option<ConnectionInfo>;
 
-    /// Cache a new session fingerprint
-    ///
-    /// If the fingerprint already exists, updates the cached_at timestamp.
-    async fn cache_session(&mut self, fingerprint: IdentityFingerprint) -> Result<(), ClientError>;
+    /// Save a connection (insert or replace).
+    async fn save(&mut self, connection: ConnectionInfo) -> Result<(), ClientError>;
 
-    /// Remove a fingerprint from the cache
-    async fn remove_session(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-    ) -> Result<(), ClientError>;
+    /// Update only the `last_connected_at` timestamp for an existing connection.
+    async fn update(&mut self, update: ConnectionUpdate) -> Result<(), ClientError>;
 
-    /// Clear all cached sessions
-    async fn clear(&mut self) -> Result<(), ClientError>;
-
-    /// List all cached sessions
-    ///
-    /// Returns tuples of (fingerprint, optional_name, created_timestamp, last_connected_timestamp)
-    async fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64, u64)>;
-
-    /// Set a friendly name for a cached session
-    async fn set_session_name(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-        name: String,
-    ) -> Result<(), ClientError>;
-
-    /// Update the last_connected_at timestamp for a session
-    async fn update_last_connected(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-    ) -> Result<(), ClientError>;
-
-    /// Save transport state for a session
-    ///
-    /// This allows session resumption without requiring a new Noise handshake.
-    async fn save_transport_state(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-        transport_state: MultiDeviceTransport,
-    ) -> Result<(), ClientError>;
-
-    /// Load transport state for a session
-    ///
-    /// Returns None if no transport state is stored for this session.
-    async fn load_transport_state(
-        &self,
-        fingerprint: &IdentityFingerprint,
-    ) -> Result<Option<MultiDeviceTransport>, ClientError>;
+    /// List all cached connections.
+    async fn list(&self) -> Vec<ConnectionInfo>;
 }
 
 /// Provides a cryptographic identity for the current client.
@@ -75,6 +52,58 @@ pub trait IdentityProvider: Send + Sync {
     /// Get the fingerprint of this identity
     async fn fingerprint(&self) -> IdentityFingerprint {
         self.identity().await.identity().fingerprint()
+    }
+}
+
+/// An [`IdentityProvider`] that generates a random ephemeral identity on creation.
+///
+/// Useful for tests, examples, and consumers that don't need persistent identity.
+/// The keypair lives only in memory and is lost when the provider is dropped.
+///
+/// ```
+/// use ap_client::MemoryIdentityProvider;
+///
+/// let identity = MemoryIdentityProvider::new();
+/// ```
+///
+/// To wrap an existing keypair:
+///
+/// ```
+/// use ap_client::MemoryIdentityProvider;
+/// use ap_proxy_protocol::IdentityKeyPair;
+///
+/// let keypair = IdentityKeyPair::generate();
+/// let identity = MemoryIdentityProvider::from_keypair(keypair);
+/// ```
+#[derive(Clone)]
+pub struct MemoryIdentityProvider {
+    keypair: IdentityKeyPair,
+}
+
+impl MemoryIdentityProvider {
+    /// Generate a new random ephemeral identity.
+    pub fn new() -> Self {
+        Self {
+            keypair: IdentityKeyPair::generate(),
+        }
+    }
+
+    /// Wrap an existing keypair as an ephemeral identity provider.
+    pub fn from_keypair(keypair: IdentityKeyPair) -> Self {
+        Self { keypair }
+    }
+}
+
+impl Default for MemoryIdentityProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl IdentityProvider for MemoryIdentityProvider {
+    async fn identity(&self) -> IdentityKeyPair {
+        self.keypair.clone()
     }
 }
 
