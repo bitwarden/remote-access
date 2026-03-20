@@ -12,6 +12,8 @@ members = [
 ]
 exclude = [
     "examples/python-pyo3",
+    "examples/rust-remote",
+    "examples/rust-listener",
 ]
 
 [workspace.package]
