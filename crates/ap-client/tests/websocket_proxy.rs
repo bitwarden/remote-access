@@ -9,7 +9,7 @@ use std::sync::Mutex;
 
 use ap_client::{
     CredentialData, CredentialRequestReply, DefaultProxyClient, FingerprintVerificationReply,
-    IdentityProvider, PskToken, RemoteClient, RemoteClientHandle, RemoteClientNotification,
+    MemoryIdentityProvider, PskToken, RemoteClient, RemoteClientHandle, RemoteClientNotification,
     SessionStore, UserClient, UserClientHandle, UserClientNotification, UserClientRequest,
 };
 use ap_noise::MultiDeviceTransport;
@@ -21,29 +21,7 @@ use tokio::time::{Duration, timeout};
 // Test Infrastructure - Mock Implementations
 // ============================================================================
 
-/// Simple wrapper around a generated IdentityKeyPair
-struct MockIdentityProvider {
-    keypair: IdentityKeyPair,
-}
-
-impl MockIdentityProvider {
-    fn new() -> Self {
-        Self {
-            keypair: IdentityKeyPair::generate(),
-        }
-    }
-
-    fn with_keypair(keypair: IdentityKeyPair) -> Self {
-        Self { keypair }
-    }
-}
-
-#[async_trait::async_trait]
-impl IdentityProvider for MockIdentityProvider {
-    async fn identity(&self) -> IdentityKeyPair {
-        self.keypair.clone()
-    }
-}
+// Uses MemoryIdentityProvider from the library instead of a local mock
 
 /// Session entry with cached_at timestamp
 #[derive(Clone)]
@@ -343,8 +321,8 @@ async fn test_e2e_psk_pairing_and_credential_request() {
     let addr = start_test_server().await;
 
     // 2. Create identities
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     // 3. Create UserClient with DefaultProxyClient
     let user_proxy = create_proxy_client(addr);
@@ -480,8 +458,8 @@ async fn test_e2e_fingerprint_pairing_and_credential_request() {
     let addr = start_test_server().await;
 
     // 2. Create identities
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     // 3. Create UserClient with DefaultProxyClient
     let user_proxy = create_proxy_client(addr);
@@ -624,8 +602,8 @@ async fn test_e2e_credential_request_denied() {
     let addr = start_test_server().await;
 
     // 2. Create identities
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     // 3. Create UserClient with DefaultProxyClient
     let user_proxy = create_proxy_client(addr);
@@ -730,8 +708,8 @@ async fn test_e2e_multiple_credential_requests() {
     let addr = start_test_server().await;
 
     // 2. Create identities
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     // 3. Create UserClient with DefaultProxyClient
     let user_proxy = create_proxy_client(addr);
@@ -861,8 +839,8 @@ async fn test_e2e_transport_state_persistence() {
     let addr = start_test_server().await;
 
     // 2. Create identities
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     // 3. Create UserClient with DefaultProxyClient
     let user_proxy = create_proxy_client(addr);
@@ -1004,7 +982,7 @@ async fn test_e2e_multi_device_credential_response() {
         notifications: mut notification_rx1,
         requests: mut request_rx1,
     } = UserClient::connect(
-        Box::new(MockIdentityProvider::with_keypair(user_keypair)),
+        Box::new(MemoryIdentityProvider::from_keypair(user_keypair)),
         Box::new(SharedSessionStore(Arc::clone(&user_session_store1))),
         Box::new(user_proxy1),
         None,
@@ -1030,7 +1008,7 @@ async fn test_e2e_multi_device_credential_response() {
         notifications: mut remote_notification_rx,
         requests: mut _remote_request_rx,
     } = RemoteClient::connect(
-        Box::new(MockIdentityProvider::new()),
+        Box::new(MemoryIdentityProvider::new()),
         Box::new(MockSessionStore::new()),
         Box::new(remote_proxy),
     )
@@ -1067,7 +1045,7 @@ async fn test_e2e_multi_device_credential_response() {
         notifications: mut notification_rx2,
         requests: mut request_rx2,
     } = UserClient::connect(
-        Box::new(MockIdentityProvider::with_keypair(user_keypair_device2)),
+        Box::new(MemoryIdentityProvider::from_keypair(user_keypair_device2)),
         Box::new(SharedSessionStore(Arc::clone(&session_store_clone))),
         Box::new(user_proxy2),
         None,

@@ -9,9 +9,9 @@ use std::sync::{Arc, Mutex};
 
 use ap_client::{
     ClientError, CredentialRequestReply, FingerprintVerificationReply, IdentityProvider,
-    ProxyClient, PskToken, RemoteClient, RemoteClientFingerprintReply, RemoteClientHandle,
-    RemoteClientNotification, RemoteClientRequest, SessionStore, UserClient, UserClientHandle,
-    UserClientNotification, UserClientRequest,
+    MemoryIdentityProvider, ProxyClient, PskToken, RemoteClient, RemoteClientFingerprintReply,
+    RemoteClientHandle, RemoteClientNotification, RemoteClientRequest, SessionStore, UserClient,
+    UserClientHandle, UserClientNotification, UserClientRequest,
 };
 use ap_noise::{MultiDeviceTransport, PersistentTransportState};
 use ap_proxy_client::IncomingMessage;
@@ -24,25 +24,7 @@ use tokio::time::{Duration, timeout};
 // Mock Implementations
 // ============================================================================
 
-/// Simple wrapper around a generated IdentityKeyPair
-struct MockIdentityProvider {
-    keypair: IdentityKeyPair,
-}
-
-impl MockIdentityProvider {
-    fn new() -> Self {
-        Self {
-            keypair: IdentityKeyPair::generate(),
-        }
-    }
-}
-
-#[async_trait]
-impl IdentityProvider for MockIdentityProvider {
-    async fn identity(&self) -> IdentityKeyPair {
-        self.keypair.clone()
-    }
-}
+// Uses MemoryIdentityProvider from the library instead of a local mock
 
 /// Session entry with cached_at timestamp
 #[derive(Clone)]
@@ -358,8 +340,8 @@ fn create_mock_proxy_pair(
 #[tokio::test]
 async fn test_psk_pairing() {
     // Create identities
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     let user_fingerprint = user_identity.fingerprint().await;
     let remote_fingerprint = remote_identity.fingerprint().await;
@@ -465,8 +447,8 @@ async fn test_psk_pairing() {
 #[tokio::test]
 async fn test_fingerprint_pairing() {
     // Create identities
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     let user_fingerprint = user_identity.fingerprint().await;
     let remote_fingerprint = remote_identity.fingerprint().await;
@@ -684,7 +666,7 @@ async fn run_reconnection_test(fail_count: u32) -> (Vec<UserClientNotification>,
     // Pause time so exponential backoff sleeps resolve instantly
     tokio::time::pause();
 
-    let identity = MockIdentityProvider::new();
+    let identity = MemoryIdentityProvider::new();
     let session_store = MockSessionStore::new();
 
     let proxy = ReconnectingMockProxyClient::new(fail_count, Duration::from_millis(10));
@@ -803,8 +785,8 @@ async fn test_user_client_reconnects_after_failures() {
 #[tokio::test]
 async fn test_fingerprint_pairing_both_sides_verify() {
     // Create identities
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     let user_fingerprint = user_identity.fingerprint().await;
     let remote_fingerprint = remote_identity.fingerprint().await;
@@ -947,8 +929,8 @@ async fn test_fingerprint_pairing_both_sides_verify() {
 #[tokio::test]
 async fn test_dual_mode_psk_pairing_with_both_modes_pending() {
     // Create identities
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     let user_fingerprint = user_identity.fingerprint().await;
     let remote_fingerprint = remote_identity.fingerprint().await;
@@ -1054,8 +1036,8 @@ async fn test_dual_mode_psk_pairing_with_both_modes_pending() {
 /// still succeed — proving `try_send` drops notifications instead of blocking.
 #[tokio::test]
 async fn test_notification_channel_not_blocking_event_loop() {
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     let user_fingerprint = user_identity.fingerprint().await;
     let remote_fingerprint = remote_identity.fingerprint().await;
@@ -1165,8 +1147,8 @@ async fn test_notification_channel_not_blocking_event_loop() {
 /// `request_credential` to time out.
 #[tokio::test]
 async fn test_request_channel_backpressure() {
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     let user_fingerprint = user_identity.fingerprint().await;
     let remote_fingerprint = remote_identity.fingerprint().await;
@@ -1259,8 +1241,8 @@ async fn test_request_channel_backpressure() {
 #[tokio::test]
 async fn test_credential_request_buffered_during_fingerprint_verification() {
     // Create identities
-    let user_identity = MockIdentityProvider::new();
-    let remote_identity = MockIdentityProvider::new();
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
 
     let user_fingerprint = user_identity.fingerprint().await;
     let remote_fingerprint = remote_identity.fingerprint().await;
