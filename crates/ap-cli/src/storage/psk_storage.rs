@@ -176,9 +176,7 @@ impl FilePskStore {
 
         let ap_dir = home_dir.join(".access-protocol");
         fs::create_dir_all(&ap_dir).map_err(|e| {
-            ClientError::Serialization(format!(
-                "Failed to create .access-protocol directory: {e}"
-            ))
+            ClientError::Serialization(format!("Failed to create .access-protocol directory: {e}"))
         })?;
 
         Ok(ap_dir.join(format!("psk_store_{store_name}.json")))

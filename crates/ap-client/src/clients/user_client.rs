@@ -689,7 +689,10 @@ impl UserClientInner {
             // Existing/cached session — if the remote sent a psk_id that matches a
             // pending pairing, use it for the handshake. This is required for reusable
             // PSKs where the remote reconnects with the same token.
-            match psk_id.as_ref().and_then(|id| self.pending_pairings.take_psk(id)) {
+            match psk_id
+                .as_ref()
+                .and_then(|id| self.pending_pairings.take_psk(id))
+            {
                 Some((psk, name)) => (Some(psk), name, true),
                 None => (None, None, false),
             }
