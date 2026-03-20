@@ -101,7 +101,7 @@ pub struct Cli {
     pub proxy_url: String,
 
     /// Token (rendezvous code or PSK token)
-    #[arg(long)]
+    #[arg(long, env = "AAC_TOKEN")]
     pub token: Option<String>,
 
     /// Session fingerprint to reconnect to (hex string or unique prefix)

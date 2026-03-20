@@ -52,7 +52,7 @@ pub struct RunArgs {
     pub id: Option<String>,
 
     /// Token (rendezvous code or PSK token)
-    #[arg(long, conflicts_with = "session")]
+    #[arg(long, env = "AAC_TOKEN", conflicts_with = "session")]
     pub token: Option<String>,
 
     /// Session fingerprint to reconnect to

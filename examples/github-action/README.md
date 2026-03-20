@@ -24,7 +24,7 @@ Copy the printed PSK token.
 
 | Secret | Value |
 |--------|-------|
-| `AAC_PSK_TOKEN` | The 129-char PSK token from step 1 |
+| `AAC_TOKEN` | The 129-char PSK token from step 1 |
 
 ### 3. Add the workflow
 
@@ -38,7 +38,6 @@ Copy `reusable-psk-credential.yml` into your repo's `.github/workflows/` directo
 - name: Run with credentials
   run: |
     aac run \
-      --token "$AAC_PSK_TOKEN" \
       --domain "registry.example.com" \
       --ephemeral-connection \
       --env DOCKER_USER=username \
@@ -52,7 +51,6 @@ Copy `reusable-psk-credential.yml` into your repo's `.github/workflows/` directo
 - name: Fetch by ID
   run: |
     aac connect \
-      --token "$AAC_PSK_TOKEN" \
       --id "12345678-1234-1234-1234-123456789abc" \
       --ephemeral-connection \
       --output json
