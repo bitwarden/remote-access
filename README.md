@@ -68,7 +68,8 @@ curl -fsSL "https://raw.githubusercontent.com/bitwarden/agent-access/main/exampl
 ## Examples
 
 * [OpenClaw skill](examples/skills/agent-access/SKILL.md)
-* Automated script requesting an API-token.
+* [Fetch credential via `aac connect`](examples/shell/get-credential.sh) — parse JSON output with `jq` and pipe to `docker login`
+* [Connect to PostgreSQL via `aac run`](examples/shell/psql-connect.sh) — inject `PGUSER`/`PGPASSWORD` as env vars directly into `psql`
 * Github Action
 
 ### Use from your code
