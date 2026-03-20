@@ -65,7 +65,7 @@ curl -fsSL "https://raw.githubusercontent.com/bitwarden/agent-access/main/exampl
 * [OpenClaw skill](examples/skills/agent-access/SKILL.md)
 * [Fetch credential via `aac connect`](examples/shell/get-credential.sh) — parse JSON output with `jq` and pipe to `docker login`
 * [Connect to PostgreSQL via `aac run`](examples/shell/psql-connect.sh) — inject `PGUSER`/`PGPASSWORD` as env vars directly into `psql`
-* Github Action
+* [Github Action](examples/github-action/)
 
 ### Use from your code
 
