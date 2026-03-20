@@ -69,7 +69,12 @@ curl -fsSL "https://raw.githubusercontent.com/bitwarden/agent-access/main/exampl
 
 ### Use from your code
 
-Use Agent Access directly from your code by referencing the rust sdk. Here's an example using Python via PyO3 bindings to request credentials over the end-to-end encrypted tunnel.
+Use Agent Access directly from your code by referencing the Rust SDK. See the full examples:
+
+* [Python (PyO3 bindings)](examples/python-pyo3/) — connect and request credentials from Python
+* [Rust remote client](examples/rust-remote/) — minimal Rust example using `RemoteClient`
+
+Here's a quick Python example:
 
 ```python
 from agent_access import RemoteClient
