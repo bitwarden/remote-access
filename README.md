@@ -69,7 +69,12 @@ curl -fsSL "https://raw.githubusercontent.com/bitwarden/agent-access/main/exampl
 
 ### Use from your code
 
-Use Agent Access directly from your code by referencing the rust sdk. Here's an example using Python via PyO3 bindings to request credentials over the end-to-end encrypted tunnel.
+Use Agent Access directly from your code by referencing the Rust SDK. See the full examples:
+
+* [Python (PyO3 bindings)](examples/python-pyo3/) — connect and request credentials from Python
+* [Rust remote client](examples/rust-remote/) — minimal Rust example using `RemoteClient`
+
+Here's a quick Python example:
 
 ```python
 from agent_access import RemoteClient
@@ -95,6 +100,12 @@ The `aac` CLI tool has built-in support for connecting to the Bitwarden CLI. The
 
 ```shell
 aac listen
+```
+
+If you don't have the `bw` CLI installed, you can use the built-in example credential provider (has credentials for example.com):
+
+```shell
+aac listen --provider example
 ```
 
 The interactive CLI will create a pairing token that you can use to establish a connection on the remote side.
