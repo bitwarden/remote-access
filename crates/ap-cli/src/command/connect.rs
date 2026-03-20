@@ -37,6 +37,7 @@ AUTOMATION / AGENT / LLM USE:
 
     1. Request a credential:  aac connect --domain <DOMAIN> --output json
 
+  The token can be passed via --token <TOKEN> or the AAC_TOKEN env var.
   If only one session is cached, it is used automatically.
   With multiple cached sessions, specify one with --session <HEX>.
   --session accepts a full 64-char hex fingerprint or any unique prefix.

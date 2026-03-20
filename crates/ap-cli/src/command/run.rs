@@ -37,6 +37,8 @@ EXAMPLES:
   # Combine defaults with custom overrides:
   aac run --domain example.com --env-all --env CUSTOM_PW=password -- deploy.sh
 
+The token can be passed via --token <TOKEN> or the AAC_TOKEN env var.
+
 VALID FIELDS: username, password, totp, uri, notes, domain, credential_id")]
 pub struct RunArgs {
     /// Proxy server URL
