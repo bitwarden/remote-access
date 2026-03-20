@@ -41,12 +41,6 @@ pub(crate) enum PairingKind {
     },
     /// PSK pairing — uses a real pre-shared key, no fingerprint verification needed.
     Psk { psk: Psk, psk_id: PskId },
-    /// Rendezvous handshake completed — awaiting fingerprint verification from the user.
-    /// Messages from the remote peer are buffered here until verification completes.
-    AwaitingVerification {
-        source: IdentityFingerprint,
-        buffered_messages: Vec<IncomingMessage>,
-    },
 }
 
 /// A pending pairing waiting for an incoming handshake.
@@ -57,6 +51,72 @@ pub(crate) struct PendingPairing {
     created_at: Instant,
     /// The kind of pairing.
     kind: PairingKind,
+}
+
+/// Manages pending pairings and verification message buffers.
+///
+/// Pairings track handshake setup (rendezvous codes, PSKs). Verification buffers
+/// hold messages from peers whose fingerprint is awaiting user approval — once
+/// approved the buffer is drained and replayed, on rejection it is discarded.
+struct PendingPairings {
+    /// Pairings awaiting incoming handshakes.
+    pairings: Vec<PendingPairing>,
+    /// Messages buffered per peer while awaiting fingerprint verification.
+    buffered_messages: HashMap<IdentityFingerprint, Vec<IncomingMessage>>,
+}
+
+impl PendingPairings {
+    fn new() -> Self {
+        Self {
+            pairings: Vec::new(),
+            buffered_messages: HashMap::new(),
+        }
+    }
+
+    /// Remove pairings older than `PENDING_PAIRING_MAX_AGE`.
+    fn prune_stale(&mut self) {
+        self.pairings
+            .retain(|p| p.created_at.elapsed() < PENDING_PAIRING_MAX_AGE);
+    }
+
+    /// Start buffering messages for a source that is awaiting fingerprint verification.
+    fn prepare_buffering(&mut self, source: IdentityFingerprint) {
+        self.buffered_messages.insert(source, Vec::new());
+    }
+
+    /// Try to buffer a message for a source awaiting fingerprint verification.
+    /// Returns `None` if handled (buffered or dropped due to limit),
+    /// or `Some(msg)` if the source is not awaiting verification.
+    fn try_buffer_message(&mut self, msg: IncomingMessage) -> Option<IncomingMessage> {
+        let source = match &msg {
+            IncomingMessage::Send { source, .. } => source,
+            _ => return Some(msg),
+        };
+        if let Some(buffer) = self.buffered_messages.get_mut(source) {
+            if buffer.len() < AWAITING_VERIFICATION_BUFFER_LIMIT {
+                debug!(
+                    "Buffering message from {:?} pending fingerprint verification",
+                    source
+                );
+                buffer.push(msg);
+            } else {
+                warn!("Buffer limit reached for {:?}, dropping message", source);
+            }
+            None
+        } else {
+            Some(msg)
+        }
+    }
+
+    /// Drain buffered messages after fingerprint approval.
+    fn drain_buffered_messages(&mut self, source: &IdentityFingerprint) -> Vec<IncomingMessage> {
+        self.buffered_messages.remove(source).unwrap_or_default()
+    }
+
+    /// Discard buffered messages on fingerprint rejection.
+    fn discard_buffered_messages(&mut self, source: &IdentityFingerprint) {
+        self.buffered_messages.remove(source);
+    }
 }
 
 use super::notify;
@@ -276,7 +336,7 @@ impl UserClient {
             proxy_client,
             own_fingerprint,
             transports: HashMap::new(),
-            pending_pairings: Vec::new(),
+            pending_pairings: PendingPairings::new(),
             audit_log: audit_log.unwrap_or_else(|| Box::new(NoOpAuditLog)),
         };
 
@@ -340,8 +400,8 @@ struct UserClientInner {
     own_fingerprint: IdentityFingerprint,
     /// Map of fingerprint -> transport
     transports: HashMap<IdentityFingerprint, MultiDeviceTransport>,
-    /// Pending pairings awaiting incoming handshakes.
-    pending_pairings: Vec<PendingPairing>,
+    /// Pending pairings and verification message buffers.
+    pending_pairings: PendingPairings,
     /// Audit logger for security-relevant events
     audit_log: Box<dyn AuditLog>,
 }
@@ -480,33 +540,15 @@ impl UserClientInner {
         notification_tx: &mpsc::Sender<UserClientNotification>,
         request_tx: &mpsc::Sender<UserClientRequest>,
     ) -> Result<Option<PendingReplyFuture>, ClientError> {
+        // If this source is awaiting fingerprint verification, buffer the message
+        let Some(msg) = self.pending_pairings.try_buffer_message(msg) else {
+            return Ok(None);
+        };
+
         match msg {
-            IncomingMessage::Send { ref source, .. } => {
-                // If this source is awaiting fingerprint verification, buffer the message
-                if let Some(PendingPairing {
-                    kind: PairingKind::AwaitingVerification { buffered_messages, .. },
-                    ..
-                }) = self.pending_pairings.iter_mut().find(|p| {
-                    matches!(&p.kind, PairingKind::AwaitingVerification { source: s, .. } if s == source)
-                }) {
-                    if buffered_messages.len() < AWAITING_VERIFICATION_BUFFER_LIMIT {
-                        debug!("Buffering message from {:?} pending fingerprint verification", source);
-                        buffered_messages.push(msg);
-                    } else {
-                        warn!("Buffer limit reached for {:?}, dropping message", source);
-                    }
-                    return Ok(None);
-                }
-
-                // Destructure now that we know we're not buffering
-                let IncomingMessage::Send {
-                    source, payload, ..
-                } = msg
-                else {
-                    unreachable!()
-                };
-
-                // Parse payload as ProtocolMessage
+            IncomingMessage::Send {
+                source, payload, ..
+            } => {
                 let text = String::from_utf8(payload)
                     .map_err(|e| ClientError::Serialization(format!("Invalid UTF-8: {e}")))?;
 
@@ -545,14 +587,14 @@ impl UserClientInner {
             }
             IncomingMessage::RendezvousInfo(code) => {
                 // Find the pending rendezvous pairing that is still awaiting a reply
-                let idx = self
-                    .pending_pairings
-                    .iter()
-                    .position(|p| matches!(&p.kind, PairingKind::Rendezvous { reply: Some(_) }));
+                let idx =
+                    self.pending_pairings.pairings.iter().position(|p| {
+                        matches!(&p.kind, PairingKind::Rendezvous { reply: Some(_) })
+                    });
 
                 if let Some(idx) = idx {
                     // Take the reply sender out, leaving the pairing in place with reply: None
-                    let pairing = &mut self.pending_pairings[idx];
+                    let pairing = &mut self.pending_pairings.pairings[idx];
                     if let PairingKind::Rendezvous { reply } = &mut pairing.kind {
                         if let Some(sender) = reply.take() {
                             debug!("Completed rendezvous pairing via handle, code: {}", code);
@@ -594,20 +636,19 @@ impl UserClientInner {
             (None, None, false)
         } else {
             // New connection — look up and consume a pending pairing
-            Self::prune_stale_pairings(&mut self.pending_pairings);
+            self.pending_pairings.prune_stale();
 
             match &psk_id {
                 Some(id) => {
                     // PSK mode — find matching pairing by psk_id
-                    let idx = self.pending_pairings.iter().position(
+                    let idx = self.pending_pairings.pairings.iter().position(
                         |p| matches!(&p.kind, PairingKind::Psk { psk_id: pid, .. } if pid == id),
                     );
                     if let Some(idx) = idx {
-                        let pairing = self.pending_pairings.remove(idx);
+                        let pairing = self.pending_pairings.pairings.remove(idx);
                         let psk = match pairing.kind {
                             PairingKind::Psk { psk, .. } => psk,
-                            PairingKind::Rendezvous { .. }
-                            | PairingKind::AwaitingVerification { .. } => unreachable!(),
+                            PairingKind::Rendezvous { .. } => unreachable!(),
                         };
                         (Some(psk), pairing.connection_name, true)
                     } else {
@@ -621,12 +662,12 @@ impl UserClientInner {
                 None => {
                     // Rendezvous mode — find a confirmed rendezvous pairing
                     // (one whose reply has already been sent, i.e. reply is None)
-                    let idx = self
-                        .pending_pairings
-                        .iter()
-                        .position(|p| matches!(p.kind, PairingKind::Rendezvous { reply: None }));
+                    let idx =
+                        self.pending_pairings.pairings.iter().position(|p| {
+                            matches!(p.kind, PairingKind::Rendezvous { reply: None })
+                        });
                     let connection_name =
-                        idx.and_then(|i| self.pending_pairings.remove(i).connection_name);
+                        idx.and_then(|i| self.pending_pairings.pairings.remove(i).connection_name);
                     (None, connection_name, false)
                 }
             }
@@ -644,14 +685,7 @@ impl UserClientInner {
         if is_new_connection && !is_psk_connection {
             // New rendezvous connection: require fingerprint verification.
             // Buffer messages from this source until verification completes.
-            self.pending_pairings.push(PendingPairing {
-                connection_name: None,
-                created_at: Instant::now(),
-                kind: PairingKind::AwaitingVerification {
-                    source,
-                    buffered_messages: Vec::new(),
-                },
-            });
+            self.pending_pairings.prepare_buffering(source);
 
             let (tx, rx) = oneshot::channel();
 
@@ -721,16 +755,6 @@ impl UserClientInner {
 
             Ok(None)
         }
-    }
-
-    /// Remove pending pairings older than `PENDING_PAIRING_MAX_AGE`.
-    /// `AwaitingVerification` entries are excluded — they have their own timeout
-    /// via the `PendingReplyFuture` oneshot channel.
-    fn prune_stale_pairings(pairings: &mut Vec<PendingPairing>) {
-        pairings.retain(|p| {
-            matches!(p.kind, PairingKind::AwaitingVerification { .. })
-                || p.created_at.elapsed() < PENDING_PAIRING_MAX_AGE
-        });
     }
 
     /// Accept a new connection: cache session, store transport, set name, and audit
@@ -912,16 +936,17 @@ impl UserClientInner {
                 }
 
                 // Prune stale pairings
-                Self::prune_stale_pairings(&mut self.pending_pairings);
+                self.pending_pairings.prune_stale();
 
                 // If there's already a pending rendezvous pairing awaiting its code,
                 // error the old one rather than silently overwriting it
                 if let Some(old_idx) = self
                     .pending_pairings
+                    .pairings
                     .iter()
                     .position(|p| matches!(&p.kind, PairingKind::Rendezvous { reply: Some(_) }))
                 {
-                    let old = self.pending_pairings.remove(old_idx);
+                    let old = self.pending_pairings.pairings.remove(old_idx);
                     if let PairingKind::Rendezvous {
                         reply: Some(old_reply),
                     } = old.kind
@@ -936,7 +961,7 @@ impl UserClientInner {
 
                 // Push the new pairing immediately — reply will be completed
                 // when RendezvousInfo arrives from the proxy
-                self.pending_pairings.push(PendingPairing {
+                self.pending_pairings.pairings.push(PendingPairing {
                     connection_name: name,
                     created_at: Instant::now(),
                     kind: PairingKind::Rendezvous { reply: Some(reply) },
@@ -965,8 +990,8 @@ impl UserClientInner {
             kind: PairingKind::Psk { psk, psk_id },
         };
 
-        Self::prune_stale_pairings(&mut self.pending_pairings);
-        self.pending_pairings.push(pairing);
+        self.pending_pairings.prune_stale();
+        self.pending_pairings.pairings.push(pairing);
         debug!("Created PSK pairing, token generated");
 
         Ok(token)
@@ -1002,31 +1027,14 @@ impl UserClientInner {
                     UserClientNotification::FingerprintVerified {}
                 );
 
-                // Drain buffered messages from the AwaitingVerification pairing
-                let buffered = self
-                    .pending_pairings
-                    .iter()
-                    .position(|p| {
-                        matches!(&p.kind, PairingKind::AwaitingVerification { source: s, .. } if *s == source)
-                    })
-                    .map(|idx| self.pending_pairings.remove(idx));
-
+                // Drain and replay buffered messages
                 let mut futures = Vec::new();
-                if let Some(PendingPairing {
-                    kind:
-                        PairingKind::AwaitingVerification {
-                            buffered_messages, ..
-                        },
-                    ..
-                }) = buffered
-                {
-                    for msg in buffered_messages {
-                        match self.handle_incoming(msg, notification_tx, request_tx).await {
-                            Ok(Some(fut)) => futures.push(fut),
-                            Ok(None) => {}
-                            Err(e) => {
-                                warn!("Error processing buffered message: {}", e);
-                            }
+                for msg in self.pending_pairings.drain_buffered_messages(&source) {
+                    match self.handle_incoming(msg, notification_tx, request_tx).await {
+                        Ok(Some(fut)) => futures.push(fut),
+                        Ok(None) => {}
+                        Err(e) => {
+                            warn!("Error processing buffered message: {}", e);
                         }
                     }
                 }
@@ -1064,9 +1072,7 @@ impl UserClientInner {
         reason: &str,
         notification_tx: &mpsc::Sender<UserClientNotification>,
     ) {
-        self.pending_pairings.retain(|p| {
-            !matches!(&p.kind, PairingKind::AwaitingVerification { source: s, .. } if s == source)
-        });
+        self.pending_pairings.discard_buffered_messages(source);
 
         self.audit_log
             .write(AuditEvent::ConnectionRejected {
