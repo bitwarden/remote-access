@@ -1,0 +1,17 @@
+[package]
+name = "rust-remote-example"
+description = "Minimal RemoteClient example — connect, request a credential, print it"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-3.0"
+publish = false
+
+[dependencies]
+ap-client = { path = "../../crates/ap-client", features = ["native-websocket"] }
+tokio = { version = "1.36.0", features = ["rt-multi-thread", "macros"] }
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
+[lints.clippy]
+unwrap_used = "deny"
+string_slice = "warn"
