@@ -154,8 +154,20 @@ jobs:
             local crate="$1"
             echo "Publishing $crate..."
             cargo publish -p "$crate"
-            echo "Published $crate, waiting for crates.io to index..."
-            sleep 30
+            echo "Waiting for $crate to be indexed on crates.io..."
+
+            local version
+            version=$(cargo metadata --no-deps --format-version 1 \
+              | jq -r ".packages[] | select(.name == \"$crate\") | .version")
+
+            for i in $(seq 1 30); do
+              if cargo search "$crate" 2>/dev/null | grep -q "^${crate} = \"${version}\""; then
+                echo "$crate $version is indexed."
+                return 0
+              fi
+              sleep 2
+            done
+            echo "Warning: $crate may not be indexed yet, continuing anyway..."
           }
 
           # Publish in dependency order (leaf dependencies first)
@@ -166,4 +178,7 @@ jobs:
           publish_crate ap-proxy-client
           publish_crate ap-proxy
           publish_crate ap-client
-          publish_crate ap-cli
+
+          # Last crate — no need to wait for indexing
+          echo "Publishing ap-cli..."
+          cargo publish -p ap-cli
