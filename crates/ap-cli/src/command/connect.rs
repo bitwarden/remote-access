@@ -72,9 +72,9 @@ pub struct ConnectArgs {
     #[arg(long, conflicts_with = "domain")]
     pub id: Option<String>,
 
-    /// Timeout in seconds for credential response
-    #[arg(long, default_value = "120")]
-    pub timeout: u64,
+    /// Timeout in seconds for credential response (default: 120)
+    #[arg(long)]
+    pub timeout: Option<u64>,
 
     /// Output format for single-shot mode
     #[arg(long, default_value = "text", value_enum)]
@@ -781,11 +781,11 @@ async fn run_single_shot(
     ephemeral_connection: bool,
     query: ap_client::CredentialQuery,
     output: OutputFormat,
-    timeout_secs: u64,
+    timeout_secs: Option<u64>,
 ) -> Result<()> {
     use super::output::{exit_code, exit_code_name};
 
-    let credential_timeout = Some(std::time::Duration::from_secs(timeout_secs));
+    let credential_timeout = timeout_secs.map(std::time::Duration::from_secs);
     match fetch_credential(
         &proxy_url,
         token.as_deref(),

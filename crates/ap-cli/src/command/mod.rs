@@ -128,6 +128,10 @@ pub struct Cli {
     #[arg(long, conflicts_with = "domain")]
     pub id: Option<String>,
 
+    /// Timeout in seconds for credential response (default: 120)
+    #[arg(long)]
+    pub timeout: Option<u64>,
+
     /// Output format (text or json) for single-shot mode
     #[arg(long, default_value = "text", value_enum, global = true)]
     pub output: OutputFormat,
@@ -166,7 +170,7 @@ pub async fn process_command(cli: Cli, log_rx: Option<LogReceiver>) -> Result<()
                 verify_fingerprint: cli.verify_fingerprint,
                 domain: cli.domain,
                 id: cli.id,
-                timeout: 120,
+                timeout: cli.timeout,
                 output: cli.output,
             };
             args.run(log_rx).await
