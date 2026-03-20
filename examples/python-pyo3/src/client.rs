@@ -13,7 +13,7 @@ use crate::types::{PyCredentialData, RemoteAccessError};
 ///
 /// Usage::
 ///
-///     client = RemoteClient("wss://rat1.lesspassword.dev", "python-remote")
+///     client = RemoteClient("wss://ap.lesspassword.dev", "python-remote")
 ///     client.connect(token="ABC-DEF-GHI")
 ///     cred = client.request_credential("example.com")
 ///     print(cred.username, cred.password)
@@ -36,7 +36,7 @@ impl PyRemoteClient {
     ///     proxy_url: WebSocket URL of the proxy server.
     ///     identity_name: Name for the identity keypair file (~/.bw-remote/{name}.key).
     #[new]
-    #[pyo3(signature = (proxy_url="wss://rat1.lesspassword.dev", identity_name="python-remote"))]
+    #[pyo3(signature = (proxy_url="wss://ap.lesspassword.dev", identity_name="python-remote"))]
     pub fn new(proxy_url: &str, identity_name: &str) -> PyResult<Self> {
         // Enable RUST_LOG for debugging
         let _ = tracing_subscriber::fmt()

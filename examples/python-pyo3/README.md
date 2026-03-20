@@ -52,13 +52,13 @@ Uses the cached session from step 2. Approve the request on the listen side.
 from bw_remote_rs import RemoteClient
 
 # Pair (clears previous session)
-client = RemoteClient(proxy_url="wss://rat1.lesspassword.dev")
+client = RemoteClient(proxy_url="wss://ap.lesspassword.dev")
 client.clear_sessions()
 client.connect(token="ABC-DEF-GHI")
 client.close()
 
 # Later — request a credential using cached session
-client = RemoteClient(proxy_url="wss://rat1.lesspassword.dev")
+client = RemoteClient(proxy_url="wss://ap.lesspassword.dev")
 client.connect()
 cred = client.request_credential("example.com")
 print(f"Username: {cred.username}")
