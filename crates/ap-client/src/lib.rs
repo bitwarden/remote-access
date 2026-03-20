@@ -82,7 +82,7 @@ pub use traits::{
     AuditConnectionType, AuditEvent, AuditLog, CredentialFieldSet, IdentityProvider, NoOpAuditLog,
     SessionStore,
 };
-pub use types::{ConnectionMode, CredentialData, CredentialQuery, PskId};
+pub use types::{ConnectionMode, CredentialData, CredentialQuery, PskId, PskToken};
 
 // Re-export ap-proxy-protocol types
 pub use ap_proxy_protocol::{IdentityFingerprint, RendezvousCode};

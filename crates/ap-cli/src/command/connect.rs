@@ -4,11 +4,10 @@
 //! and requesting credentials over a secure Noise Protocol channel.
 
 use ap_client::{
-    ClientError, ConnectionMode, DefaultProxyClient, IdentityFingerprint, IdentityProvider,
-    RemoteClient, RemoteClientFingerprintReply, RemoteClientNotification, RemoteClientRequest,
-    SessionStore,
+    ClientError, ConnectionMode, DefaultProxyClient, IdentityFingerprint, IdentityProvider, Psk,
+    PskToken, RemoteClient, RemoteClientFingerprintReply, RemoteClientNotification,
+    RemoteClientRequest, SessionStore,
 };
-use ap_noise::Psk;
 use ap_proxy_client::ProxyClientConfig;
 use clap::Args;
 use color_eyre::eyre::{Result, bail};
@@ -139,17 +138,10 @@ enum Phase {
 
 /// Parse a token (rendezvous code or PSK token)
 fn parse_token(token: &str) -> Result<TokenType> {
-    if token.contains('_') && token.len() == 129 {
-        // PSK token: <64-char-hex>_<64-char-hex>
-        let parts: Vec<&str> = token.split('_').collect();
-        if parts.len() != 2 || parts[0].len() != 64 || parts[1].len() != 64 {
-            bail!("Invalid PSK token format (expected 64-char hex + underscore + 64-char hex)");
-        }
-
-        let psk = Psk::from_hex(parts[0])
-            .map_err(|e| color_eyre::eyre::eyre!("Invalid PSK in token: {}", e))?;
-        let fingerprint = parse_fingerprint_hex(parts[1])?;
-
+    if PskToken::looks_like_psk_token(token) {
+        let parsed = PskToken::parse(token)
+            .map_err(|e| color_eyre::eyre::eyre!("Invalid PSK token: {e}"))?;
+        let (psk, fingerprint) = parsed.into_parts();
         Ok(TokenType::Psk { psk, fingerprint })
     } else {
         // Rendezvous code (9 chars)
@@ -938,31 +930,30 @@ fn resolve_connection_mode(
     }
 }
 
-/// Parse a fingerprint from hex string
-#[allow(clippy::string_slice)]
-fn parse_fingerprint_hex(hex: &str) -> Result<IdentityFingerprint> {
-    // Remove any separators or whitespace
-    let clean_hex = hex.replace(['-', ' ', ':'], "");
-
-    if clean_hex.len() != 64 {
-        bail!("Fingerprint must be 64 hex characters (32 bytes)");
-    }
-
-    // SAFETY: clean_hex is validated to be 64 hex characters (ASCII only),
-    // so indexing at i*2 boundaries is safe.
-    let mut bytes = [0u8; 32];
-    for i in 0..32 {
-        let byte_str = &clean_hex[i * 2..i * 2 + 2];
-        bytes[i] = u8::from_str_radix(byte_str, 16)
-            .map_err(|_| color_eyre::eyre::eyre!("Invalid hex string"))?;
-    }
-
-    Ok(IdentityFingerprint(bytes))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Parse a fingerprint from hex string, stripping separators.
+    #[allow(clippy::string_slice)]
+    fn parse_fingerprint_hex(hex: &str) -> Result<IdentityFingerprint> {
+        let clean_hex = hex.replace(['-', ' ', ':'], "");
+
+        if clean_hex.len() != 64 {
+            bail!("Fingerprint must be 64 hex characters (32 bytes)");
+        }
+
+        // SAFETY: clean_hex is validated to be 64 hex characters (ASCII only),
+        // so indexing at i*2 boundaries is safe.
+        let mut bytes = [0u8; 32];
+        for i in 0..32 {
+            let byte_str = &clean_hex[i * 2..i * 2 + 2];
+            bytes[i] = u8::from_str_radix(byte_str, 16)
+                .map_err(|_| color_eyre::eyre::eyre!("Invalid hex string"))?;
+        }
+
+        Ok(IdentityFingerprint(bytes))
+    }
 
     /// Helper: create an IdentityFingerprint from a repeating byte.
     fn fp(byte: u8) -> IdentityFingerprint {

@@ -3,7 +3,7 @@ use tokio::sync::mpsc;
 
 use ap_proxy_client::ProxyClientConfig;
 use ap_client::{
-    DefaultProxyClient, IdentityFingerprint, IdentityProvider, Psk, RemoteClient,
+    DefaultProxyClient, IdentityFingerprint, IdentityProvider, PskToken, RemoteClient,
     RemoteClientNotification, SessionStore,
 };
 
@@ -107,15 +107,10 @@ impl PyRemoteClient {
                 self.runtime.block_on(async {
                     if let Some(token_str) = token {
                         // Parse token: PSK or rendezvous
-                        if token_str.contains('_') && token_str.len() == 129 {
-                            // PSK token: <64hex>_<64hex>
-                            let parts: Vec<&str> = token_str.split('_').collect();
-                            if parts.len() != 2 || parts[0].len() != 64 || parts[1].len() != 64 {
-                                return Err("Invalid PSK token format".to_string());
-                            }
-                            let psk =
-                                Psk::from_hex(parts[0]).map_err(|e| format!("Invalid PSK: {e}"))?;
-                            let fingerprint = parse_fingerprint_hex(parts[1])?;
+                        if PskToken::looks_like_psk_token(token_str) {
+                            let parsed = PskToken::parse(token_str)
+                                .map_err(|e| format!("Invalid PSK token: {e}"))?;
+                            let (psk, fingerprint) = parsed.into_parts();
 
                             client
                                 .pair_with_psk(psk, fingerprint)
@@ -132,7 +127,8 @@ impl PyRemoteClient {
                             Ok(Some(hex::encode(fp.0)))
                         }
                     } else if let Some(session_hex) = session {
-                        let fingerprint = parse_fingerprint_hex(session_hex)?;
+                        let fingerprint = IdentityFingerprint::from_hex(session_hex)
+                            .map_err(|e| format!("Invalid session fingerprint: {e}"))?;
                         client
                             .load_cached_session(fingerprint)
                             .await
@@ -240,17 +236,3 @@ impl PyRemoteClient {
     }
 }
 
-/// Parse a 64-char hex string into an IdentityFingerprint.
-fn parse_fingerprint_hex(hex_str: &str) -> Result<IdentityFingerprint, String> {
-    let clean = hex_str.replace(['-', ' ', ':'], "");
-    if clean.len() != 64 {
-        return Err(format!(
-            "Fingerprint must be 64 hex characters, got {}",
-            clean.len()
-        ));
-    }
-    let bytes = hex::decode(&clean).map_err(|e| format!("Invalid hex: {e}"))?;
-    let mut arr = [0u8; 32];
-    arr.copy_from_slice(&bytes);
-    Ok(IdentityFingerprint(arr))
-}

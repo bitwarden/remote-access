@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use ap_client::{
     ClientError, CredentialRequestReply, FingerprintVerificationReply, IdentityProvider,
-    ProxyClient, Psk, RemoteClient, RemoteClientFingerprintReply, RemoteClientHandle,
+    ProxyClient, PskToken, RemoteClient, RemoteClientFingerprintReply, RemoteClientHandle,
     RemoteClientNotification, RemoteClientRequest, SessionStore, UserClient, UserClientHandle,
     UserClientNotification, UserClientRequest,
 };
@@ -390,14 +390,10 @@ async fn test_psk_pairing() {
         .await
         .expect("Should generate PSK token");
 
-    // Parse token: format is <psk_hex>_<fingerprint_hex>
-    let parts: Vec<&str> = token.split('_').collect();
-    assert_eq!(parts.len(), 2, "Token should have format psk_fingerprint");
-    let psk = Psk::from_hex(parts[0]).expect("Should parse PSK");
-    let fp_bytes = hex::decode(parts[1]).expect("Should decode fingerprint hex");
-    let mut fp_array = [0u8; 32];
-    fp_array.copy_from_slice(&fp_bytes);
-    let fingerprint = IdentityFingerprint(fp_array);
+    // Parse token
+    let (psk, fingerprint) = PskToken::parse(&token)
+        .expect("Should parse PSK token")
+        .into_parts();
 
     // Create and connect RemoteClient
     let RemoteClientHandle {
@@ -988,13 +984,9 @@ async fn test_dual_mode_psk_pairing_with_both_modes_pending() {
         .expect("Should get rendezvous token");
 
     // Parse PSK token
-    let parts: Vec<&str> = psk_token.split('_').collect();
-    assert_eq!(parts.len(), 2);
-    let psk = Psk::from_hex(parts[0]).expect("Should parse PSK");
-    let fp_bytes = hex::decode(parts[1]).expect("Should decode fingerprint hex");
-    let mut fp_array = [0u8; 32];
-    fp_array.copy_from_slice(&fp_bytes);
-    let user_fp_from_token = IdentityFingerprint(fp_array);
+    let (psk, user_fp_from_token) = PskToken::parse(&psk_token)
+        .expect("Should parse PSK token")
+        .into_parts();
 
     // Connect RemoteClient via PSK
     let RemoteClientHandle {
@@ -1089,12 +1081,9 @@ async fn test_notification_channel_not_blocking_event_loop() {
         .await
         .expect("Should generate PSK token");
 
-    let parts: Vec<&str> = token.split('_').collect();
-    let psk = Psk::from_hex(parts[0]).expect("Should parse PSK");
-    let fp_bytes = hex::decode(parts[1]).expect("Should decode fingerprint hex");
-    let mut fp_array = [0u8; 32];
-    fp_array.copy_from_slice(&fp_bytes);
-    let fingerprint = IdentityFingerprint(fp_array);
+    let (psk, fingerprint) = PskToken::parse(&token)
+        .expect("Should parse PSK token")
+        .into_parts();
 
     // Connect RemoteClient — intentionally never drain notifications
     let RemoteClientHandle {
@@ -1203,12 +1192,9 @@ async fn test_request_channel_backpressure() {
         .await
         .expect("Should generate PSK token");
 
-    let parts: Vec<&str> = token.split('_').collect();
-    let psk = Psk::from_hex(parts[0]).expect("Should parse PSK");
-    let fp_bytes = hex::decode(parts[1]).expect("Should decode fingerprint hex");
-    let mut fp_array = [0u8; 32];
-    fp_array.copy_from_slice(&fp_bytes);
-    let fingerprint = IdentityFingerprint(fp_array);
+    let (psk, fingerprint) = PskToken::parse(&token)
+        .expect("Should parse PSK token")
+        .into_parts();
 
     // Connect RemoteClient
     let RemoteClientHandle {

@@ -9,7 +9,7 @@ use std::sync::Mutex;
 
 use ap_client::{
     CredentialData, CredentialRequestReply, DefaultProxyClient, FingerprintVerificationReply,
-    IdentityProvider, Psk, RemoteClient, RemoteClientHandle, RemoteClientNotification,
+    IdentityProvider, PskToken, RemoteClient, RemoteClientHandle, RemoteClientNotification,
     SessionStore, UserClient, UserClientHandle, UserClientNotification, UserClientRequest,
 };
 use ap_noise::MultiDeviceTransport;
@@ -375,14 +375,10 @@ async fn test_e2e_psk_pairing_and_credential_request() {
         .await
         .expect("Should generate PSK token");
 
-    // Parse token: format is <psk_hex>_<fingerprint_hex>
-    let parts: Vec<&str> = token.split('_').collect();
-    assert_eq!(parts.len(), 2, "Token should have format psk_fingerprint");
-    let psk = Psk::from_hex(parts[0]).expect("Should parse PSK");
-    let fp_bytes = hex::decode(parts[1]).expect("Should decode fingerprint hex");
-    let mut fp_array = [0u8; 32];
-    fp_array.copy_from_slice(&fp_bytes);
-    let fingerprint = IdentityFingerprint(fp_array);
+    // Parse token
+    let (psk, fingerprint) = PskToken::parse(&token)
+        .expect("Should parse PSK token")
+        .into_parts();
 
     // 5. Create RemoteClient with DefaultProxyClient
     let remote_proxy = create_proxy_client(addr, None);
@@ -664,13 +660,10 @@ async fn test_e2e_credential_request_denied() {
         .await
         .expect("Should generate PSK token");
 
-    // Parse token: format is <psk_hex>_<fingerprint_hex>
-    let parts: Vec<&str> = token.split('_').collect();
-    let psk = Psk::from_hex(parts[0]).expect("Should parse PSK");
-    let fp_bytes = hex::decode(parts[1]).expect("Should decode fingerprint hex");
-    let mut fp_array = [0u8; 32];
-    fp_array.copy_from_slice(&fp_bytes);
-    let fingerprint = IdentityFingerprint(fp_array);
+    // Parse token
+    let (psk, fingerprint) = PskToken::parse(&token)
+        .expect("Should parse PSK token")
+        .into_parts();
 
     // 5. Create RemoteClient
     let remote_proxy = create_proxy_client(addr, None);
@@ -775,13 +768,10 @@ async fn test_e2e_multiple_credential_requests() {
         .await
         .expect("Should generate PSK token");
 
-    // Parse token: format is <psk_hex>_<fingerprint_hex>
-    let parts: Vec<&str> = token.split('_').collect();
-    let psk = Psk::from_hex(parts[0]).expect("Should parse PSK");
-    let fp_bytes = hex::decode(parts[1]).expect("Should decode fingerprint hex");
-    let mut fp_array = [0u8; 32];
-    fp_array.copy_from_slice(&fp_bytes);
-    let fingerprint = IdentityFingerprint(fp_array);
+    // Parse token
+    let (psk, fingerprint) = PskToken::parse(&token)
+        .expect("Should parse PSK token")
+        .into_parts();
 
     // 5. Create RemoteClient
     let remote_proxy = create_proxy_client(addr, None);
@@ -912,13 +902,9 @@ async fn test_e2e_transport_state_persistence() {
         .expect("Should generate PSK token");
 
     // Parse token: format is <psk_hex>_<fingerprint_hex>
-    let parts: Vec<&str> = token.split('_').collect();
-    assert_eq!(parts.len(), 2, "Token should have format psk_fingerprint");
-    let psk = Psk::from_hex(parts[0]).expect("Should parse PSK");
-    let fp_bytes = hex::decode(parts[1]).expect("Should decode fingerprint hex");
-    let mut fp_array = [0u8; 32];
-    fp_array.copy_from_slice(&fp_bytes);
-    let fingerprint = IdentityFingerprint(fp_array);
+    let (psk, fingerprint) = PskToken::parse(&token)
+        .expect("Should parse PSK token")
+        .into_parts();
 
     // 5. Create RemoteClient with Arc<MockSessionStore> for later access
     let remote_proxy = create_proxy_client(addr, None);
@@ -1049,13 +1035,10 @@ async fn test_e2e_multi_device_credential_response() {
         .await
         .expect("Should generate PSK token");
 
-    // Parse token: format is <psk_hex>_<fingerprint_hex>
-    let parts: Vec<&str> = token.split('_').collect();
-    let psk = Psk::from_hex(parts[0]).expect("Should parse PSK");
-    let fp_bytes = hex::decode(parts[1]).expect("Should decode fingerprint hex");
-    let mut fp_array = [0u8; 32];
-    fp_array.copy_from_slice(&fp_bytes);
-    let user_fingerprint = IdentityFingerprint(fp_array);
+    // Parse token
+    let (psk, user_fingerprint) = PskToken::parse(&token)
+        .expect("Should parse PSK token")
+        .into_parts();
 
     // 6. Create RemoteClient
     let remote_proxy = create_proxy_client(addr, Some(remote_keypair));

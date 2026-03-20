@@ -17,7 +17,7 @@ use futures_util::stream::FuturesUnordered;
 use tokio::sync::oneshot;
 
 use crate::proxy::ProxyClient;
-use crate::types::{CredentialData, PskId};
+use crate::types::{CredentialData, PskId, PskToken};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
@@ -946,7 +946,7 @@ impl UserClientInner {
     async fn generate_psk_token(&mut self, name: Option<String>) -> Result<String, ClientError> {
         let psk = Psk::generate();
         let psk_id = psk.id();
-        let token = format!("{}_{}", psk.to_hex(), hex::encode(self.own_fingerprint.0));
+        let token = PskToken::new(psk.clone(), self.own_fingerprint).to_string();
 
         self.pending_pairings.prune_stale();
         self.pending_pairings.psk_pairings.insert(

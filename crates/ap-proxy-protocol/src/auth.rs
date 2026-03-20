@@ -423,6 +423,44 @@ impl std::fmt::Debug for IdentityFingerprint {
     }
 }
 
+impl IdentityFingerprint {
+    /// Parse an `IdentityFingerprint` from a 64-character hex string.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProxyError::InvalidMessage`] if the string is not exactly 64
+    /// hex characters or contains non-hex characters.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ap_proxy_protocol::IdentityFingerprint;
+    ///
+    /// let hex_str = "a".repeat(64);
+    /// let fp = IdentityFingerprint::from_hex(&hex_str).unwrap();
+    /// assert_eq!(fp.to_hex(), hex_str);
+    /// ```
+    pub fn from_hex(s: &str) -> Result<Self, crate::error::ProxyError> {
+        if s.len() != 64 {
+            return Err(crate::error::ProxyError::InvalidMessage(format!(
+                "Fingerprint hex must be exactly 64 characters, got {}",
+                s.len()
+            )));
+        }
+        let bytes = hex::decode(s).map_err(|e| {
+            crate::error::ProxyError::InvalidMessage(format!("Invalid hex in fingerprint: {e}"))
+        })?;
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&bytes);
+        Ok(Self(arr))
+    }
+
+    /// Encode this fingerprint as a 64-character lowercase hex string.
+    pub fn to_hex(&self) -> String {
+        hex::encode(self.0)
+    }
+}
+
 /// A cryptographic challenge issued by the proxy server for authentication.
 ///
 /// The server sends a random challenge to newly connected clients. Clients must
@@ -717,6 +755,27 @@ fn verify_ml_dsa_65(sig: &[u8], msg: &[u8], pk: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_fingerprint_hex_roundtrip() {
+        let fp = IdentityFingerprint([0xab; 32]);
+        let hex_str = fp.to_hex();
+        assert_eq!(hex_str.len(), 64);
+        let parsed = IdentityFingerprint::from_hex(&hex_str).expect("should parse");
+        assert_eq!(parsed, fp);
+    }
+
+    #[test]
+    fn test_fingerprint_from_hex_wrong_length() {
+        let err = IdentityFingerprint::from_hex("aabb").unwrap_err();
+        assert!(err.to_string().contains("64 characters"));
+    }
+
+    #[test]
+    fn test_fingerprint_from_hex_invalid_chars() {
+        let bad = format!("{}zz", "aa".repeat(31));
+        assert!(IdentityFingerprint::from_hex(&bad).is_err());
+    }
 
     #[test]
     fn test_identity_keypair_generation() {
