@@ -17,6 +17,7 @@ use ap_proxy_protocol::{IdentityFingerprint, IdentityKeyPair, RendezvousCode};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, timeout};
+use zeroize::Zeroizing;
 
 // ============================================================================
 // Mock Implementations
@@ -956,7 +957,7 @@ async fn test_notification_channel_not_blocking_event_loop() {
                     approved: true,
                     credential: Some(ap_client::CredentialData {
                         username: Some("test_user".into()),
-                        password: Some("test_pass".into()),
+                        password: Some(Zeroizing::new("test_pass".into())),
                         totp: None,
                         uri: None,
                         notes: None,
@@ -1208,7 +1209,7 @@ async fn test_credential_request_buffered_during_fingerprint_verification() {
                 approved: true,
                 credential: Some(ap_client::CredentialData {
                     username: Some("buffered_user".into()),
-                    password: Some("buffered_pass".into()),
+                    password: Some(Zeroizing::new("buffered_pass".into())),
                     totp: None,
                     uri: None,
                     notes: None,
@@ -1229,7 +1230,10 @@ async fn test_credential_request_buffered_during_fingerprint_verification() {
         .expect("Remote task should not panic");
 
     assert_eq!(credential.username, Some("buffered_user".into()));
-    assert_eq!(credential.password, Some("buffered_pass".into()));
+    assert_eq!(
+        credential.password,
+        Some(Zeroizing::new("buffered_pass".into()))
+    );
     assert_eq!(credential.domain, Some("buffered.example.com".into()));
 
     handler.await.expect("Handler task should complete");

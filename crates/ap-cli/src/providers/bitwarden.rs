@@ -6,7 +6,7 @@
 use std::process::Command;
 
 use ap_client::CredentialData;
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::{ExposeSecret, SecretString, zeroize::Zeroizing};
 use serde::Deserialize;
 use tracing::info;
 
@@ -178,7 +178,7 @@ fn lookup_credential(bw: &str, search: &str, session: Option<&str>) -> Option<Cr
 
     Some(CredentialData {
         username: login.username,
-        password: login.password,
+        password: login.password.map(Zeroizing::new),
         totp: login.totp,
         uri,
         notes: None,

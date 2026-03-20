@@ -542,7 +542,7 @@ async fn run_interactive_session(
                                                     app.push_msg(MessageKind::Info, format!("  Username: {username}"));
                                                 }
                                                 if let Some(password) = &credential.password {
-                                                    app.push_msg(MessageKind::Info, format!("  Password: {password}"));
+                                                    app.push_msg(MessageKind::Info, format!("  Password: {}", password.as_str()));
                                                 }
                                                 if let Some(totp) = &credential.totp {
                                                     app.push_msg(MessageKind::Info, format!("  TOTP: {totp}"));

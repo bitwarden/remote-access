@@ -15,6 +15,7 @@ use ap_client::{
 use ap_proxy::server::ProxyServer;
 use ap_proxy_protocol::{IdentityFingerprint, IdentityKeyPair};
 use tokio::time::{Duration, timeout};
+use zeroize::Zeroizing;
 
 // ============================================================================
 // Test Infrastructure - Mock Implementations
@@ -73,7 +74,7 @@ fn create_proxy_client(addr: SocketAddr) -> DefaultProxyClient {
 fn test_credential() -> CredentialData {
     CredentialData {
         username: Some("testuser".to_string()),
-        password: Some("testpassword123".to_string()),
+        password: Some(Zeroizing::new("testpassword123".to_string())),
         totp: Some("123456".to_string()),
         uri: Some("https://example.com".to_string()),
         notes: Some("Test credential notes".to_string()),
@@ -210,7 +211,10 @@ async fn test_e2e_psk_pairing_and_credential_request() {
 
     // 13. Verify credential contents
     assert_eq!(credential.username, Some("testuser".to_string()));
-    assert_eq!(credential.password, Some("testpassword123".to_string()));
+    assert_eq!(
+        credential.password,
+        Some(Zeroizing::new("testpassword123".to_string()))
+    );
     assert_eq!(credential.totp, Some("123456".to_string()));
     assert_eq!(credential.uri, Some("https://example.com".to_string()));
     assert_eq!(credential.notes, Some("Test credential notes".to_string()));
@@ -359,7 +363,10 @@ async fn test_e2e_fingerprint_pairing_and_credential_request() {
 
     // 15. Verify credential contents
     assert_eq!(credential.username, Some("testuser".to_string()));
-    assert_eq!(credential.password, Some("testpassword123".to_string()));
+    assert_eq!(
+        credential.password,
+        Some(Zeroizing::new("testpassword123".to_string()))
+    );
 
     // Cleanup
     credential_handler.abort();
@@ -559,7 +566,7 @@ async fn test_e2e_multiple_credential_requests() {
                 // Create credential with domain-specific data
                 let credential = CredentialData {
                     username: Some(format!("user_{domain}")),
-                    password: Some(format!("pass_{domain}")),
+                    password: Some(Zeroizing::new(format!("pass_{domain}"))),
                     totp: None,
                     uri: Some(format!("https://{domain}")),
                     notes: Some(format!("Request #{request_count}")),
@@ -597,7 +604,10 @@ async fn test_e2e_multiple_credential_requests() {
 
         // Verify domain-specific credential
         assert_eq!(credential.username, Some(format!("user_{domain}")));
-        assert_eq!(credential.password, Some(format!("pass_{domain}")));
+        assert_eq!(
+            credential.password,
+            Some(Zeroizing::new(format!("pass_{domain}")))
+        );
         assert_eq!(credential.uri, Some(format!("https://{domain}")));
     }
 
@@ -859,7 +869,7 @@ async fn test_e2e_multi_device_credential_response() {
                     approved: true,
                     credential: Some(CredentialData {
                         username: Some("device1_user".into()),
-                        password: Some("device1_pass".into()),
+                        password: Some(Zeroizing::new("device1_pass".into())),
                         totp: None,
                         uri: None,
                         notes: None,
@@ -879,7 +889,7 @@ async fn test_e2e_multi_device_credential_response() {
                     approved: true,
                     credential: Some(CredentialData {
                         username: Some("device2_user".into()),
-                        password: Some("device2_pass".into()),
+                        password: Some(Zeroizing::new("device2_pass".into())),
                         totp: None,
                         uri: None,
                         notes: None,

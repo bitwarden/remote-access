@@ -20,7 +20,7 @@ impl ExampleProvider {
             credentials: vec![
                 CredentialData {
                     username: Some("alice@example.com".to_string()),
-                    password: Some("ex@mple-p@ssw0rd!".to_string()),
+                    password: Some("ex@mple-p@ssw0rd!".to_string().into()),
                     totp: None,
                     uri: Some("https://example.com/login".to_string()),
                     notes: Some("Example account for testing".to_string()),
@@ -29,7 +29,7 @@ impl ExampleProvider {
                 },
                 CredentialData {
                     username: Some("example@gmail.com".to_string()),
-                    password: Some("g00gle-s3cure!".to_string()),
+                    password: Some("g00gle-s3cure!".to_string().into()),
                     totp: Some("JBSWY3DPEHPK3PXP".to_string()),
                     uri: Some("https://accounts.google.com".to_string()),
                     notes: None,
@@ -38,7 +38,7 @@ impl ExampleProvider {
                 },
                 CredentialData {
                     username: Some("example-dev".to_string()),
-                    password: Some("gh-t0ken-abc123!".to_string()),
+                    password: Some("gh-t0ken-abc123!".to_string().into()),
                     totp: Some("NBSWY3DP".to_string()),
                     uri: Some("https://github.com".to_string()),
                     notes: Some("GitHub developer account".to_string()),

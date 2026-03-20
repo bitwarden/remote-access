@@ -25,8 +25,12 @@ rand = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { version = "1.36.0", default-features = false, features = ["sync", "macros"] }
+tokio = { version = "1.36.0", default-features = false, features = [
+    "sync",
+    "macros",
+] }
 tracing = { workspace = true }
+zeroize = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1.36.0", features = ["time"] }
@@ -38,7 +42,12 @@ web-time = "1"
 
 [dev-dependencies]
 ap-proxy = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "test-util"] }
+tokio = { workspace = true, features = [
+    "rt-multi-thread",
+    "macros",
+    "time",
+    "test-util",
+] }
 
 [lints]
 workspace = true

@@ -87,7 +87,7 @@ pub struct RunArgs {
 fn get_field<'a>(credential: &'a CredentialData, field: &str) -> Option<&'a str> {
     match field {
         "username" => credential.username.as_deref(),
-        "password" => credential.password.as_deref(),
+        "password" => credential.password.as_deref().map(|x| x.as_str()),
         "totp" => credential.totp.as_deref(),
         "uri" => credential.uri.as_deref(),
         "notes" => credential.notes.as_deref(),
@@ -221,7 +221,7 @@ mod tests {
     fn make_credential() -> CredentialData {
         CredentialData {
             username: Some("admin".to_string()),
-            password: Some("s3cret".to_string()),
+            password: Some("s3cret".to_string().into()),
             totp: Some("123456".to_string()),
             uri: Some("https://example.com".to_string()),
             notes: None,

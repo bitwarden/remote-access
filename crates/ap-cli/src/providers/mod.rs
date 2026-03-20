@@ -74,6 +74,8 @@ pub fn create_provider(name: &str) -> Result<Box<dyn CredentialProvider>> {
 
 #[cfg(test)]
 mod tests {
+    use secrecy::zeroize::Zeroizing;
+
     use super::*;
     use std::collections::HashMap;
 
@@ -174,7 +176,7 @@ mod tests {
     fn sample_credential() -> CredentialData {
         CredentialData {
             username: Some("alice".into()),
-            password: Some("s3cret".into()),
+            password: Some(Zeroizing::new("s3cret".to_string())),
             totp: None,
             uri: Some("https://example.com".into()),
             notes: None,
@@ -189,7 +191,7 @@ mod tests {
         match provider.lookup(&CredentialQuery::Domain("example.com".to_string())) {
             LookupResult::Found(cred) => {
                 assert_eq!(cred.username.as_deref(), Some("alice"));
-                assert_eq!(cred.password.as_deref(), Some("s3cret"));
+                assert_eq!(cred.password.as_deref().map(String::as_str), Some("s3cret"));
             }
             other => panic!("expected Found, got {other:?}"),
         }

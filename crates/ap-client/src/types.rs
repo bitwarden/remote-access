@@ -5,6 +5,7 @@ use std::fmt;
 use ap_noise::Psk;
 use ap_proxy_protocol::IdentityFingerprint;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 /// A stable identifier for a PSK, derived from `hex(SHA256(psk)[0..8])`.
 ///
@@ -163,7 +164,7 @@ pub struct CredentialData {
     pub username: Option<String>,
     /// Password for the credential
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub password: Option<String>,
+    pub password: Option<Zeroizing<String>>,
     /// TOTP code if available
     #[serde(skip_serializing_if = "Option::is_none")]
     pub totp: Option<String>,

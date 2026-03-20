@@ -89,7 +89,7 @@ pub fn emit_text_credential(credential: &CredentialData) {
         println!("username: {username}");
     }
     if let Some(password) = &credential.password {
-        println!("password: {password}");
+        println!("password: {}", password.as_str());
     }
     if let Some(totp) = &credential.totp {
         println!("totp: {totp}");
