@@ -5,9 +5,9 @@
 
 use ap_client::{
     CredentialData, CredentialRequestReply, DefaultProxyClient, FingerprintVerificationReply,
-    IdentityProvider, SessionStore, UserClient, UserClientNotification, UserClientRequest,
+    IdentityProvider, SessionInfo, SessionStore, UserClient, UserClientNotification,
+    UserClientRequest,
 };
-use ap_proxy_protocol::IdentityFingerprint;
 use clap::Args;
 use color_eyre::eyre::Result;
 use crossterm::event::{Event, EventStream, KeyEventKind};
@@ -139,12 +139,10 @@ fn apply_status_spans(app: &mut App, name: &str, status: &ProviderStatus) {
     }
 }
 
-type SessionInfo = (IdentityFingerprint, Option<String>, u64, u64);
-
 /// Reload the session list from disk (the client may have updated it).
 async fn reload_sessions() -> Vec<SessionInfo> {
     match FileSessionCache::load_or_create("user_client") {
-        Ok(cache) => cache.list_sessions().await,
+        Ok(cache) => cache.list().await,
         Err(_) => Vec::new(),
     }
 }
@@ -152,7 +150,7 @@ async fn reload_sessions() -> Vec<SessionInfo> {
 /// Build session info messages for display in the TUI.
 fn session_info_messages(sessions: &[SessionInfo], pending_label: Option<&str>) -> Vec<Message> {
     let mut sorted = sessions.to_vec();
-    sorted.sort_by(|a, b| b.3.cmp(&a.3));
+    sorted.sort_by(|a, b| b.last_connected_at.cmp(&a.last_connected_at));
 
     let mut msgs = vec![Message::rich(
         MessageKind::Listening,
@@ -163,15 +161,15 @@ fn session_info_messages(sessions: &[SessionInfo], pending_label: Option<&str>) 
                 .add_modifier(Modifier::BOLD),
         )],
     )];
-    for (fingerprint, name, cached_at, last_connected_at) in &sorted {
-        let short_hex = hex::encode(fingerprint.0)
+    for session in &sorted {
+        let short_hex = hex::encode(session.fingerprint.0)
             .chars()
             .take(12)
             .collect::<String>();
-        let created = format_relative_time(*cached_at);
-        let last_used = format_relative_time(*last_connected_at);
+        let created = format_relative_time(session.cached_at);
+        let last_used = format_relative_time(session.last_connected_at);
         let mut spans = vec![Span::raw("  ")];
-        if let Some(name) = name {
+        if let Some(name) = &session.name {
             spans.push(Span::styled(
                 name.clone(),
                 Style::default()
@@ -495,10 +493,10 @@ async fn run_event_loop(
                                     app.commands = &[];
                                     let device_label = sessions
                                         .iter()
-                                        .find(|(fp, _, _, _)| *fp == identity)
-                                        .map(|(fp, name, _, _)| {
-                                            name.clone().unwrap_or_else(|| {
-                                                hex::encode(fp.0)
+                                        .find(|s| s.fingerprint == identity)
+                                        .map(|s| {
+                                            s.name.clone().unwrap_or_else(|| {
+                                                hex::encode(s.fingerprint.0)
                                                     .chars()
                                                     .take(12)
                                                     .collect::<String>()
@@ -606,7 +604,7 @@ async fn run_user_client_session(
         let identity_provider = Box::new(FileIdentityStorage::load_or_generate("user_client")?);
         let session_cache = FileSessionCache::load_or_create("user_client")?;
         let session_store = Box::new(session_cache);
-        let cached_sessions = session_store.list_sessions().await;
+        let cached_sessions = session_store.list().await;
 
         let has_cached = !cached_sessions.is_empty() && !force_new_session;
 

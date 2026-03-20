@@ -74,7 +74,7 @@ pub use proxy::DefaultProxyClient;
 pub use proxy::ProxyClient;
 pub use traits::{
     AuditConnectionType, AuditEvent, AuditLog, CredentialFieldSet, IdentityProvider,
-    MemoryIdentityProvider, NoOpAuditLog, SessionStore,
+    MemoryIdentityProvider, NoOpAuditLog, SessionInfo, SessionStore, SessionUpdate,
 };
 pub use types::{ConnectionMode, CredentialData, CredentialQuery, PskId, PskToken};
 

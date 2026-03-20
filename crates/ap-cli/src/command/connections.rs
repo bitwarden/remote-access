@@ -170,23 +170,23 @@ async fn list_cache(client_type: Option<ClientType>) -> Result<()> {
 
         // Load and display sessions
         let cache = FileSessionCache::load_or_create(side.storage_name)?;
-        let mut sessions = cache.list_sessions().await;
+        let mut sessions = cache.list().await;
 
         if sessions.is_empty() {
             println!("  {}: {}", grey("Connections"), grey("(none)"));
         } else {
-            sessions.sort_by(|a, b| b.3.cmp(&a.3));
+            sessions.sort_by(|a, b| b.last_connected_at.cmp(&a.last_connected_at));
             println!(
                 "  {}: ({} peer{})",
                 grey("Connections"),
                 sessions.len(),
                 if sessions.len() == 1 { "" } else { "s" }
             );
-            for (session_fp, name, cached_at, last_connected) in &sessions {
-                let fp = hex::encode(session_fp.0);
-                let paired_ago = format_relative_time(*cached_at);
-                let used_ago = format_relative_time(*last_connected);
-                if let Some(name) = name {
+            for session in &sessions {
+                let fp = hex::encode(session.fingerprint.0);
+                let paired_ago = format_relative_time(session.cached_at);
+                let used_ago = format_relative_time(session.last_connected_at);
+                if let Some(name) = &session.name {
                     println!("    {} {} {}", grey("-"), cyan_bold(name), grey(&fp));
                 } else {
                     println!("    {} {}", grey("-"), cyan(&fp));

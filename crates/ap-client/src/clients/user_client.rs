@@ -127,7 +127,7 @@ use crate::{
     error::ClientError,
     traits::{
         AuditConnectionType, AuditEvent, AuditLog, CredentialFieldSet, IdentityProvider,
-        NoOpAuditLog, SessionStore,
+        NoOpAuditLog, SessionInfo, SessionStore,
     },
     types::{CredentialRequestPayload, CredentialResponsePayload, ProtocolMessage},
 };
@@ -629,7 +629,7 @@ impl UserClientInner {
         notify!(notification_tx, UserClientNotification::HandshakeStart {});
 
         // Check if this is an existing/cached session (bypass pairing lookup)
-        let is_new_connection = !self.session_store.has_session(&source).await;
+        let is_new_connection = self.session_store.get(&source).await.is_none();
 
         // Determine which PSK to use and find the matching pairing.
         let (psk_for_handshake, matched_pairing_name, is_psk_connection) = if !is_new_connection {
@@ -707,10 +707,18 @@ impl UserClientInner {
             Ok(Some(fut))
         } else if !is_new_connection {
             // Existing/cached session: already verified on first connection.
+            // Get existing session to preserve name and cached_at, update transport.
+            let existing = self.session_store.get(&source).await;
+            let now = crate::compat::now_seconds();
             self.transports.insert(source, transport.clone());
-            self.session_store.cache_session(source).await?;
             self.session_store
-                .save_transport_state(&source, transport)
+                .save(SessionInfo {
+                    fingerprint: source,
+                    name: existing.as_ref().and_then(|s| s.name.clone()),
+                    cached_at: existing.as_ref().map_or(now, |s| s.cached_at),
+                    last_connected_at: now,
+                    transport_state: Some(transport),
+                })
                 .await?;
 
             self.audit_log
@@ -758,15 +766,16 @@ impl UserClientInner {
         session_name: Option<&str>,
         connection_type: AuditConnectionType,
     ) -> Result<(), ClientError> {
+        let now = crate::compat::now_seconds();
         self.transports.insert(fingerprint, transport.clone());
-        self.session_store.cache_session(fingerprint).await?;
-        if let Some(name) = session_name {
-            self.session_store
-                .set_session_name(&fingerprint, name.to_owned())
-                .await?;
-        }
         self.session_store
-            .save_transport_state(&fingerprint, transport)
+            .save(SessionInfo {
+                fingerprint,
+                name: session_name.map(|s| s.to_owned()),
+                cached_at: now,
+                last_connected_at: now,
+                transport_state: Some(transport),
+            })
             .await?;
 
         self.audit_log
@@ -790,16 +799,15 @@ impl UserClientInner {
     ) -> Result<Option<PendingReplyFuture>, ClientError> {
         if !self.transports.contains_key(&source) {
             debug!("Loading transport state for source: {:?}", source);
-            let session = self
-                .session_store
-                .load_transport_state(&source)
-                .await?
-                .ok_or_else(|| {
-                    ClientError::SessionCache(format!(
-                        "Missing transport state for cached session {source:?}"
-                    ))
-                })?;
-            self.transports.insert(source, session);
+            let session = self.session_store.get(&source).await.ok_or_else(|| {
+                ClientError::SessionCache(format!("Missing cached session {source:?}"))
+            })?;
+            let transport = session.transport_state.ok_or_else(|| {
+                ClientError::SessionCache(format!(
+                    "Missing transport state for cached session {source:?}"
+                ))
+            })?;
+            self.transports.insert(source, transport);
         }
 
         // Get transport for this source

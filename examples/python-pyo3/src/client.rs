@@ -137,9 +137,9 @@ impl PyRemoteClient {
                             .await
                             .map_err(|e| e.to_string())?;
                         if sessions.len() == 1 {
-                            let (fingerprint, _, _, _) = &sessions[0];
+                            let fingerprint = sessions[0].fingerprint;
                             client
-                                .load_cached_session(*fingerprint)
+                                .load_cached_session(fingerprint)
                                 .await
                                 .map_err(|e| e.to_string())?;
                             Ok(None)
@@ -225,9 +225,9 @@ impl PyRemoteClient {
             .map_err(|e| RemoteAccessError::new_err(e.to_string()))?;
         Ok(self
             .runtime
-            .block_on(store.list_sessions())
+            .block_on(store.list())
             .into_iter()
-            .map(|(fp, name, cached, last)| (hex::encode(fp.0), name, cached, last))
+            .map(|s| (hex::encode(s.fingerprint.0), s.name, s.cached_at, s.last_connected_at))
             .collect())
     }
 }
