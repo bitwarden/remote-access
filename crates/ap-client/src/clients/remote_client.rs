@@ -12,7 +12,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 
 use super::notify;
-use crate::traits::{IdentityProvider, SessionStore};
+use crate::traits::{IdentityProvider, SessionInfo, SessionStore, SessionUpdate};
 use crate::{
     error::ClientError,
     types::{
@@ -130,9 +130,6 @@ pub enum RemoteClientRequest {
 // Command channel for RemoteClient handle → event loop communication
 // =============================================================================
 
-/// Type alias matching `SessionStore::list_sessions()` return type.
-type SessionList = Vec<(IdentityFingerprint, Option<String>, u64, u64)>;
-
 /// Commands sent from a `RemoteClient` handle to the running event loop.
 enum RemoteClientCommand {
     PairWithHandshake {
@@ -154,7 +151,7 @@ enum RemoteClientCommand {
         reply: oneshot::Sender<Result<CredentialData, ClientError>>,
     },
     ListSessions {
-        reply: oneshot::Sender<SessionList>,
+        reply: oneshot::Sender<Vec<SessionInfo>>,
     },
     HasSession {
         fingerprint: IdentityFingerprint,
@@ -331,9 +328,7 @@ impl RemoteClient {
     }
 
     /// List all cached sessions.
-    pub async fn list_sessions(
-        &self,
-    ) -> Result<Vec<(IdentityFingerprint, Option<String>, u64, u64)>, ClientError> {
+    pub async fn list_sessions(&self) -> Result<Vec<SessionInfo>, ClientError> {
         let (tx, rx) = oneshot::channel();
         self.command_tx
             .send(RemoteClientCommand::ListSessions { reply: tx })
@@ -467,11 +462,11 @@ impl RemoteClientInner {
                 let _ = reply.send(result);
             }
             RemoteClientCommand::ListSessions { reply } => {
-                let sessions = self.session_store.list_sessions().await;
+                let sessions = self.session_store.list().await;
                 let _ = reply.send(sessions);
             }
             RemoteClientCommand::HasSession { fingerprint, reply } => {
-                let has = self.session_store.has_session(&fingerprint).await;
+                let has = self.session_store.get(&fingerprint).await.is_some();
                 let _ = reply.send(has);
             }
         }
@@ -627,9 +622,15 @@ impl RemoteClientInner {
         remote_fingerprint: IdentityFingerprint,
         notification_tx: &mpsc::Sender<RemoteClientNotification>,
     ) -> Result<(), ClientError> {
-        if !self.session_store.has_session(&remote_fingerprint).await {
-            return Err(ClientError::SessionNotFound);
-        }
+        let session = self
+            .session_store
+            .get(&remote_fingerprint)
+            .await
+            .ok_or(ClientError::SessionNotFound)?;
+
+        let transport = session
+            .transport_state
+            .ok_or(ClientError::SessionNotFound)?;
 
         notify!(
             notification_tx,
@@ -637,12 +638,6 @@ impl RemoteClientInner {
                 fingerprint: remote_fingerprint,
             }
         );
-
-        let transport = self
-            .session_store
-            .load_transport_state(&remote_fingerprint)
-            .await?
-            .ok_or(ClientError::SessionNotFound)?;
 
         notify!(notification_tx, RemoteClientNotification::HandshakeComplete);
 
@@ -654,12 +649,10 @@ impl RemoteClientInner {
 
         // Update last_connected_at
         self.session_store
-            .update_last_connected(&remote_fingerprint)
-            .await?;
-
-        // Save transport state and store locally
-        self.session_store
-            .save_transport_state(&remote_fingerprint, transport.clone())
+            .update(SessionUpdate {
+                fingerprint: remote_fingerprint,
+                last_connected_at: crate::compat::now_seconds(),
+            })
             .await?;
 
         self.transport = Some(transport);
@@ -684,12 +677,15 @@ impl RemoteClientInner {
         remote_fingerprint: IdentityFingerprint,
         notification_tx: &mpsc::Sender<RemoteClientNotification>,
     ) -> Result<(), ClientError> {
-        // Cache session
-        self.session_store.cache_session(remote_fingerprint).await?;
-
-        // Save transport state for session resumption
+        let now = crate::compat::now_seconds();
         self.session_store
-            .save_transport_state(&remote_fingerprint, transport.clone())
+            .save(SessionInfo {
+                fingerprint: remote_fingerprint,
+                name: None,
+                cached_at: now,
+                last_connected_at: now,
+                transport_state: Some(transport.clone()),
+            })
             .await?;
 
         // Store transport and remote fingerprint

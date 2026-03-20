@@ -4,63 +4,40 @@ use async_trait::async_trait;
 
 use crate::error::ClientError;
 
-/// Trait for session cache storage implementations
+/// A cached session record containing all session data.
+#[derive(Debug, Clone)]
+pub struct SessionInfo {
+    pub fingerprint: IdentityFingerprint,
+    pub name: Option<String>,
+    pub cached_at: u64,
+    pub last_connected_at: u64,
+    pub transport_state: Option<MultiDeviceTransport>,
+}
+
+/// Lightweight update for an existing session (no full read needed).
+#[derive(Debug, Clone, Copy)]
+pub struct SessionUpdate {
+    pub fingerprint: IdentityFingerprint,
+    pub last_connected_at: u64,
+}
+
+/// Trait for session cache storage implementations.
 ///
-/// Provides an abstraction for storing and retrieving approved remote fingerprints.
+/// Provides an abstraction for storing and retrieving approved remote sessions.
 /// Implementations must be thread-safe for use in async contexts.
 #[async_trait]
 pub trait SessionStore: Send + Sync {
-    /// Check if a fingerprint exists in the cache
-    async fn has_session(&self, fingerprint: &IdentityFingerprint) -> bool;
+    /// Get a session by fingerprint, returning `None` if not found.
+    async fn get(&self, fingerprint: &IdentityFingerprint) -> Option<SessionInfo>;
 
-    /// Cache a new session fingerprint
-    ///
-    /// If the fingerprint already exists, updates the cached_at timestamp.
-    async fn cache_session(&mut self, fingerprint: IdentityFingerprint) -> Result<(), ClientError>;
+    /// Save a session (insert or replace).
+    async fn save(&mut self, session: SessionInfo) -> Result<(), ClientError>;
 
-    /// Remove a fingerprint from the cache
-    async fn remove_session(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-    ) -> Result<(), ClientError>;
+    /// Update only the `last_connected_at` timestamp for an existing session.
+    async fn update(&mut self, update: SessionUpdate) -> Result<(), ClientError>;
 
-    /// Clear all cached sessions
-    async fn clear(&mut self) -> Result<(), ClientError>;
-
-    /// List all cached sessions
-    ///
-    /// Returns tuples of (fingerprint, optional_name, created_timestamp, last_connected_timestamp)
-    async fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64, u64)>;
-
-    /// Set a friendly name for a cached session
-    async fn set_session_name(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-        name: String,
-    ) -> Result<(), ClientError>;
-
-    /// Update the last_connected_at timestamp for a session
-    async fn update_last_connected(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-    ) -> Result<(), ClientError>;
-
-    /// Save transport state for a session
-    ///
-    /// This allows session resumption without requiring a new Noise handshake.
-    async fn save_transport_state(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-        transport_state: MultiDeviceTransport,
-    ) -> Result<(), ClientError>;
-
-    /// Load transport state for a session
-    ///
-    /// Returns None if no transport state is stored for this session.
-    async fn load_transport_state(
-        &self,
-        fingerprint: &IdentityFingerprint,
-    ) -> Result<Option<MultiDeviceTransport>, ClientError>;
+    /// List all cached sessions.
+    async fn list(&self) -> Vec<SessionInfo>;
 }
 
 /// Provides a cryptographic identity for the current client.

@@ -6,7 +6,7 @@
 use ap_client::{
     ClientError, ConnectionMode, DefaultProxyClient, IdentityFingerprint, IdentityProvider, Psk,
     PskToken, RemoteClient, RemoteClientFingerprintReply, RemoteClientNotification,
-    RemoteClientRequest, SessionStore,
+    RemoteClientRequest, SessionInfo, SessionStore,
 };
 use clap::Args;
 use color_eyre::eyre::{Result, bail};
@@ -123,9 +123,7 @@ enum TokenType {
 /// Current phase of the connect command's interactive loop.
 enum Phase {
     /// Choosing between new connection or cached session.
-    SessionSelect {
-        sorted_sessions: Vec<(IdentityFingerprint, Option<String>, u64, u64)>,
-    },
+    SessionSelect { sorted_sessions: Vec<SessionInfo> },
     /// Entering a token (rendezvous code or PSK).
     TokenInput,
     /// Handshake/pairing in progress (read-only, no input).
@@ -152,16 +150,14 @@ fn parse_token(token: &str) -> Result<TokenType> {
 
 /// Build pick-list labels for session selection.
 #[allow(clippy::string_slice)]
-fn session_pick_options(
-    sorted_sessions: &[(IdentityFingerprint, Option<String>, u64, u64)],
-) -> Vec<String> {
+fn session_pick_options(sorted_sessions: &[SessionInfo]) -> Vec<String> {
     let mut options = vec!["New connection (enter token)".to_string()];
-    for (fingerprint, _, _, last_connected) in sorted_sessions {
-        let short_hex = hex::encode(fingerprint.0)
+    for session in sorted_sessions {
+        let short_hex = hex::encode(session.fingerprint.0)
             .chars()
             .take(12)
             .collect::<String>();
-        let relative_time = format_relative_time(*last_connected);
+        let relative_time = format_relative_time(session.last_connected_at);
         options.push(format!("Session {short_hex}  (last used: {relative_time})"));
     }
     options
@@ -251,7 +247,7 @@ async fn run_interactive_session(
         Box::new(FileSessionCache::load_or_create("remote_client")?);
 
     // Get cached sessions from session store
-    let cached_sessions = session_store.list_sessions().await;
+    let mut cached_sessions = session_store.list().await;
 
     // Determine if we can skip straight to connecting based on CLI flags
     let cli_connection_mode = if session_fingerprint.is_some() || token.is_some() {
@@ -315,8 +311,8 @@ async fn run_interactive_session(
         Phase::Connecting
     } else if !cached_sessions.is_empty() && !ephemeral_connection {
         // Cached sessions available — show pick list
-        let mut sorted = cached_sessions.clone();
-        sorted.sort_by(|a, b| b.3.cmp(&a.3));
+        cached_sessions.sort_by(|a, b| b.last_connected_at.cmp(&a.last_connected_at));
+        let sorted = cached_sessions;
         let options = session_pick_options(&sorted);
         app.set_mode(Mode::Pick {
             title: "Select connection".to_string(),
@@ -367,9 +363,9 @@ async fn run_interactive_session(
                                         app.commands = &["/exit"];
                                         phase = Phase::TokenInput;
                                     } else {
-                                        let (fingerprint, _, _, _) = &sorted_sessions[idx - 1];
+                                        let session = &sorted_sessions[idx - 1];
                                         let mode = ConnectionMode::Existing {
-                                            remote_fingerprint: *fingerprint,
+                                            remote_fingerprint: session.fingerprint,
                                         };
 
                                         // Start connecting
@@ -719,7 +715,7 @@ pub(super) async fn fetch_credential(
         Box::new(FileSessionCache::load_or_create("remote_client")?)
     };
 
-    let cached_sessions = session_store.list_sessions().await;
+    let cached_sessions = session_store.list().await;
     let mode = resolve_connection_mode(token, session_fingerprint, &cached_sessions)?;
 
     info!("Connecting to proxy...");
@@ -859,7 +855,7 @@ fn validate_rendezvous_code(code: &str) -> Result<()> {
 /// Returns the matching fingerprint, or an error if the prefix is ambiguous or not found.
 fn resolve_session_prefix(
     prefix: &str,
-    cached_sessions: &[(IdentityFingerprint, Option<String>, u64, u64)],
+    cached_sessions: &[SessionInfo],
 ) -> Result<IdentityFingerprint> {
     let clean_prefix = prefix.replace(['-', ' ', ':'], "").to_lowercase();
 
@@ -873,8 +869,8 @@ fn resolve_session_prefix(
 
     let mut iter = cached_sessions
         .iter()
-        .filter(|(fp, _, _, _)| hex::encode(fp.0).starts_with(&clean_prefix))
-        .map(|(fp, _, _, _)| *fp);
+        .filter(|s| hex::encode(s.fingerprint.0).starts_with(&clean_prefix))
+        .map(|s| s.fingerprint);
 
     match (iter.next(), iter.next()) {
         (None, _) => bail!("No cached session matches prefix: {prefix}"),
@@ -893,7 +889,7 @@ fn resolve_session_prefix(
 fn resolve_connection_mode(
     token: Option<&str>,
     session_fingerprint: Option<&str>,
-    cached_sessions: &[(IdentityFingerprint, Option<String>, u64, u64)],
+    cached_sessions: &[SessionInfo],
 ) -> Result<ConnectionMode> {
     if session_fingerprint.is_some() && token.is_some() {
         bail!("--session and --token are mutually exclusive")
@@ -913,9 +909,8 @@ fn resolve_connection_mode(
             }),
         }
     } else if cached_sessions.len() == 1 {
-        let (fingerprint, _, _, _) = &cached_sessions[0];
         Ok(ConnectionMode::Existing {
-            remote_fingerprint: *fingerprint,
+            remote_fingerprint: cached_sessions[0].fingerprint,
         })
     } else if cached_sessions.is_empty() {
         bail!("No cached sessions found — provide --token to start a new connection")
@@ -957,9 +952,15 @@ mod tests {
         IdentityFingerprint([byte; 32])
     }
 
-    /// Helper: build a minimal cached-session tuple.
-    fn session(byte: u8) -> (IdentityFingerprint, Option<String>, u64, u64) {
-        (fp(byte), None, 0, 0)
+    /// Helper: build a minimal cached-session SessionInfo.
+    fn session(byte: u8) -> SessionInfo {
+        SessionInfo {
+            fingerprint: fp(byte),
+            name: None,
+            cached_at: 0,
+            last_connected_at: 0,
+            transport_state: None,
+        }
     }
 
     // ── resolve_connection_mode ─────────────────────────────────────

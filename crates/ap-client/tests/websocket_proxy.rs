@@ -9,10 +9,9 @@ use std::sync::Arc;
 use ap_client::{
     CredentialData, CredentialRequestReply, DefaultProxyClient, FingerprintVerificationReply,
     MemoryIdentityProvider, MemorySessionStore, PskToken, RemoteClient, RemoteClientHandle,
-    RemoteClientNotification, SessionStore, UserClient, UserClientHandle, UserClientNotification,
-    UserClientRequest,
+    RemoteClientNotification, SessionInfo, SessionStore, SessionUpdate, UserClient,
+    UserClientHandle, UserClientNotification, UserClientRequest,
 };
-use ap_noise::MultiDeviceTransport;
 use ap_proxy::server::ProxyServer;
 use ap_proxy_protocol::{IdentityFingerprint, IdentityKeyPair};
 use tokio::time::{Duration, timeout};
@@ -31,68 +30,20 @@ struct SharedSessionStore(Arc<tokio::sync::Mutex<MemorySessionStore>>);
 
 #[async_trait::async_trait]
 impl SessionStore for SharedSessionStore {
-    async fn has_session(&self, fingerprint: &IdentityFingerprint) -> bool {
-        self.0.lock().await.has_session(fingerprint).await
+    async fn get(&self, fingerprint: &IdentityFingerprint) -> Option<SessionInfo> {
+        self.0.lock().await.get(fingerprint).await
     }
 
-    async fn cache_session(
-        &mut self,
-        fingerprint: IdentityFingerprint,
-    ) -> Result<(), ap_client::ClientError> {
-        self.0.lock().await.cache_session(fingerprint).await
+    async fn save(&mut self, session: SessionInfo) -> Result<(), ap_client::ClientError> {
+        self.0.lock().await.save(session).await
     }
 
-    async fn remove_session(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-    ) -> Result<(), ap_client::ClientError> {
-        self.0.lock().await.remove_session(fingerprint).await
+    async fn update(&mut self, update: SessionUpdate) -> Result<(), ap_client::ClientError> {
+        self.0.lock().await.update(update).await
     }
 
-    async fn clear(&mut self) -> Result<(), ap_client::ClientError> {
-        self.0.lock().await.clear().await
-    }
-
-    async fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64, u64)> {
-        self.0.lock().await.list_sessions().await
-    }
-
-    async fn set_session_name(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-        name: String,
-    ) -> Result<(), ap_client::ClientError> {
-        self.0
-            .lock()
-            .await
-            .set_session_name(fingerprint, name)
-            .await
-    }
-
-    async fn update_last_connected(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-    ) -> Result<(), ap_client::ClientError> {
-        self.0.lock().await.update_last_connected(fingerprint).await
-    }
-
-    async fn save_transport_state(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-        transport_state: MultiDeviceTransport,
-    ) -> Result<(), ap_client::ClientError> {
-        self.0
-            .lock()
-            .await
-            .save_transport_state(fingerprint, transport_state)
-            .await
-    }
-
-    async fn load_transport_state(
-        &self,
-        fingerprint: &IdentityFingerprint,
-    ) -> Result<Option<MultiDeviceTransport>, ap_client::ClientError> {
-        self.0.lock().await.load_transport_state(fingerprint).await
+    async fn list(&self) -> Vec<SessionInfo> {
+        self.0.lock().await.list().await
     }
 }
 
@@ -743,20 +694,22 @@ async fn test_e2e_transport_state_persistence() {
         "UserClient should emit HandshakeComplete"
     );
 
-    // 10. Load transport state from session store and verify it was saved
-    let transport_state = session_store_clone
+    // 10. Load session from session store and verify transport state was saved
+    let session = session_store_clone
         .lock()
         .await
-        .load_transport_state(&fingerprint)
+        .get(&fingerprint)
         .await
-        .expect("Should load transport state");
+        .expect("Session should exist in store");
 
-    // 11. Assert the state is Some (transport object, not bytes)
+    // 11. Assert the transport state is Some
     assert!(
-        transport_state.is_some(),
+        session.transport_state.is_some(),
         "Transport state should be saved after pairing"
     );
-    let mut restored_transport = transport_state.expect("Transport state should be present");
+    let mut restored_transport = session
+        .transport_state
+        .expect("Transport state should be present");
 
     // 12. Verify the restored transport can encrypt (proving it's a valid transport)
     let test_message = b"test message for persistence verification";

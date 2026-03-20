@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use ap_noise::{MultiDeviceTransport, PersistentTransportState};
 use ap_proxy_protocol::{IdentityFingerprint, IdentityKeyPair};
-use ap_client::{IdentityProvider, ClientError, SessionStore};
+use ap_client::{IdentityProvider, ClientError, SessionInfo, SessionStore, SessionUpdate};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -102,12 +102,57 @@ fn now_seconds() -> u64 {
         .unwrap_or(0)
 }
 
+fn record_to_info(record: &SessionRecord) -> Result<SessionInfo, ClientError> {
+    let transport_state = match &record.transport_state {
+        Some(bytes) => Some(
+            PersistentTransportState::from_bytes(bytes)
+                .map(MultiDeviceTransport::from)?,
+        ),
+        None => None,
+    };
+    Ok(SessionInfo {
+        fingerprint: record.remote_fingerprint,
+        name: record.name.clone(),
+        cached_at: record.cached_at,
+        last_connected_at: record.last_connected_at,
+        transport_state,
+    })
+}
+
+fn info_to_record(info: &SessionInfo) -> Result<SessionRecord, ClientError> {
+    let transport_bytes = match &info.transport_state {
+        Some(transport) => Some(
+            PersistentTransportState::from(transport)
+                .to_bytes()
+                .map_err(|e| {
+                    ClientError::NoiseProtocol(format!(
+                        "Failed to serialize transport state: {e}"
+                    ))
+                })?,
+        ),
+        None => None,
+    };
+    Ok(SessionRecord {
+        remote_fingerprint: info.fingerprint,
+        cached_at: info.cached_at,
+        last_connected_at: info.last_connected_at,
+        transport_state: transport_bytes,
+        name: info.name.clone(),
+    })
+}
+
 pub struct FileSessionCache {
     cache_path: PathBuf,
     data: SessionCacheData,
 }
 
 impl FileSessionCache {
+    pub async fn clear(&mut self) -> Result<(), ClientError> {
+        self.data.sessions.clear();
+        self.persist()?;
+        Ok(())
+    }
+
     pub fn load_or_create(cache_name: &str) -> Result<Self, ClientError> {
         let cache_path = Self::default_cache_path(cache_name)?;
 
@@ -122,7 +167,7 @@ impl FileSessionCache {
         Ok(Self { cache_path, data })
     }
 
-    fn save(&self) -> Result<(), ClientError> {
+    fn persist(&self) -> Result<(), ClientError> {
         let json = serde_json::to_string_pretty(&self.data)
             .map_err(|e| ClientError::SessionCache(format!("Serialization failed: {e}")))?;
         fs::write(&self.cache_path, json).map_err(|e| {
@@ -161,161 +206,50 @@ impl FileSessionCache {
 
 #[async_trait]
 impl SessionStore for FileSessionCache {
-    async fn has_session(&self, fingerprint: &IdentityFingerprint) -> bool {
+    async fn get(&self, fingerprint: &IdentityFingerprint) -> Option<SessionInfo> {
         self.data
             .sessions
             .iter()
-            .any(|s| s.remote_fingerprint == *fingerprint)
+            .find(|s| s.remote_fingerprint == *fingerprint)
+            .and_then(|record| record_to_info(record).ok())
     }
 
-    async fn cache_session(&mut self, fingerprint: IdentityFingerprint) -> Result<(), ClientError> {
+    async fn save(&mut self, session: SessionInfo) -> Result<(), ClientError> {
+        let record = info_to_record(&session)?;
         if let Some(existing) = self
             .data
             .sessions
             .iter_mut()
-            .find(|s| s.remote_fingerprint == fingerprint)
+            .find(|s| s.remote_fingerprint == session.fingerprint)
         {
-            existing.cached_at = now_seconds();
+            *existing = record;
         } else {
-            let now = now_seconds();
-            self.data.sessions.push(SessionRecord {
-                remote_fingerprint: fingerprint,
-                cached_at: now,
-                last_connected_at: now,
-                transport_state: None,
-                name: None,
-            });
+            self.data.sessions.push(record);
         }
-        self.save()?;
+        self.persist()?;
         Ok(())
     }
 
-    async fn remove_session(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-    ) -> Result<(), ClientError> {
-        self.data
+    async fn update(&mut self, update: SessionUpdate) -> Result<(), ClientError> {
+        if let Some(session) = self
+            .data
             .sessions
-            .retain(|s| s.remote_fingerprint != *fingerprint);
-        self.save()?;
-        Ok(())
+            .iter_mut()
+            .find(|s| s.remote_fingerprint == update.fingerprint)
+        {
+            session.last_connected_at = update.last_connected_at;
+            self.persist()?;
+            Ok(())
+        } else {
+            Err(ClientError::SessionCache("Session not found".to_string()))
+        }
     }
 
-    async fn clear(&mut self) -> Result<(), ClientError> {
-        self.data.sessions.clear();
-        self.save()?;
-        Ok(())
-    }
-
-    async fn list_sessions(&self) -> Vec<(IdentityFingerprint, Option<String>, u64, u64)> {
+    async fn list(&self) -> Vec<SessionInfo> {
         self.data
             .sessions
             .iter()
-            .map(|s| {
-                (
-                    s.remote_fingerprint,
-                    s.name.clone(),
-                    s.cached_at,
-                    s.last_connected_at,
-                )
-            })
+            .filter_map(|record| record_to_info(record).ok())
             .collect()
-    }
-
-    async fn set_session_name(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-        name: String,
-    ) -> Result<(), ClientError> {
-        if let Some(session) = self
-            .data
-            .sessions
-            .iter_mut()
-            .find(|s| s.remote_fingerprint == *fingerprint)
-        {
-            session.name = Some(name);
-            self.save()?;
-            Ok(())
-        } else {
-            Err(ClientError::SessionCache(
-                "Session not found".to_string(),
-            ))
-        }
-    }
-
-    async fn update_last_connected(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-    ) -> Result<(), ClientError> {
-        if let Some(session) = self
-            .data
-            .sessions
-            .iter_mut()
-            .find(|s| s.remote_fingerprint == *fingerprint)
-        {
-            session.last_connected_at = now_seconds();
-            self.save()?;
-            Ok(())
-        } else {
-            Err(ClientError::SessionCache(
-                "Session not found".to_string(),
-            ))
-        }
-    }
-
-    async fn save_transport_state(
-        &mut self,
-        fingerprint: &IdentityFingerprint,
-        transport_state: MultiDeviceTransport,
-    ) -> Result<(), ClientError> {
-        if let Some(session) = self
-            .data
-            .sessions
-            .iter_mut()
-            .find(|s| s.remote_fingerprint == *fingerprint)
-        {
-            session.transport_state = Some(
-                PersistentTransportState::from(&transport_state)
-                    .to_bytes()
-                    .map_err(|e| {
-                        ClientError::NoiseProtocol(format!(
-                            "Failed to serialize transport state: {e}"
-                        ))
-                    })?,
-            );
-            self.save()?;
-            Ok(())
-        } else {
-            Err(ClientError::SessionCache(
-                "Session not found".to_string(),
-            ))
-        }
-    }
-
-    async fn load_transport_state(
-        &self,
-        fingerprint: &IdentityFingerprint,
-    ) -> Result<Option<MultiDeviceTransport>, ClientError> {
-        if let Some(session) = self
-            .data
-            .sessions
-            .iter()
-            .find(|s| s.remote_fingerprint == *fingerprint)
-        {
-            Ok(Some(
-                PersistentTransportState::from_bytes(session.transport_state.as_ref().ok_or_else(
-                    || {
-                        ClientError::SessionCache(
-                            "No transport state stored for this session".to_string(),
-                        )
-                    },
-                )?)
-                .map(MultiDeviceTransport::from)?,
-            ))
-        } else {
-            Err(ClientError::SessionCache(
-                "Session not found".to_string(),
-            ))
-        }
     }
 }
