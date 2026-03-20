@@ -15,7 +15,7 @@ Fetch credentials from a Bitwarden vault in CI using a reusable pre-shared key (
 On a trusted machine with the `bw` CLI unlocked:
 
 ```bash
-aac listen --reusable-psk --proxy-url wss://your-proxy.example.com
+aac listen --reusable-psk
 ```
 
 Copy the printed PSK token.
@@ -25,7 +25,6 @@ Copy the printed PSK token.
 | Secret | Value |
 |--------|-------|
 | `AAC_PSK_TOKEN` | The 129-char PSK token from step 1 |
-| `AAC_PROXY_URL` | Your proxy URL (e.g., `wss://your-proxy.example.com`) |
 
 ### 3. Add the workflow
 
@@ -40,7 +39,6 @@ Copy `reusable-psk-credential.yml` into your repo's `.github/workflows/` directo
   run: |
     aac run \
       --token "$AAC_PSK_TOKEN" \
-      --proxy-url "${{ secrets.AAC_PROXY_URL }}" \
       --domain "db.example.com" \
       --ephemeral-connection \
       --env PGUSER=username \
@@ -55,7 +53,6 @@ Copy `reusable-psk-credential.yml` into your repo's `.github/workflows/` directo
   run: |
     aac connect \
       --token "$AAC_PSK_TOKEN" \
-      --proxy-url "${{ secrets.AAC_PROXY_URL }}" \
       --id "12345678-1234-1234-1234-123456789abc" \
       --ephemeral-connection \
       --output json
