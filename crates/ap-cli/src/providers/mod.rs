@@ -4,10 +4,12 @@
 //! backends, and ships the built-in [`BitwardenProvider`].
 
 mod bitwarden;
+mod example;
 
 use ap_client::CredentialData;
 pub use ap_client::CredentialQuery;
 pub use bitwarden::BitwardenProvider;
+pub use example::ExampleProvider;
 use color_eyre::eyre::{Result, bail};
 
 /// Current readiness of a credential provider.
@@ -65,7 +67,8 @@ pub trait CredentialProvider: Send + Sync {
 pub fn create_provider(name: &str) -> Result<Box<dyn CredentialProvider>> {
     match name {
         "bitwarden" => Ok(Box::new(BitwardenProvider::new())),
-        _ => bail!("Unknown credential provider: '{name}'. Available: bitwarden"),
+        "example" => Ok(Box::new(ExampleProvider::new())),
+        _ => bail!("Unknown credential provider: '{name}'. Available: bitwarden, example"),
     }
 }
 
