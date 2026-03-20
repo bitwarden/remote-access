@@ -594,7 +594,9 @@ async fn run_event_loop(
                                         );
                                         app.push_msg(MessageKind::Info, found_msg);
                                         app.commands = &[];
-                                        let device_label = sessions
+                                        // Reload from disk to pick up connections added after the event loop started.
+                                        let fresh_connections = reload_connections().await;
+                                        let device_label = fresh_connections
                                             .iter()
                                             .find(|s| s.fingerprint == identity)
                                             .map(|s| {
