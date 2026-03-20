@@ -1422,6 +1422,122 @@ async fn test_reusable_psk_pairing() {
 }
 
 // ============================================================================
+// Test: Reusable PSK works when remote fingerprint is already cached
+// ============================================================================
+
+/// Verifies that a reusable PSK handshake succeeds even when the remote device's
+/// fingerprint is already in the connection store from a prior connection.
+///
+/// This is the primary CI/CD scenario: the listener persists connections across
+/// restarts, but the remote reconnects with the same PSK token each time.
+/// Without the fix, the user client would skip PSK lookup for cached fingerprints
+/// and do a null-PSK handshake, causing a mismatch.
+#[tokio::test]
+async fn test_reusable_psk_with_cached_connection() {
+    let user_identity = MemoryIdentityProvider::new();
+    let remote_identity = MemoryIdentityProvider::new();
+
+    let user_fingerprint = user_identity.fingerprint().await;
+    let remote_fingerprint = remote_identity.fingerprint().await;
+
+    let (user_proxy, remote_proxy) = create_mock_proxy_pair(user_fingerprint, remote_fingerprint);
+
+    // Pre-populate the connection store with the remote's fingerprint
+    // (simulates a previous successful connection)
+    let mut user_connection_store = MemoryConnectionStore::new();
+    ap_client::ConnectionStore::save(
+        &mut user_connection_store,
+        ap_client::ConnectionInfo {
+            fingerprint: remote_fingerprint,
+            name: Some("previously-paired".to_string()),
+            cached_at: 1000,
+            last_connected_at: 1000,
+            transport_state: None,
+        },
+    )
+    .await
+    .expect("Should save connection");
+
+    let psk_store = ap_client::MemoryPskStore::new();
+
+    let UserClientHandle {
+        client: user_client,
+        notifications: mut notification_rx,
+        requests: _,
+    } = UserClient::connect(
+        Box::new(user_identity),
+        Box::new(user_connection_store),
+        Box::new(user_proxy),
+        None,
+        Some(Box::new(psk_store)),
+    )
+    .await
+    .expect("UserClient should connect");
+
+    // Generate a reusable PSK token
+    let token = user_client
+        .get_psk_token(None, true)
+        .await
+        .expect("Should generate reusable PSK token");
+
+    let parsed = PskToken::parse(&token).expect("Should parse PSK token");
+    let psk = parsed.psk().clone();
+    let user_fp = *parsed.fingerprint();
+
+    // Connect remote (whose fingerprint is ALREADY cached in the user's connection store)
+    let RemoteClientHandle {
+        client: remote_client,
+        notifications: mut remote_notification_rx,
+        requests: _,
+    } = RemoteClient::connect(
+        Box::new(remote_identity),
+        Box::new(MemoryConnectionStore::new()),
+        Box::new(remote_proxy),
+    )
+    .await
+    .expect("RemoteClient should connect");
+
+    timeout(
+        Duration::from_secs(10),
+        remote_client.pair_with_psk(psk, user_fp),
+    )
+    .await
+    .expect("Pairing should not timeout")
+    .expect("Pairing should succeed even with cached connection");
+
+    // Verify handshake completed on both sides
+    let mut remote_ok = false;
+    while let Ok(Some(event)) =
+        timeout(Duration::from_millis(100), remote_notification_rx.recv()).await
+    {
+        if matches!(event, RemoteClientNotification::HandshakeComplete) {
+            remote_ok = true;
+        }
+    }
+    assert!(remote_ok, "RemoteClient should emit HandshakeComplete");
+
+    // User side should emit SessionRefreshed (not HandshakeComplete for new PSK)
+    // because the connection was already cached
+    let mut user_ok = false;
+    while let Ok(Some(event)) = timeout(Duration::from_millis(100), notification_rx.recv()).await {
+        if matches!(
+            event,
+            UserClientNotification::HandshakeComplete {}
+                | UserClientNotification::SessionRefreshed { .. }
+        ) {
+            user_ok = true;
+        }
+    }
+    assert!(
+        user_ok,
+        "UserClient should emit HandshakeComplete or SessionRefreshed"
+    );
+
+    drop(remote_client);
+    drop(user_client);
+}
+
+// ============================================================================
 // Test: Reusable PSK requires a PskStore
 // ============================================================================
 

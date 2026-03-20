@@ -673,8 +673,23 @@ impl UserClientInner {
 
         // Determine which PSK to use and find the matching pairing.
         let (psk_for_handshake, matched_pairing_name, is_psk_connection) = if !is_new_connection {
-            // Existing/cached session — no pairing lookup needed
-            (None, None, false)
+            // Existing/cached session — if the remote sent a psk_id that matches a
+            // pending pairing, use it for the handshake. This is required for reusable
+            // PSKs where the remote reconnects with the same token.
+            if let Some(id) = &psk_id {
+                if let Some(pairing) = self.pending_pairings.psk_pairings.get(id) {
+                    let psk = pairing.psk.clone();
+                    let name = pairing.connection_name.clone();
+                    if !pairing.reusable {
+                        self.pending_pairings.psk_pairings.remove(id);
+                    }
+                    (Some(psk), name, true)
+                } else {
+                    (None, None, false)
+                }
+            } else {
+                (None, None, false)
+            }
         } else {
             // New connection — look up and consume a pending pairing
             self.pending_pairings.prune_stale();
