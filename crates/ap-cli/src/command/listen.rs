@@ -58,16 +58,15 @@ impl ApprovalCache {
     }
 
     /// Check whether a matching approval exists and has not expired.
+    /// Also removes any expired entries to prevent unbounded growth.
     fn is_approved(
-        &self,
+        &mut self,
         identity: &IdentityFingerprint,
         query: &ap_client::CredentialQuery,
     ) -> bool {
-        if let Some((approved_at, duration)) = self.approvals.get(&(*identity, query.to_string())) {
-            approved_at.elapsed() < *duration
-        } else {
-            false
-        }
+        self.approvals
+            .retain(|_, (approved_at, duration)| approved_at.elapsed() < *duration);
+        self.approvals.contains_key(&(*identity, query.to_string()))
     }
 
     /// Record an approval for the given identity and query.
@@ -428,33 +427,26 @@ async fn run_event_loop(
                                     if let Phase::CredentialApproval { query, credential, identity, reply } = old_phase {
                                         let label = credential.domain.clone().unwrap_or_else(|| query.to_string());
                                         let cred_id = credential.credential_id.clone();
-                                        match approval {
-                                            CredentialApproval::Approve => {
-                                                let _ = reply.send(CredentialRequestReply {
-                                                    approved: true,
-                                                    credential: Some(credential),
-                                                    credential_id: cred_id,
-                                                });
-                                                app.push_msg(MessageKind::Success, format!("Credential sent for {label}"));
-                                            }
-                                            CredentialApproval::AutoApprove { minutes } => {
+                                        if matches!(approval, CredentialApproval::Deny) {
+                                            let _ = reply.send(CredentialRequestReply {
+                                                approved: false,
+                                                credential: None,
+                                                credential_id: cred_id,
+                                            });
+                                            app.push_msg(MessageKind::Error, format!("Credential denied for {label}"));
+                                        } else {
+                                            if let CredentialApproval::AutoApprove { minutes } = approval {
                                                 let mins = *minutes;
                                                 approval_cache.approve(identity, &query, mins);
-                                                let _ = reply.send(CredentialRequestReply {
-                                                    approved: true,
-                                                    credential: Some(credential),
-                                                    credential_id: cred_id,
-                                                });
                                                 app.push_msg(MessageKind::Success, format!("Credential sent for {label} (auto-approving for {mins}m)"));
+                                            } else {
+                                                app.push_msg(MessageKind::Success, format!("Credential sent for {label}"));
                                             }
-                                            CredentialApproval::Deny => {
-                                                let _ = reply.send(CredentialRequestReply {
-                                                    approved: false,
-                                                    credential: None,
-                                                    credential_id: cred_id,
-                                                });
-                                                app.push_msg(MessageKind::Error, format!("Credential denied for {label}"));
-                                            }
+                                            let _ = reply.send(CredentialRequestReply {
+                                                approved: true,
+                                                credential: Some(credential),
+                                                credential_id: cred_id,
+                                            });
                                         }
                                     }
                                     app.enter_idle(idle_footer(), IDLE_COMMANDS);
