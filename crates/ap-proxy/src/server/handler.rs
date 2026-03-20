@@ -60,15 +60,17 @@ impl ConnectionHandler {
         tracing::debug!("Connection #{}: Sent auth challenge", conn_id);
 
         // Wait for auth response
-        let auth_response = match ws_read.next().await {
-            Some(Ok(Message::Text(text))) => text,
-            Some(Ok(_)) => {
+        let auth_response = match tokio::time::timeout(Duration::from_secs(5), ws_read.next()).await
+        {
+            Ok(Some(Ok(Message::Text(text)))) => text,
+            Ok(Some(Ok(_))) => {
                 return Err(ProxyError::InvalidMessage(
                     "Expected text message for auth".to_string(),
                 ));
             }
-            Some(Err(e)) => return Err(ws_err(e)),
-            None => return Err(ProxyError::ConnectionClosed),
+            Ok(Some(Err(e))) => return Err(ws_err(e)),
+            Ok(None) => return Err(ProxyError::ConnectionClosed),
+            Err(_) => return Err(ProxyError::AuthenticationTimeout),
         };
 
         let (identity, fingerprint) = match serde_json::from_str::<Messages>(&auth_response)? {
