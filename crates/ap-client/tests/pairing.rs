@@ -1251,3 +1251,158 @@ async fn test_request_channel_backpressure() {
     drop(remote_client);
     drop(user_client);
 }
+
+// ============================================================================
+// Test: Credential request buffered during fingerprint verification
+// ============================================================================
+
+/// Verifies that a credential request sent by the RemoteClient *before* the
+/// UserClient has approved the fingerprint is buffered and replayed after
+/// approval, rather than being silently dropped.
+///
+/// Timeline:
+/// 1. Noise handshake completes on both sides
+/// 2. RemoteClient immediately sends a CredentialRequest (before fingerprint approval)
+/// 3. UserClient delays fingerprint approval by 100ms, ensuring the credential
+///    request arrives while the transport is still in the pending-verification state
+/// 4. After approval, the buffered credential request is replayed and handled normally
+#[tokio::test]
+async fn test_credential_request_buffered_during_fingerprint_verification() {
+    // Create identities
+    let user_identity = MockIdentityProvider::new();
+    let remote_identity = MockIdentityProvider::new();
+
+    let user_fingerprint = user_identity.fingerprint().await;
+    let remote_fingerprint = remote_identity.fingerprint().await;
+
+    // Create mock proxy pair
+    let (mut user_proxy, mut remote_proxy) =
+        create_mock_proxy_pair(user_fingerprint, remote_fingerprint);
+
+    // Set up rendezvous code
+    let rendezvous_code = RendezvousCode::from_string("BUF123456".to_string());
+    user_proxy.set_rendezvous_code(rendezvous_code.clone());
+    remote_proxy.set_peer_fingerprint(user_fingerprint);
+
+    // Create session stores
+    let user_session_store = MockSessionStore::new();
+    let remote_session_store = MockSessionStore::new();
+
+    // Create and connect UserClient
+    let UserClientHandle {
+        client: user_client,
+        notifications: _notification_rx,
+        requests: mut request_rx,
+    } = UserClient::connect(
+        Box::new(user_identity),
+        Box::new(user_session_store),
+        Box::new(user_proxy),
+        None,
+    )
+    .await
+    .expect("UserClient should connect");
+
+    // Get rendezvous token
+    let code = user_client
+        .get_rendezvous_token(None)
+        .await
+        .expect("Should get rendezvous token");
+    let code = code.as_str().to_string();
+
+    // Create and connect RemoteClient
+    let RemoteClientHandle {
+        client: remote_client,
+        notifications: _remote_notification_rx,
+        requests: _remote_request_rx,
+    } = RemoteClient::connect(
+        Box::new(remote_identity),
+        Box::new(remote_session_store),
+        Box::new(remote_proxy),
+    )
+    .await
+    .expect("RemoteClient should connect");
+
+    // Spawn task: pair then immediately request a credential (before fingerprint approval)
+    let remote_task = {
+        let remote_client = remote_client.clone();
+        tokio::spawn(async move {
+            // Complete the Noise handshake (returns once handshake finishes, NOT after fingerprint)
+            remote_client
+                .pair_with_handshake(code, false)
+                .await
+                .expect("Pairing should succeed");
+
+            // Immediately request a credential — the UserClient hasn't approved yet
+            let credential = remote_client
+                .request_credential(&ap_client::CredentialQuery::Domain(
+                    "buffered.example.com".to_string(),
+                ))
+                .await
+                .expect("Credential request should succeed after fingerprint approval");
+
+            credential
+        })
+    };
+
+    // Handle UserClient requests sequentially:
+    // 1. VerifyFingerprint — delay, then approve (so the credential request arrives while pending)
+    // 2. CredentialRequest — the replayed buffered message
+    let handler = tokio::spawn(async move {
+        // First: fingerprint verification with a delay
+        let request = timeout(Duration::from_secs(10), request_rx.recv())
+            .await
+            .expect("Should receive fingerprint request")
+            .expect("Channel should not be closed");
+
+        if let UserClientRequest::VerifyFingerprint { reply, .. } = request {
+            // Delay to ensure the RemoteClient's credential request arrives and is buffered
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let _ = reply.send(FingerprintVerificationReply {
+                approved: true,
+                name: None,
+            });
+        } else {
+            panic!("Expected VerifyFingerprint request, got: {request:?}");
+        }
+
+        // Second: credential request (replayed from buffer)
+        let request = timeout(Duration::from_secs(10), request_rx.recv())
+            .await
+            .expect("Should receive credential request (buffered and replayed)")
+            .expect("Channel should not be closed");
+
+        if let UserClientRequest::CredentialRequest { reply, .. } = request {
+            let _ = reply.send(CredentialRequestReply {
+                approved: true,
+                credential: Some(ap_client::CredentialData {
+                    username: Some("buffered_user".into()),
+                    password: Some("buffered_pass".into()),
+                    totp: None,
+                    uri: None,
+                    notes: None,
+                    credential_id: None,
+                    domain: Some("buffered.example.com".into()),
+                }),
+                credential_id: None,
+            });
+        } else {
+            panic!("Expected CredentialRequest, got: {request:?}");
+        }
+    });
+
+    // Wait for the remote task to complete and verify the credential
+    let credential = timeout(Duration::from_secs(15), remote_task)
+        .await
+        .expect("Remote task should not timeout")
+        .expect("Remote task should not panic");
+
+    assert_eq!(credential.username, Some("buffered_user".into()));
+    assert_eq!(credential.password, Some("buffered_pass".into()));
+    assert_eq!(credential.domain, Some("buffered.example.com".into()));
+
+    handler.await.expect("Handler task should complete");
+
+    // Cleanup
+    drop(remote_client);
+    drop(user_client);
+}
