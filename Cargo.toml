@@ -14,6 +14,7 @@ exclude = [
     "examples/python-pyo3",
     "examples/rust-remote",
     "examples/rust-listener",
+    "examples/js-wasm",
 ]
 
 [workspace.package]

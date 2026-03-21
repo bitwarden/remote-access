@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bitwarden Remote Access — WASM Demo</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>[x-cloak] { display: none !important; }</style>
+    <script type="module" src="app.js"></script>
+</head>
+<body class="bg-gray-50 text-gray-900 min-h-screen">
+  <div class="max-w-xl mx-auto px-4 py-8" x-data="app()" x-init="init()">
+    <h1 class="text-xl font-semibold mb-6">Bitwarden Remote Access <span class="text-gray-400 font-normal">WASM</span></h1>
+
+    <!-- Proxy URL -->
+    <div class="flex items-center gap-2 mb-4">
+      <span class="text-xs font-medium text-gray-500 shrink-0">Proxy</span>
+      <template x-if="!editingProxy">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="text-sm text-gray-700 font-mono truncate" x-text="proxyUrl"></span>
+          <button @click="editingProxy = true" class="text-xs text-blue-600 hover:text-blue-800 shrink-0">Edit</button>
+        </div>
+      </template>
+      <template x-if="editingProxy">
+        <div class="flex items-center gap-2 flex-1 min-w-0">
+          <input type="text" x-model="proxyUrl"
+            @keydown.enter="saveProxy()" @keydown.escape="saveProxy()"
+            x-init="$nextTick(() => $el.focus())"
+            class="flex-1 min-w-0 px-2 py-1 border border-gray-300 rounded text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          <button @click="saveProxy()" class="text-xs text-blue-600 hover:text-blue-800 shrink-0">Save</button>
+        </div>
+      </template>
+    </div>
+
+    <!-- Loading -->
+    <div x-show="loading" class="flex items-center gap-2 text-sm text-gray-400 py-3 mb-6">
+      <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+      Loading...
+    </div>
+
+    <!-- Empty state -->
+    <div x-show="!loading && connections.length === 0 && !connected" x-cloak
+      class="mb-6 text-center py-8 border-2 border-dashed border-gray-300 rounded-lg">
+      <p class="text-gray-500 mb-4">No saved connections</p>
+      <button @click="showPairForm = true; $nextTick(() => $refs.token?.focus())"
+        class="px-5 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700">
+        + New Connection
+      </button>
+    </div>
+
+    <!-- Connections list -->
+    <div x-show="!loading && connections.length > 0" x-cloak class="mb-6">
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-sm font-medium text-gray-700">Connections</h2>
+        <div class="flex gap-2">
+          <button @click="showPairForm = true; $nextTick(() => $refs.token?.focus())"
+            class="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700">
+            + New Connection
+          </button>
+          <button @click="clearConnections()"
+            class="text-xs px-3 py-1.5 text-gray-500 hover:text-red-600">
+            Clear All
+          </button>
+        </div>
+      </div>
+      <div class="space-y-2">
+        <template x-for="conn in connections" :key="conn.fingerprint">
+          <div class="flex items-center justify-between bg-white border border-gray-200 rounded-lg px-3 py-2.5 hover:border-blue-300 transition-colors">
+            <div class="min-w-0">
+              <div class="text-sm font-medium truncate" x-text="connLabel(conn)"></div>
+              <div class="text-xs text-gray-400 font-mono truncate" x-text="conn.fingerprint.substring(0, 24) + '...'"></div>
+            </div>
+            <div class="flex items-center gap-3 shrink-0 ml-3">
+              <span class="text-xs text-gray-400" x-text="connDate(conn)"></span>
+              <button @click="reconnect(conn.fingerprint)"
+                class="text-xs px-3 py-1.5 bg-gray-100 text-gray-700 rounded-md hover:bg-blue-600 hover:text-white transition-colors">
+                Connect
+              </button>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- New connection form -->
+    <div x-show="showPairForm" x-cloak class="mb-6 border border-blue-200 bg-blue-50 rounded-lg p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-medium text-blue-800">New Connection</h3>
+        <button @click="showPairForm = false" class="text-xs text-blue-600 hover:text-blue-800">&times; Cancel</button>
+      </div>
+      <label class="block text-xs font-medium text-blue-700 mb-1">Pairing Token</label>
+      <input type="text" x-model="token" x-ref="token"
+        @keydown.enter="pair()"
+        class="w-full px-3 py-2 border border-blue-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 mb-3"
+        placeholder="ABC-DEF-GHI or PSK token" />
+      <button @click="pair()" :disabled="pairing"
+        class="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+        <svg x-show="pairing" class="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+        <span x-text="pairing ? '...' : 'Pair'"></span>
+      </button>
+    </div>
+
+    <!-- Connected state -->
+    <div x-show="connected" x-cloak class="mb-6">
+      <div class="flex items-center gap-2 mb-3">
+        <div class="h-2 w-2 rounded-full bg-green-500"></div>
+        <span class="text-sm font-medium text-green-700" x-text="connectedLabel"></span>
+        <button @click="disconnect()" class="ml-auto text-xs px-3 py-1.5 text-gray-500 hover:text-red-600">Disconnect</button>
+      </div>
+      <div class="flex gap-2">
+        <input type="text" x-model="domain"
+          @keydown.enter="requestCredential()"
+          class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          placeholder="example.com" />
+        <button @click="requestCredential()" :disabled="requesting"
+          class="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+          <svg x-show="requesting" class="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+          <span x-text="requesting ? '...' : 'Request'"></span>
+        </button>
+      </div>
+
+      <!-- Credential output -->
+      <div x-show="credential && credentialEntries().length > 0" x-cloak
+        class="mt-4 bg-gray-900 text-gray-200 rounded-lg p-4 font-mono text-sm whitespace-pre-wrap">
+        <template x-for="[k, v] in credentialEntries()" :key="k">
+          <div><span class="text-cyan-400" x-text="k"></span><span class="text-gray-500">:</span> <span class="text-green-400" x-text="v"></span></div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Activity log -->
+    <div class="mt-6">
+      <h2 class="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Activity Log</h2>
+      <div x-ref="log" class="bg-white border border-gray-200 rounded-lg max-h-48 overflow-y-auto text-xs font-mono">
+        <template x-if="log.length === 0">
+          <div class="p-3 text-gray-400">Waiting for WASM initialization...</div>
+        </template>
+        <template x-for="(entry, i) in log" :key="i">
+          <div class="px-3 py-1.5 border-b border-gray-100 last:border-0 flex items-start gap-2"
+            :class="{
+              'text-gray-600': entry.type === 'info',
+              'text-green-700': entry.type === 'success',
+              'text-red-600': entry.type === 'error',
+              'text-blue-600': entry.type === 'pending',
+            }">
+            <svg x-show="entry.type === 'pending'" class="animate-spin h-3 w-3 mt-0.5 shrink-0 text-blue-500" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            <span class="text-gray-400 shrink-0" x-text="entry.time"></span>
+            <span>
+              <span x-show="entry.type === 'success'">&#10003; </span>
+              <span x-show="entry.type === 'error'">&#10007; </span>
+              <span x-text="entry.msg"></span>
+            </span>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
