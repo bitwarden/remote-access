@@ -140,13 +140,9 @@ window.app = function () {
     },
 
     async clearConnections() {
-      try {
-        const tmp = await createClient(this.proxyUrl);
-        tmp.clearConnections();
-        this.addLog("Cleared all cached connections");
-      } catch (e) {
-        this.addLog(`Failed to clear: ${e}`, "error");
-      }
+      const tmp = await createClient(this.proxyUrl);
+      tmp.clearConnections();
+      this.addLog("Cleared all cached connections");
       await this.refreshConnections();
     },
 

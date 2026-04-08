@@ -26,7 +26,11 @@
  *   client.disconnect();
  */
 
-import wasmInit, { WasmRemoteClient } from "../pkg/bw_remote_wasm.js";
+import wasmInit, {
+  WasmRemoteClient,
+  listConnections,
+  clearConnections,
+} from "../pkg/bw_remote_wasm.js";
 
 let wasmReady = false;
 
@@ -85,21 +89,11 @@ class RemoteAccessClient {
    * @returns {Promise<string|null>} Handshake fingerprint for rendezvous, null for PSK
    */
   async pair(token) {
-    this.disconnect();
-    this.#inner = new WasmRemoteClient(this.#proxyUrl, this.#identityName);
-    try {
-      await this.#inner.connect();
-      if (looksLikePskToken(token)) {
-        await this.#inner.pairWithPsk(token);
-        return null;
-      } else {
-        return await this.#inner.pairWithHandshake(token);
-      }
-    } catch (e) {
-      this.#inner.close();
-      this.#inner = null;
-      throw new Error(cleanError(e));
-    }
+    return this.#withFreshConnection((inner) =>
+      looksLikePskToken(token)
+        ? inner.pairWithPsk(token).then(() => null)
+        : inner.pairWithHandshake(token),
+    );
   }
 
   /**
@@ -107,11 +101,17 @@ class RemoteAccessClient {
    * @param {string} fingerprint - Hex fingerprint of the cached session
    */
   async reconnect(fingerprint) {
+    return this.#withFreshConnection((inner) =>
+      inner.loadCachedConnection(fingerprint),
+    );
+  }
+
+  async #withFreshConnection(action) {
     this.disconnect();
     this.#inner = new WasmRemoteClient(this.#proxyUrl, this.#identityName);
     try {
       await this.#inner.connect();
-      await this.#inner.loadCachedConnection(fingerprint);
+      return await action(this.#inner);
     } catch (e) {
       this.#inner.close();
       this.#inner = null;
@@ -136,17 +136,12 @@ class RemoteAccessClient {
 
   /** List saved connections from localStorage. */
   async listConnections() {
-    const tmp = new WasmRemoteClient(this.#proxyUrl, this.#identityName);
-    const list = await tmp.listConnections();
-    tmp.close();
-    return list;
+    return listConnections(this.#identityName);
   }
 
   /** Clear all saved connections from localStorage. */
   clearConnections() {
-    const tmp = new WasmRemoteClient(this.#proxyUrl, this.#identityName);
-    tmp.clearConnections();
-    tmp.close();
+    clearConnections(this.#identityName);
   }
 
   /** Disconnect and release resources. */

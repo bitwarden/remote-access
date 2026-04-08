@@ -4,7 +4,7 @@
 //! mode orchestration (PSK vs rendezvous vs cached) lives in the JS
 //! `RemoteAccessClient` class, not here.
 
-use ap_client::{ConnectionStore, IdentityFingerprint, PskToken, RemoteClient};
+use ap_client::{IdentityFingerprint, PskToken, RemoteClient};
 use wasm_bindgen::prelude::*;
 
 use crate::proxy_client::WasmProxyClient;
@@ -153,56 +153,6 @@ impl WasmRemoteClient {
             .map_err(client_error_to_js)?;
 
         Ok(JsCredentialData::from(cred))
-    }
-
-    /// List cached connections.
-    ///
-    /// @returns Array of { fingerprint, name, cachedAt, lastConnectedAt }
-    #[wasm_bindgen(js_name = "listConnections")]
-    pub async fn list_connections(&self) -> Result<JsValue, JsValue> {
-        let store = LocalStorageConnectionStore::load_or_create(&self.identity_name)
-            .map_err(client_error_to_js)?;
-        let connections = store.list().await;
-
-        let arr = js_sys::Array::new();
-        for conn in connections {
-            let obj = js_sys::Object::new();
-            let _ = js_sys::Reflect::set(
-                &obj,
-                &"fingerprint".into(),
-                &JsValue::from_str(&hex::encode(conn.fingerprint.0)),
-            );
-            let _ = js_sys::Reflect::set(
-                &obj,
-                &"name".into(),
-                &match &conn.name {
-                    Some(n) => JsValue::from_str(n),
-                    None => JsValue::NULL,
-                },
-            );
-            let _ = js_sys::Reflect::set(
-                &obj,
-                &"cachedAt".into(),
-                &JsValue::from_f64(conn.cached_at as f64),
-            );
-            let _ = js_sys::Reflect::set(
-                &obj,
-                &"lastConnectedAt".into(),
-                &JsValue::from_f64(conn.last_connected_at as f64),
-            );
-            arr.push(&obj);
-        }
-
-        Ok(arr.into())
-    }
-
-    /// Clear all cached connections.
-    #[wasm_bindgen(js_name = "clearConnections")]
-    pub fn clear_connections(&self) -> Result<(), JsValue> {
-        let mut store = LocalStorageConnectionStore::load_or_create(&self.identity_name)
-            .map_err(client_error_to_js)?;
-        store.clear().map_err(client_error_to_js)?;
-        Ok(())
     }
 
     /// Close the connection and release resources.

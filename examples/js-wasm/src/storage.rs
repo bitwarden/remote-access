@@ -1,7 +1,8 @@
 //! Browser localStorage-based storage implementations.
 //!
 //! Provides `IdentityProvider` and `ConnectionStore` backed by
-//! the browser's `localStorage` API.
+//! the browser's `localStorage` API, plus standalone `#[wasm_bindgen]`
+//! functions for listing and clearing connections from JavaScript.
 
 use ap_client::error::ClientError;
 use ap_client::{ConnectionInfo, ConnectionStore, ConnectionUpdate, IdentityProvider};
@@ -9,7 +10,10 @@ use ap_noise::{MultiDeviceTransport, PersistentTransportState};
 use ap_proxy_protocol::{IdentityFingerprint, IdentityKeyPair};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use wasm_bindgen::prelude::*;
 use web_sys::Storage;
+
+use crate::types::client_error_to_js;
 
 fn local_storage() -> Result<Storage, ClientError> {
     let window = web_sys::window()
@@ -230,4 +234,61 @@ impl ConnectionStore for LocalStorageConnectionStore {
             .map(record_to_info)
             .collect()
     }
+}
+
+// ---------------------------------------------------------------------------
+// Standalone WASM functions
+// ---------------------------------------------------------------------------
+
+/// List cached connections for an identity.
+///
+/// @param identity_name - Name of the localStorage identity
+/// @returns Array of { fingerprint, name, cachedAt, lastConnectedAt }
+#[wasm_bindgen(js_name = "listConnections")]
+pub async fn list_connections(identity_name: &str) -> Result<JsValue, JsValue> {
+    let store =
+        LocalStorageConnectionStore::load_or_create(identity_name).map_err(client_error_to_js)?;
+    let connections = store.list().await;
+
+    let arr = js_sys::Array::new();
+    for conn in connections {
+        let obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(
+            &obj,
+            &"fingerprint".into(),
+            &JsValue::from_str(&hex::encode(conn.fingerprint.0)),
+        );
+        let _ = js_sys::Reflect::set(
+            &obj,
+            &"name".into(),
+            &match &conn.name {
+                Some(n) => JsValue::from_str(n),
+                None => JsValue::NULL,
+            },
+        );
+        let _ = js_sys::Reflect::set(
+            &obj,
+            &"cachedAt".into(),
+            &JsValue::from_f64(conn.cached_at as f64),
+        );
+        let _ = js_sys::Reflect::set(
+            &obj,
+            &"lastConnectedAt".into(),
+            &JsValue::from_f64(conn.last_connected_at as f64),
+        );
+        arr.push(&obj);
+    }
+
+    Ok(arr.into())
+}
+
+/// Clear all cached connections for an identity.
+///
+/// @param identity_name - Name of the localStorage identity
+#[wasm_bindgen(js_name = "clearConnections")]
+pub fn clear_connections(identity_name: &str) -> Result<(), JsValue> {
+    let mut store =
+        LocalStorageConnectionStore::load_or_create(identity_name).map_err(client_error_to_js)?;
+    store.clear().map_err(client_error_to_js)?;
+    Ok(())
 }
