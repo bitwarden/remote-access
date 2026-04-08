@@ -6,7 +6,7 @@ Browser-based remote access client using WebAssembly. Wraps the Rust `RemoteClie
 
 - [Rust](https://rustup.rs/) (1.85+)
 - [wasm-pack](https://rustwasm.github.io/wasm-pack/installer/)
-- [Bun](https://bun.sh/) (or Node.js)
+- [Node.js](https://nodejs.org/) (18+)
 - A user-client listening (`cargo run --bin aac -- listen`)
 
 ## Build & Run
@@ -16,8 +16,8 @@ Browser-based remote access client using WebAssembly. Wraps the Rust `RemoteClie
 ./build.sh
 
 # 2. Install JS dependencies and start dev server
-bun install
-bun run dev
+npm install
+npm run dev
 ```
 
 Then in a separate terminal, start a listener:
