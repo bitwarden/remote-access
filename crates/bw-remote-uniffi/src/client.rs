@@ -41,13 +41,7 @@ impl RemoteAccessClient {
         identity_name: String,
         event_handler: Option<Box<dyn EventHandler>>,
     ) -> Result<Self, RemoteAccessError> {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(
-                tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
-            )
-            .with_writer(std::io::stderr)
-            .try_init();
+        crate::init_tracing();
 
         let runtime =
             tokio::runtime::Runtime::new().map_err(|e| RemoteAccessError::ConnectionFailed {
@@ -232,12 +226,7 @@ impl RemoteAccessClient {
                 .block_on(async { client.list_connections().await })
                 .unwrap_or_default()
                 .into_iter()
-                .map(|c| FfiConnectionInfo {
-                    fingerprint: c.fingerprint.to_hex(),
-                    name: c.name,
-                    cached_at: c.cached_at,
-                    last_connected_at: c.last_connected_at,
-                })
+                .map(FfiConnectionInfo::from)
                 .collect(),
             None => Vec::new(),
         }
@@ -303,9 +292,12 @@ fn spawn_remote_notification_forwarder(
                 }
                 RemoteClientNotification::Ready { .. } => FfiEvent::Ready,
                 RemoteClientNotification::CredentialRequestSent { query } => {
-                    FfiEvent::CredentialRequestSent {
-                        domain: format!("{query:?}"),
-                    }
+                    let domain = match &query {
+                        CredentialQuery::Domain(d) => d.clone(),
+                        CredentialQuery::Id(id) => id.clone(),
+                        CredentialQuery::Search(s) => s.clone(),
+                    };
+                    FfiEvent::CredentialRequestSent { domain }
                 }
                 RemoteClientNotification::CredentialReceived { .. } => FfiEvent::CredentialReceived,
                 RemoteClientNotification::Error { message, context } => {

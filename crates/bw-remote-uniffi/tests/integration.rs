@@ -336,9 +336,9 @@ async fn test_user_access_client_with_credential_provider() {
                 .expect("should create user client");
                 user.connect().expect("user connect should succeed");
                 let token = user.get_psk_token(false).expect("should get psk token");
-                // Leak the user client to keep the event loop alive
-                // (it will be cleaned up when the runtime drops)
-                std::mem::forget(user);
+                // Keep user alive on a background thread so its event loop runs
+                // for the duration of the test (Drop shuts it down)
+                let _keepalive = Box::leak(Box::new(user));
                 token
             })
             .await

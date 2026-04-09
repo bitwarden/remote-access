@@ -15,6 +15,17 @@ pub use user_client::UserAccessClient;
 
 use storage::FileSessionCache;
 
+/// Initialize tracing subscriber (called once per process, subsequent calls are no-ops).
+pub(crate) fn init_tracing() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .with_writer(std::io::stderr)
+        .try_init();
+}
+
 /// Check whether a token string looks like a PSK token.
 ///
 /// Returns `true` if the token matches the PSK format
@@ -39,12 +50,7 @@ pub fn list_connections(identity_name: String) -> Vec<FfiConnectionInfo> {
     cache
         .list_sync()
         .into_iter()
-        .map(|c| FfiConnectionInfo {
-            fingerprint: c.fingerprint.to_hex(),
-            name: c.name,
-            cached_at: c.cached_at,
-            last_connected_at: c.last_connected_at,
-        })
+        .map(FfiConnectionInfo::from)
         .collect()
 }
 

@@ -1,4 +1,5 @@
-use ap_client::CredentialData;
+use ap_client::{ConnectionInfo, CredentialData};
+use zeroize::Zeroizing;
 
 /// Credential data returned from a remote access request.
 #[derive(Clone, uniffi::Record)]
@@ -37,6 +38,31 @@ pub struct FfiConnectionInfo {
     pub cached_at: u64,
     /// Unix timestamp (seconds) of the last successful connection.
     pub last_connected_at: u64,
+}
+
+impl From<ConnectionInfo> for FfiConnectionInfo {
+    fn from(c: ConnectionInfo) -> Self {
+        Self {
+            fingerprint: c.fingerprint.to_hex(),
+            name: c.name,
+            cached_at: c.cached_at,
+            last_connected_at: c.last_connected_at,
+        }
+    }
+}
+
+impl From<FfiCredentialData> for CredentialData {
+    fn from(ffi: FfiCredentialData) -> Self {
+        Self {
+            username: ffi.username,
+            password: ffi.password.map(Zeroizing::new),
+            totp: ffi.totp,
+            uri: ffi.uri,
+            notes: ffi.notes,
+            credential_id: ffi.credential_id,
+            domain: ffi.domain,
+        }
+    }
 }
 
 /// Notification event from client event loops.
@@ -108,7 +134,6 @@ pub enum FfiEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeroize::Zeroizing;
 
     #[test]
     fn credential_data_from_all_fields() {

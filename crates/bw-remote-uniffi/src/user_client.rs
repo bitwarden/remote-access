@@ -1,16 +1,14 @@
 use std::sync::{Arc, Mutex};
 
+use crate::callbacks::{CredentialProvider, EventHandler};
+use crate::error::RemoteAccessError;
+use crate::storage::{FileIdentityStorage, FileSessionCache};
+use crate::types::FfiEvent;
 use ap_client::{
     CredentialData, CredentialRequestReply, DefaultProxyClient, FingerprintVerificationReply,
     UserClient, UserClientHandle, UserClientNotification, UserClientRequest,
 };
 use tokio::sync::mpsc;
-use zeroize::Zeroizing;
-
-use crate::callbacks::{CredentialProvider, EventHandler};
-use crate::error::RemoteAccessError;
-use crate::storage::{FileIdentityStorage, FileSessionCache};
-use crate::types::{FfiCredentialData, FfiEvent};
 
 /// A user-client (trusted device) that listens for incoming credential requests.
 ///
@@ -42,13 +40,7 @@ impl UserAccessClient {
         handler: Box<dyn CredentialProvider>,
         event_handler: Option<Box<dyn EventHandler>>,
     ) -> Result<Self, RemoteAccessError> {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(
-                tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
-            )
-            .with_writer(std::io::stderr)
-            .try_init();
+        crate::init_tracing();
 
         let runtime =
             tokio::runtime::Runtime::new().map_err(|e| RemoteAccessError::ConnectionFailed {
@@ -207,14 +199,22 @@ fn spawn_request_handler(
                     let credential_reply = match result {
                         Ok(Some(ffi_cred)) => CredentialRequestReply {
                             approved: true,
-                            credential: Some(ffi_credential_to_internal(ffi_cred)),
+                            credential: Some(CredentialData::from(ffi_cred)),
                             credential_id: None,
                         },
-                        _ => CredentialRequestReply {
+                        Ok(None) => CredentialRequestReply {
                             approved: false,
                             credential: None,
                             credential_id: None,
                         },
+                        Err(e) => {
+                            tracing::warn!("CredentialProvider callback panicked: {e}");
+                            CredentialRequestReply {
+                                approved: false,
+                                credential: None,
+                                credential_id: None,
+                            }
+                        }
                     };
                     let _ = reply.send(credential_reply);
                 }
@@ -232,7 +232,13 @@ fn spawn_request_handler(
                     })
                     .await;
 
-                    let approved = result.unwrap_or(false);
+                    let approved = match result {
+                        Ok(v) => v,
+                        Err(e) => {
+                            tracing::warn!("verify_fingerprint callback panicked: {e}");
+                            false
+                        }
+                    };
                     let _ = reply.send(FingerprintVerificationReply {
                         approved,
                         name: None,
@@ -302,17 +308,4 @@ fn spawn_user_notification_forwarder(
             handler.on_event(event);
         }
     });
-}
-
-/// Convert FFI credential data back to the internal `CredentialData` type.
-fn ffi_credential_to_internal(ffi: FfiCredentialData) -> CredentialData {
-    CredentialData {
-        username: ffi.username,
-        password: ffi.password.map(Zeroizing::new),
-        totp: ffi.totp,
-        uri: ffi.uri,
-        notes: ffi.notes,
-        credential_id: ffi.credential_id,
-        domain: ffi.domain,
-    }
 }
