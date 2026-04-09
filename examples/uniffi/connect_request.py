@@ -8,10 +8,7 @@ Usage:
     # With PSK token:
     python connect_request.py --token <64hex_psk>_<64hex_fingerprint> --domain example.com
 
-    # With cached session (auto-select if only one):
-    python connect_request.py --domain example.com
-
-    # With specific cached session:
+    # With cached session:
     python connect_request.py --session <fingerprint_hex> --domain example.com
 
 Setup:
@@ -30,48 +27,61 @@ Setup:
 import argparse
 import sys
 
-from bw_remote_uniffi import RemoteAccessClient, connect_and_request
+from bw_remote_uniffi import (
+    RemoteAccessClient,
+    list_connections,
+    looks_like_psk_token,
+)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Request a credential via Bitwarden Remote Access (UniFFI bindings)"
+        description="Request a credential via Agent Access (UniFFI bindings)"
     )
     parser.add_argument("--proxy", default="ws://localhost:8080", help="Proxy server URL")
     parser.add_argument("--token", help="Rendezvous code or PSK token")
     parser.add_argument("--session", help="Cached session fingerprint (hex)")
     parser.add_argument("--domain", required=True, help="Domain to request credentials for")
     parser.add_argument("--identity", default="uniffi-remote", help="Identity name")
-    parser.add_argument(
-        "--one-shot",
-        action="store_true",
-        help="Use the connect_and_request convenience function",
-    )
     args = parser.parse_args()
 
     try:
-        if args.one_shot:
-            cred = connect_and_request(
-                domain=args.domain,
-                token=args.token,
-                session=args.session,
-                proxy_url=args.proxy,
-                identity_name=args.identity,
-            )
+        client = RemoteAccessClient(
+            proxy_url=args.proxy,
+            identity_name=args.identity,
+            event_handler=None,
+        )
+
+        # Step 1: Connect to the proxy
+        client.connect()
+
+        # Step 2: Establish a secure channel (consumer decides which mode)
+        if args.token:
+            if looks_like_psk_token(args.token):
+                client.pair_with_psk(args.token)
+            else:
+                fp = client.pair_with_handshake(args.token)
+                print(f"Handshake fingerprint: {fp}", file=sys.stderr)
+        elif args.session:
+            client.load_existing_connection(args.session)
         else:
-            client = RemoteAccessClient(
-                proxy_url=args.proxy,
-                identity_name=args.identity,
-            )
+            # Auto-select if exactly one cached session exists
+            connections = list_connections(args.identity)
+            if len(connections) == 1:
+                client.load_existing_connection(connections[0].fingerprint)
+            elif len(connections) == 0:
+                print("No cached sessions. Provide --token to start a new connection.", file=sys.stderr)
+                return 1
+            else:
+                print(f"Multiple cached sessions ({len(connections)}). Use --session to specify one:", file=sys.stderr)
+                for c in connections:
+                    name = c.name or "unnamed"
+                    print(f"  {c.fingerprint[:16]}... ({name})", file=sys.stderr)
+                return 1
 
-            fingerprint = client.connect(token=args.token, session=args.session)
-            if fingerprint:
-                print(f"Handshake fingerprint: {fingerprint}", file=sys.stderr)
-
-            print(f"Ready: {client.is_ready()}", file=sys.stderr)
-
-            cred = client.request_credential(args.domain)
-            client.close()
+        # Step 3: Request credential
+        cred = client.request_credential(args.domain)
+        client.close()
 
         if cred.username:
             print(f"Username: {cred.username}")

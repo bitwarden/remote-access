@@ -145,6 +145,21 @@ impl FileSessionCache {
         Ok(data)
     }
 
+    /// List all cached connections synchronously (for standalone `list_connections` function).
+    pub fn list_sync(&self) -> Vec<ConnectionInfo> {
+        self.data
+            .sessions
+            .iter()
+            .map(Self::record_to_connection_info)
+            .collect()
+    }
+
+    /// Clear all cached connections synchronously (for standalone `clear_connections` function).
+    pub fn clear_sync(&mut self) -> Result<(), ClientError> {
+        self.data.sessions.clear();
+        self.persist()
+    }
+
     fn record_to_connection_info(record: &SessionRecord) -> ConnectionInfo {
         let transport_state = record.transport_state.as_ref().and_then(|bytes| {
             PersistentTransportState::from_bytes(bytes)
