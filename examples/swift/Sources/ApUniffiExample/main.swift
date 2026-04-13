@@ -16,12 +16,19 @@ func main() -> Int32 {
     var i = 1
     while i < args.count {
         switch args[i] {
-        case "--token":
-            i += 1; token = args[i]
-        case "--domain":
-            i += 1; domain = args[i]
-        case "--proxy":
-            i += 1; proxyUrl = args[i]
+        case "--token", "--domain", "--proxy":
+            let flag = args[i]
+            i += 1
+            guard i < args.count else {
+                fputs("\(flag) requires a value\n", stderr)
+                return 1
+            }
+            switch flag {
+            case "--token": token = args[i]
+            case "--domain": domain = args[i]
+            case "--proxy": proxyUrl = args[i]
+            default: break
+            }
         default:
             fputs("Unknown argument: \(args[i])\n", stderr)
             return 1
