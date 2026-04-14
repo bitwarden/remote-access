@@ -15,10 +15,10 @@ Setup:
     # Generate Python bindings into this directory
     cargo run --bin uniffi-bindgen generate \
         --library target/debug/libap_uniffi.dylib \
-        --language python --out-dir examples/uniffi/
+        --language python --out-dir examples/python-uniffi/
 
     # Then run this script from the repo root
-    python examples/uniffi/connect_request.py --token ABC-DEF-GHI --domain example.com
+    python examples/python-uniffi/connect_request.py --token ABC-DEF-GHI --domain example.com
 """
 
 import argparse

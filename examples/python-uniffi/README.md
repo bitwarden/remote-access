@@ -13,7 +13,7 @@ cargo build -p ap-uniffi
 ### 2. Generate Python bindings
 
 ```bash
-cargo run --bin uniffi-bindgen generate --library target/debug/libap_uniffi.dylib --language python --out-dir examples/uniffi/
+cargo run --bin uniffi-bindgen generate --library target/debug/libap_uniffi.dylib --language python --out-dir examples/python-uniffi/
 ```
 
 This produces `ap_uniffi.py` in this directory.
@@ -24,10 +24,10 @@ The generated module loads the `.dylib`/`.so` from the same directory:
 
 ```bash
 # macOS
-ln -sf ../../target/debug/libap_uniffi.dylib examples/uniffi/
+ln -sf ../../target/debug/libap_uniffi.dylib examples/python-uniffi/
 
 # Linux
-ln -sf ../../target/debug/libap_uniffi.so examples/uniffi/
+ln -sf ../../target/debug/libap_uniffi.so examples/python-uniffi/
 ```
 
 ## Usage

@@ -18,20 +18,20 @@ cargo build -p ap-uniffi
 ### 2. Generate Swift bindings
 
 ```bash
-cargo run --bin uniffi-bindgen generate --library target/debug/libap_uniffi.dylib --language swift --out-dir examples/swift/generated/
+cargo run --bin uniffi-bindgen generate --library target/debug/libap_uniffi.dylib --language swift --out-dir examples/swift-uniffi/generated/
 ```
 
 ### 3. Copy generated files into the package
 
 ```bash
-cp examples/swift/generated/ap_uniffi.swift examples/swift/Sources/ApUniffi/
-cp examples/swift/generated/ap_uniffiFFI.h examples/swift/Sources/CApUniffi/include/
+cp examples/swift-uniffi/generated/ap_uniffi.swift examples/swift-uniffi/Sources/ApUniffi/
+cp examples/swift-uniffi/generated/ap_uniffiFFI.h examples/swift-uniffi/Sources/CApUniffi/include/
 ```
 
 ### 4. Build and run
 
 ```bash
-cd examples/swift
+cd examples/swift-uniffi
 DYLD_LIBRARY_PATH=../../target/debug swift run ApUniffiExample --token <PSK_TOKEN_OR_RENDEZVOUS_CODE> --domain example.com
 ```
 
