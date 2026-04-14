@@ -2,12 +2,18 @@
 
 use std::sync::Arc;
 
-use ap_client::{ClientError, ConnectionInfo, ConnectionStore, ConnectionUpdate, IdentityProvider};
-use ap_noise::{MultiDeviceTransport, PersistentTransportState};
+use ap_client::{
+    AuditConnectionType, AuditEvent, AuditLog, ClientError, ConnectionInfo, ConnectionStore,
+    ConnectionUpdate, IdentityProvider, PskEntry, PskStore,
+};
+use ap_noise::{MultiDeviceTransport, PersistentTransportState, Psk};
 use ap_proxy_protocol::{IdentityFingerprint, IdentityKeyPair};
 use async_trait::async_trait;
 
-use crate::callbacks::{ConnectionStorage, FfiStoredConnection, IdentityStorage};
+use crate::callbacks::{
+    AuditLogger, ConnectionStorage, FfiStoredConnection, IdentityStorage, PskStorage,
+};
+use crate::types::{FfiAuditEvent, FfiCredentialQuery, FfiPskEntry};
 
 // ---------------------------------------------------------------------------
 // IdentityStorage → IdentityProvider
@@ -18,6 +24,11 @@ pub struct CallbackIdentityProvider {
 }
 
 impl CallbackIdentityProvider {
+    /// Returns the hex-encoded identity fingerprint of the resolved keypair.
+    pub(crate) fn fingerprint_hex(&self) -> String {
+        self.keypair.identity().fingerprint().to_hex()
+    }
+
     pub fn from_storage(storage: &dyn IdentityStorage) -> Result<Self, ClientError> {
         let keypair = if let Some(bytes) = storage.load_identity() {
             IdentityKeyPair::from_cose(&bytes).map_err(|_| {
@@ -70,18 +81,19 @@ fn stored_to_info(stored: &FfiStoredConnection) -> Option<ConnectionInfo> {
             return None;
         }
     };
-    let transport_state = stored.transport_state.as_ref().and_then(|bytes| {
-        match PersistentTransportState::from_bytes(bytes) {
-            Ok(state) => Some(MultiDeviceTransport::from(state)),
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to restore transport state for {}: {e}",
-                    stored.fingerprint
-                );
-                None
-            }
-        }
-    });
+    let transport_state =
+        stored.transport_state.as_ref().and_then(
+            |bytes| match PersistentTransportState::from_bytes(bytes) {
+                Ok(state) => Some(MultiDeviceTransport::from(state)),
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to restore transport state for {}: {e}",
+                        stored.fingerprint
+                    );
+                    None
+                }
+            },
+        );
 
     Some(ConnectionInfo {
         fingerprint,
@@ -141,6 +153,159 @@ impl ConnectionStore for CallbackConnectionStore {
             .list()
             .into_iter()
             .filter_map(|stored| stored_to_info(&stored))
+            .collect()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AuditLogger → AuditLog
+// ---------------------------------------------------------------------------
+
+pub struct CallbackAuditLog {
+    logger: Arc<dyn AuditLogger>,
+}
+
+impl CallbackAuditLog {
+    pub fn new(logger: Arc<dyn AuditLogger>) -> Self {
+        Self { logger }
+    }
+}
+
+#[async_trait]
+impl AuditLog for CallbackAuditLog {
+    async fn write(&self, event: AuditEvent<'_>) {
+        let ffi_event = match event {
+            AuditEvent::ConnectionEstablished {
+                remote_identity,
+                remote_name,
+                connection_type,
+            } => FfiAuditEvent::ConnectionEstablished {
+                remote_identity: remote_identity.to_hex(),
+                remote_name: remote_name.map(|s| s.to_string()),
+                connection_type: match connection_type {
+                    AuditConnectionType::Rendezvous => "rendezvous".to_string(),
+                    AuditConnectionType::Psk => "psk".to_string(),
+                },
+            },
+            AuditEvent::SessionRefreshed { remote_identity } => FfiAuditEvent::SessionRefreshed {
+                remote_identity: remote_identity.to_hex(),
+            },
+            AuditEvent::ConnectionRejected { remote_identity } => {
+                FfiAuditEvent::ConnectionRejected {
+                    remote_identity: remote_identity.to_hex(),
+                }
+            }
+            AuditEvent::CredentialRequested {
+                query,
+                remote_identity,
+                request_id,
+            } => FfiAuditEvent::CredentialRequested {
+                query: FfiCredentialQuery::from(query),
+                remote_identity: remote_identity.to_hex(),
+                request_id: request_id.to_string(),
+            },
+            AuditEvent::CredentialApproved {
+                query,
+                domain,
+                remote_identity,
+                request_id,
+                credential_id,
+                ..
+            } => FfiAuditEvent::CredentialApproved {
+                query: FfiCredentialQuery::from(query),
+                domain: domain.map(|s| s.to_string()),
+                remote_identity: remote_identity.to_hex(),
+                request_id: request_id.to_string(),
+                credential_id: credential_id.map(|s| s.to_string()),
+            },
+            AuditEvent::CredentialDenied {
+                query,
+                domain,
+                remote_identity,
+                request_id,
+                credential_id,
+            } => FfiAuditEvent::CredentialDenied {
+                query: FfiCredentialQuery::from(query),
+                domain: domain.map(|s| s.to_string()),
+                remote_identity: remote_identity.to_hex(),
+                request_id: request_id.to_string(),
+                credential_id: credential_id.map(|s| s.to_string()),
+            },
+            _ => return, // non_exhaustive: silently skip unknown variants
+        };
+        self.logger.on_audit_event(ffi_event);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PskStorage → PskStore
+// ---------------------------------------------------------------------------
+
+pub struct CallbackPskStore {
+    storage: Arc<dyn PskStorage>,
+}
+
+impl CallbackPskStore {
+    pub fn new(storage: Arc<dyn PskStorage>) -> Self {
+        Self { storage }
+    }
+}
+
+fn ffi_to_psk_entry(ffi: &FfiPskEntry) -> Option<PskEntry> {
+    let psk_bytes: [u8; 32] = match ffi.psk.as_slice().try_into() {
+        Ok(b) => b,
+        Err(_) => {
+            tracing::warn!(
+                "Invalid PSK length for psk_id '{}': expected 32 bytes",
+                ffi.psk_id
+            );
+            return None;
+        }
+    };
+
+    Some(PskEntry {
+        psk_id: ffi.psk_id.clone(),
+        psk: Psk::from_bytes(psk_bytes),
+        name: ffi.name.clone(),
+        created_at: ffi.created_at,
+    })
+}
+
+fn psk_entry_to_ffi(entry: &PskEntry) -> FfiPskEntry {
+    FfiPskEntry {
+        psk_id: entry.psk_id.clone(),
+        psk: entry.psk.to_bytes().to_vec(),
+        name: entry.name.clone(),
+        created_at: entry.created_at,
+    }
+}
+
+#[async_trait]
+impl PskStore for CallbackPskStore {
+    async fn get(&self, psk_id: &String) -> Option<PskEntry> {
+        self.storage
+            .get(psk_id.to_string())
+            .and_then(|ffi| ffi_to_psk_entry(&ffi))
+    }
+
+    async fn save(&mut self, entry: PskEntry) -> Result<(), ClientError> {
+        let ffi = psk_entry_to_ffi(&entry);
+        self.storage
+            .save(ffi)
+            .map_err(|e| ClientError::ConnectionCache(e.to_string()))
+    }
+
+    async fn remove(&mut self, psk_id: &String) -> Result<(), ClientError> {
+        self.storage
+            .remove(psk_id.to_string())
+            .map_err(|e| ClientError::ConnectionCache(e.to_string()))
+    }
+
+    async fn list(&self) -> Vec<PskEntry> {
+        self.storage
+            .list()
+            .into_iter()
+            .filter_map(|ffi| ffi_to_psk_entry(&ffi))
             .collect()
     }
 }

@@ -1,16 +1,19 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use crate::adapters::{CallbackConnectionStore, CallbackIdentityProvider};
+use crate::adapters::{
+    CallbackAuditLog, CallbackConnectionStore, CallbackIdentityProvider, CallbackPskStore,
+};
 use crate::callbacks::{
-    ConnectionStorage, CredentialProvider, EventHandler, FingerprintVerifier, IdentityStorage,
+    AuditLogger, ConnectionStorage, CredentialProvider, EventHandler, FingerprintVerifier,
+    IdentityStorage, PskStorage,
 };
 use crate::error::ClientError;
-use crate::types::FfiEvent;
+use crate::types::{FfiCredentialQuery, FfiEvent};
 use ap_client::{
     CredentialData, CredentialRequestReply, DefaultProxyClient, FingerprintVerificationReply,
     UserClientHandle, UserClientNotification, UserClientRequest,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 
 /// A user-client (trusted device) that listens for incoming credential requests.
 ///
@@ -23,6 +26,8 @@ pub struct UserClient {
     handler: Arc<dyn CredentialProvider>,
     fingerprint_verifier: Option<Arc<dyn FingerprintVerifier>>,
     event_handler: Option<Arc<dyn EventHandler>>,
+    audit_logger: Option<Arc<dyn AuditLogger>>,
+    psk_storage: Option<Arc<dyn PskStorage>>,
     identity_storage: Arc<dyn IdentityStorage>,
     connection_storage: Arc<dyn ConnectionStorage>,
     proxy_url: String,
@@ -38,11 +43,12 @@ impl UserClient {
     /// * `handler` — Callback for credential requests.
     /// * `fingerprint_verifier` — Optional callback for verifying handshake fingerprints
     ///   on rendezvous connections. If `None`, rendezvous fingerprints are auto-accepted.
-    ///   TODO: Fingerprint verification only applies to rendezvous pairing — consider
-    ///   moving this to `get_rendezvous_token()` or a dedicated method instead of
-    ///   requiring it at construction time.
     /// * `event_handler` — Optional callback for status notifications.
+    /// * `audit_logger` — Optional callback for security-relevant audit events.
+    /// * `psk_storage` — Optional callback for persistent reusable PSK storage.
+    ///   Required when using `get_psk_token(reusable: true)`.
     #[uniffi::constructor]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         proxy_url: String,
         identity_storage: Box<dyn IdentityStorage>,
@@ -50,6 +56,8 @@ impl UserClient {
         handler: Box<dyn CredentialProvider>,
         fingerprint_verifier: Option<Box<dyn FingerprintVerifier>>,
         event_handler: Option<Box<dyn EventHandler>>,
+        audit_logger: Option<Box<dyn AuditLogger>>,
+        psk_storage: Option<Box<dyn PskStorage>>,
     ) -> Result<Self, ClientError> {
         crate::init_tracing();
 
@@ -58,6 +66,8 @@ impl UserClient {
             handler: Arc::from(handler),
             fingerprint_verifier: fingerprint_verifier.map(Arc::from),
             event_handler: event_handler.map(Arc::from),
+            audit_logger: audit_logger.map(Arc::from),
+            psk_storage: psk_storage.map(Arc::from),
             identity_storage: Arc::from(identity_storage),
             connection_storage: Arc::from(connection_storage),
             proxy_url,
@@ -69,9 +79,8 @@ impl UserClient {
     /// Spawns a background event loop that dispatches credential requests and
     /// fingerprint verifications to the `CredentialProvider` callback.
     pub async fn connect(&self) -> Result<(), ClientError> {
-        if let Ok(mut inner) = self.inner.lock() {
-            *inner = None;
-        }
+        // Clear any previous connection
+        *self.inner.lock().await = None;
 
         let identity = CallbackIdentityProvider::from_storage(self.identity_storage.as_ref())
             .map_err(ClientError::from)?;
@@ -79,6 +88,16 @@ impl UserClient {
         let session_store = CallbackConnectionStore::new(Arc::clone(&self.connection_storage));
 
         let proxy_client = Box::new(DefaultProxyClient::from_url(self.proxy_url.clone()));
+
+        let audit_log: Option<Box<dyn ap_client::AuditLog>> =
+            self.audit_logger.as_ref().map(|logger| {
+                Box::new(CallbackAuditLog::new(Arc::clone(logger))) as Box<dyn ap_client::AuditLog>
+            });
+
+        let psk_store: Option<Box<dyn ap_client::PskStore>> =
+            self.psk_storage.as_ref().map(|storage| {
+                Box::new(CallbackPskStore::new(Arc::clone(storage))) as Box<dyn ap_client::PskStore>
+            });
 
         let UserClientHandle {
             client,
@@ -88,8 +107,8 @@ impl UserClient {
             Box::new(identity),
             Box::new(session_store),
             proxy_client,
-            None, // audit_log
-            None, // psk_store
+            audit_log,
+            psk_store,
         )
         .await
         .map_err(ClientError::from)?;
@@ -106,61 +125,66 @@ impl UserClient {
             spawn_user_notification_forwarder(notifications, Arc::clone(handler));
         }
 
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| ClientError::SessionError {
-                message: "Failed to acquire client lock".to_string(),
-            })?;
-        *inner = Some(client);
+        *self.inner.lock().await = Some(client);
 
         Ok(())
     }
 
     /// Generate a PSK token for pairing.
     ///
+    /// * `name` — Optional human-readable name for the connection (e.g. "Work Laptop").
     /// * `reusable` — If true, the token can be used multiple times.
     ///
     /// Returns the PSK token string (`<64-hex-psk>_<64-hex-fingerprint>`).
-    pub async fn get_psk_token(&self, reusable: bool) -> Result<String, ClientError> {
-        let client = self.get_client()?;
+    pub async fn get_psk_token(
+        &self,
+        name: Option<String>,
+        reusable: bool,
+    ) -> Result<String, ClientError> {
+        let client = self.get_client().await?;
 
         client
-            .get_psk_token(None, reusable)
+            .get_psk_token(name, reusable)
             .await
             .map_err(ClientError::from)
     }
 
     /// Generate a rendezvous code for pairing.
     ///
+    /// * `name` — Optional human-readable name for the connection (e.g. "Work Laptop").
+    ///
     /// Returns the rendezvous code string (e.g. "ABC-DEF-GHI").
-    pub async fn get_rendezvous_token(&self) -> Result<String, ClientError> {
-        let client = self.get_client()?;
+    pub async fn get_rendezvous_token(&self, name: Option<String>) -> Result<String, ClientError> {
+        let client = self.get_client().await?;
 
         let code = client
-            .get_rendezvous_token(None)
+            .get_rendezvous_token(name)
             .await
             .map_err(ClientError::from)?;
 
         Ok(code.to_string())
     }
 
+    /// Returns this device's stable identity fingerprint (64-char hex string).
+    ///
+    /// This is the SHA256 hash of the device's public key — used for addressing,
+    /// session lookup, and PSK token construction. Not to be confused with the
+    /// 6-character handshake fingerprint used for MITM verification.
+    pub fn get_identity_fingerprint(&self) -> Result<String, ClientError> {
+        let identity = CallbackIdentityProvider::from_storage(self.identity_storage.as_ref())
+            .map_err(ClientError::from)?;
+        Ok(identity.fingerprint_hex())
+    }
+
     /// Close the connection and release resources.
-    pub fn close(&self) {
-        if let Ok(mut inner) = self.inner.lock() {
-            *inner = None;
-        }
+    pub async fn close(&self) {
+        *self.inner.lock().await = None;
     }
 }
 
 impl UserClient {
-    fn get_client(&self) -> Result<ap_client::UserClient, ClientError> {
-        let inner = self
-            .inner
-            .lock()
-            .map_err(|_| ClientError::SessionError {
-                message: "Failed to acquire client lock".to_string(),
-            })?;
+    async fn get_client(&self) -> Result<ap_client::UserClient, ClientError> {
+        let inner = self.inner.lock().await;
         inner
             .as_ref()
             .cloned()
@@ -172,7 +196,11 @@ impl UserClient {
 
 impl Drop for UserClient {
     fn drop(&mut self) {
-        self.close();
+        // Use try_lock to avoid blocking in Drop — if the lock is held,
+        // the inner client will be dropped when the Mutex itself is dropped.
+        if let Ok(mut inner) = self.inner.try_lock() {
+            *inner = None;
+        }
     }
 }
 
@@ -193,16 +221,12 @@ fn spawn_request_handler(
                     identity,
                     reply,
                 } => {
-                    let (query_type, query_value) = match &query {
-                        ap_client::CredentialQuery::Domain(d) => ("domain".to_string(), d.clone()),
-                        ap_client::CredentialQuery::Id(id) => ("id".to_string(), id.clone()),
-                        ap_client::CredentialQuery::Search(s) => ("search".to_string(), s.clone()),
-                    };
+                    let ffi_query = FfiCredentialQuery::from(&query);
                     let remote_fp = identity.to_hex();
                     let handler = Arc::clone(&handler);
 
                     let result = tokio::task::spawn_blocking(move || {
-                        handler.handle_credential_request(query_type, query_value, remote_fp)
+                        handler.handle_credential_request(ffi_query, remote_fp)
                     })
                     .await;
 

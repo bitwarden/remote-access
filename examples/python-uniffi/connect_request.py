@@ -26,6 +26,7 @@ import asyncio
 import sys
 
 from ap_uniffi import (
+    FfiCredentialQuery,
     RemoteClient,
     looks_like_psk_token,
 )
@@ -47,6 +48,7 @@ async def main() -> int:
             identity_storage=MemoryIdentityStorage(),
             connection_storage=MemoryConnectionStorage(),
             event_handler=None,
+            fingerprint_verifier=None,
         )
 
         await client.connect()
@@ -57,8 +59,11 @@ async def main() -> int:
             fp = await client.pair_with_handshake(args.token)
             print(f"Handshake fingerprint: {fp}", file=sys.stderr)
 
-        cred = await client.request_credential(args.domain)
-        client.close()
+        cred = await client.request_credential(
+            FfiCredentialQuery.DOMAIN(value=args.domain),
+            timeout_secs=None,
+        )
+        await client.close()
 
         if cred.username:
             print(f"Username: {cred.username}")

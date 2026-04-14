@@ -1,5 +1,36 @@
-use ap_client::{ConnectionInfo, CredentialData};
+use ap_client::{ConnectionInfo, CredentialData, CredentialQuery};
 use zeroize::Zeroizing;
+
+/// The type of credential query to perform.
+#[derive(Clone, uniffi::Enum)]
+pub enum FfiCredentialQuery {
+    /// Look up credentials by domain (e.g. "example.com").
+    Domain { value: String },
+    /// Look up credentials by vault item ID.
+    Id { value: String },
+    /// Search credentials by a free-text query.
+    Search { value: String },
+}
+
+impl From<FfiCredentialQuery> for CredentialQuery {
+    fn from(q: FfiCredentialQuery) -> Self {
+        match q {
+            FfiCredentialQuery::Domain { value } => CredentialQuery::Domain(value),
+            FfiCredentialQuery::Id { value } => CredentialQuery::Id(value),
+            FfiCredentialQuery::Search { value } => CredentialQuery::Search(value),
+        }
+    }
+}
+
+impl From<&CredentialQuery> for FfiCredentialQuery {
+    fn from(q: &CredentialQuery) -> Self {
+        match q {
+            CredentialQuery::Domain(v) => FfiCredentialQuery::Domain { value: v.clone() },
+            CredentialQuery::Id(v) => FfiCredentialQuery::Id { value: v.clone() },
+            CredentialQuery::Search(v) => FfiCredentialQuery::Search { value: v.clone() },
+        }
+    }
+}
 
 /// Credential data returned from a remote access request.
 #[derive(Clone, uniffi::Record)]
@@ -95,7 +126,7 @@ pub enum FfiEvent {
     /// Client is ready for credential operations.
     Ready,
     /// Credential request was sent.
-    CredentialRequestSent { domain: String },
+    CredentialRequestSent { query: FfiCredentialQuery },
     /// Credential was received.
     CredentialReceived,
     /// Credential was approved and sent (UserClient).
@@ -129,6 +160,61 @@ pub enum FfiEvent {
         message: String,
         context: Option<String>,
     },
+}
+
+/// Audit event emitted by the UserClient for security-relevant actions.
+///
+/// All identity fingerprints are hex-encoded strings.
+#[derive(Clone, uniffi::Enum)]
+pub enum FfiAuditEvent {
+    /// A new remote device was accepted as trusted.
+    ConnectionEstablished {
+        remote_identity: String,
+        remote_name: Option<String>,
+        /// "rendezvous" or "psk"
+        connection_type: String,
+    },
+    /// A previously-paired device reconnected and refreshed transport keys.
+    SessionRefreshed { remote_identity: String },
+    /// A new connection attempt was rejected during fingerprint verification.
+    ConnectionRejected { remote_identity: String },
+    /// A remote device sent a credential request (pending approval).
+    CredentialRequested {
+        query: FfiCredentialQuery,
+        remote_identity: String,
+        request_id: String,
+    },
+    /// A credential request was approved and sent.
+    CredentialApproved {
+        query: FfiCredentialQuery,
+        domain: Option<String>,
+        remote_identity: String,
+        request_id: String,
+        credential_id: Option<String>,
+    },
+    /// A credential request was denied.
+    CredentialDenied {
+        query: FfiCredentialQuery,
+        domain: Option<String>,
+        remote_identity: String,
+        request_id: String,
+        credential_id: Option<String>,
+    },
+}
+
+/// A stored reusable PSK entry (FFI-safe).
+///
+/// `psk` bytes are opaque — store and return as-is.
+#[derive(Clone, uniffi::Record)]
+pub struct FfiPskEntry {
+    /// Hex-encoded PSK identifier (16 chars).
+    pub psk_id: String,
+    /// Opaque PSK bytes — store and return as-is.
+    pub psk: Vec<u8>,
+    /// Optional human-readable name.
+    pub name: Option<String>,
+    /// Unix timestamp (seconds) when this PSK was created.
+    pub created_at: u64,
 }
 
 #[cfg(test)]

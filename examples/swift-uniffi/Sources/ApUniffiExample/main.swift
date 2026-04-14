@@ -54,7 +54,8 @@ func main() async -> Int32 {
             proxyUrl: args.proxyUrl,
             identityStorage: MemoryIdentityStorage(),
             connectionStorage: MemoryConnectionStorage(),
-            eventHandler: nil
+            eventHandler: nil,
+            fingerprintVerifier: nil
         )
 
         try await client.connect()
@@ -66,8 +67,11 @@ func main() async -> Int32 {
             fputs("Handshake fingerprint: \(fp)\n", stderr)
         }
 
-        let cred = try await client.requestCredential(domain: args.domain)
-        client.close()
+        let cred = try await client.requestCredential(
+            query: .domain(value: args.domain),
+            timeoutSecs: nil
+        )
+        await client.close()
 
         if let username = cred.username { print("Username: \(username)") }
         if let password = cred.password { print("Password: \(password)") }

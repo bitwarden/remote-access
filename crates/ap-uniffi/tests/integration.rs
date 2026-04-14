@@ -11,8 +11,9 @@ use ap_client::{
     MemoryConnectionStore, MemoryIdentityProvider, UserClient, UserClientHandle, UserClientRequest,
 };
 use ap_uniffi::{
-    ConnectionStorage, CredentialProvider, FfiCredentialData, FfiStoredConnection, IdentityStorage,
-    ClientError, RemoteClient, UserClient as UniffiUserClient, looks_like_psk_token,
+    ClientError, ConnectionStorage, CredentialProvider, FfiCredentialData, FfiCredentialQuery,
+    FfiStoredConnection, IdentityStorage, RemoteClient, UserClient as UniffiUserClient,
+    looks_like_psk_token,
 };
 use tokio::time::Duration;
 use zeroize::Zeroizing;
@@ -79,11 +80,7 @@ impl ConnectionStorage for MemoryConnectionStorage {
         Ok(())
     }
 
-    fn update(
-        &self,
-        fingerprint_hex: String,
-        last_connected_at: u64,
-    ) -> Result<(), ClientError> {
+    fn update(&self, fingerprint_hex: String, last_connected_at: u64) -> Result<(), ClientError> {
         let mut data = self.data.lock().expect("connection lock");
         if let Some(conn) = data.iter_mut().find(|c| c.fingerprint == fingerprint_hex) {
             conn.last_connected_at = last_connected_at;
@@ -208,6 +205,7 @@ fn make_remote_client(proxy_url: String) -> RemoteClient {
         Box::new(MemoryIdentityStorage::new()),
         Box::new(MemoryConnectionStorage::new()),
         None,
+        None,
     )
     .expect("should create client")
 }
@@ -239,10 +237,15 @@ async fn test_psk_pairing_and_credential_request() {
         .expect("pair_with_psk should succeed");
 
     let cred = client
-        .request_credential("example.com".to_string())
+        .request_credential(
+            FfiCredentialQuery::Domain {
+                value: "example.com".to_string(),
+            },
+            None,
+        )
         .await
         .expect("credential request should succeed");
-    client.close();
+    client.close().await;
 
     assert_eq!(cred.username.as_deref(), Some("testuser"));
     assert_eq!(cred.password.as_deref(), Some("testpassword123"));
@@ -321,10 +324,15 @@ async fn test_rendezvous_pairing_and_credential_request() {
     assert!(!fp.is_empty(), "Fingerprint should not be empty");
 
     let cred = client
-        .request_credential("example.com".to_string())
+        .request_credential(
+            FfiCredentialQuery::Domain {
+                value: "example.com".to_string(),
+            },
+            None,
+        )
         .await
         .expect("credential request should succeed");
-    client.close();
+    client.close().await;
 
     assert_eq!(cred.username.as_deref(), Some("testuser"));
 
@@ -362,8 +370,7 @@ async fn test_user_access_client_with_credential_provider() {
     impl CredentialProvider for TestProvider {
         fn handle_credential_request(
             &self,
-            _query_type: String,
-            _query_value: String,
+            _query: FfiCredentialQuery,
             _remote_fingerprint: String,
         ) -> Option<FfiCredentialData> {
             Some(test_ffi_credential())
@@ -380,11 +387,13 @@ async fn test_user_access_client_with_credential_provider() {
         Box::new(TestProvider),
         None, // fingerprint_verifier
         None, // event_handler
+        None, // audit_logger
+        None, // psk_storage
     )
     .expect("should create user client");
     user.connect().await.expect("user connect should succeed");
     let psk_token = user
-        .get_psk_token(false)
+        .get_psk_token(None, false)
         .await
         .expect("should get psk token");
 
@@ -397,14 +406,19 @@ async fn test_user_access_client_with_credential_provider() {
         .expect("pair_with_psk should succeed");
 
     let result = client
-        .request_credential("example.com".to_string())
+        .request_credential(
+            FfiCredentialQuery::Domain {
+                value: "example.com".to_string(),
+            },
+            None,
+        )
         .await
         .expect("credential request should succeed");
-    client.close();
+    client.close().await;
 
     assert_eq!(result.username.as_deref(), Some("testuser"));
     assert_eq!(result.password.as_deref(), Some("testpassword123"));
     assert_eq!(result.totp.as_deref(), Some("123456"));
 
-    user.close();
+    user.close().await;
 }

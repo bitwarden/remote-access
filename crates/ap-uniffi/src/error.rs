@@ -20,8 +20,9 @@ impl From<ap_client::ClientError> for ClientError {
     fn from(err: ap_client::ClientError) -> Self {
         let message = err.to_string();
         match err {
-            ap_client::ClientError::ConnectionFailed(_)
-            | ap_client::ClientError::WebSocket(_) => ClientError::ConnectionFailed { message },
+            ap_client::ClientError::ConnectionFailed(_) | ap_client::ClientError::WebSocket(_) => {
+                ClientError::ConnectionFailed { message }
+            }
 
             ap_client::ClientError::ProxyAuthFailed(_)
             | ap_client::ClientError::HandshakeFailed(_)

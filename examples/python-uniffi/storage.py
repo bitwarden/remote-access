@@ -1,5 +1,9 @@
 """In-memory storage implementations for UniFFI examples."""
 
+from __future__ import annotations
+
+from typing import Optional, List
+
 from ap_uniffi import ConnectionStorage, FfiStoredConnection, IdentityStorage
 
 

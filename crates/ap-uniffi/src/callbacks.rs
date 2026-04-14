@@ -1,5 +1,5 @@
 use crate::error::ClientError;
-use crate::types::{FfiCredentialData, FfiEvent};
+use crate::types::{FfiAuditEvent, FfiCredentialData, FfiCredentialQuery, FfiEvent, FfiPskEntry};
 
 /// Callback interface for handling credential requests from remote devices.
 ///
@@ -9,15 +9,13 @@ use crate::types::{FfiCredentialData, FfiEvent};
 pub trait CredentialProvider: Send + Sync {
     /// Handle a credential request from a remote device.
     ///
-    /// * `query_type` — The type of query: "domain", "id", or "search".
-    /// * `query_value` — The query value (e.g. "example.com" for domain queries).
+    /// * `query` — The credential query (domain, ID, or search).
     /// * `remote_fingerprint` — Hex-encoded fingerprint of the requesting device.
     ///
     /// Return credential data to approve, or `None` to deny.
     fn handle_credential_request(
         &self,
-        query_type: String,
-        query_value: String,
+        query: FfiCredentialQuery,
         remote_fingerprint: String,
     ) -> Option<FfiCredentialData>;
 }
@@ -79,6 +77,35 @@ pub struct FfiStoredConnection {
     pub transport_state: Option<Vec<u8>>,
 }
 
+/// Callback interface for receiving audit events from the UserClient.
+///
+/// Optional — implement to receive security-relevant events like connection
+/// establishment, credential approvals/denials, etc.
+#[uniffi::export(callback_interface)]
+pub trait AuditLogger: Send + Sync {
+    /// Called when a security-relevant audit event occurs.
+    fn on_audit_event(&self, event: FfiAuditEvent);
+}
+
+/// Callback interface for persistent PSK storage.
+///
+/// Optional — implement to persist reusable pre-shared keys across restarts.
+/// Only needed when using `get_psk_token(reusable: true)`.
+#[uniffi::export(callback_interface)]
+pub trait PskStorage: Send + Sync {
+    /// Get a PSK entry by its hex-encoded identifier.
+    fn get(&self, psk_id: String) -> Option<FfiPskEntry>;
+
+    /// Save a PSK entry (insert or update).
+    fn save(&self, entry: FfiPskEntry) -> Result<(), ClientError>;
+
+    /// Remove a PSK entry by its hex-encoded identifier.
+    fn remove(&self, psk_id: String) -> Result<(), ClientError>;
+
+    /// List all stored PSK entries.
+    fn list(&self) -> Vec<FfiPskEntry>;
+}
+
 /// Callback interface for persistent connection storage.
 ///
 /// Implement this to control where cached connections are stored.
@@ -91,11 +118,7 @@ pub trait ConnectionStorage: Send + Sync {
     fn save(&self, connection: FfiStoredConnection) -> Result<(), ClientError>;
 
     /// Update the last_connected_at timestamp for an existing connection.
-    fn update(
-        &self,
-        fingerprint_hex: String,
-        last_connected_at: u64,
-    ) -> Result<(), ClientError>;
+    fn update(&self, fingerprint_hex: String, last_connected_at: u64) -> Result<(), ClientError>;
 
     /// List all cached connections.
     fn list(&self) -> Vec<FfiStoredConnection>;
