@@ -2,7 +2,7 @@ uniffi::setup_scaffolding!();
 
 mod adapters;
 mod callbacks;
-mod client;
+mod remote_client;
 mod error;
 mod types;
 mod user_client;
@@ -11,7 +11,7 @@ pub use callbacks::{
     ConnectionStorage, CredentialProvider, EventHandler, FfiStoredConnection, FingerprintVerifier,
     IdentityStorage,
 };
-pub use client::RemoteClient;
+pub use remote_client::RemoteClient;
 pub use error::ClientError;
 pub use types::{FfiConnectionInfo, FfiCredentialData, FfiEvent};
 pub use user_client::UserClient;
