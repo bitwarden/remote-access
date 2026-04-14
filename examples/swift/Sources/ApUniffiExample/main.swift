@@ -44,7 +44,7 @@ func parseArguments() -> Arguments? {
     return Arguments(token: token, domain: domain, proxyUrl: proxyUrl)
 }
 
-func main() -> Int32 {
+func main() async -> Int32 {
     guard let args = parseArguments() else {
         return 1
     }
@@ -57,16 +57,16 @@ func main() -> Int32 {
             eventHandler: nil
         )
 
-        try client.connect()
+        try await client.connect()
 
         if looksLikePskToken(token: args.token) {
-            try client.pairWithPsk(pskToken: args.token)
+            try await client.pairWithPsk(pskToken: args.token)
         } else {
-            let fp = try client.pairWithHandshake(code: args.token)
+            let fp = try await client.pairWithHandshake(code: args.token)
             fputs("Handshake fingerprint: \(fp)\n", stderr)
         }
 
-        let cred = try client.requestCredential(domain: args.domain)
+        let cred = try await client.requestCredential(domain: args.domain)
         client.close()
 
         if let username = cred.username { print("Username: \(username)") }
@@ -82,4 +82,4 @@ func main() -> Int32 {
     }
 }
 
-exit(main())
+exit(await main())

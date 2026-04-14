@@ -15,6 +15,15 @@ pub use error::RemoteAccessError;
 pub use types::{FfiConnectionInfo, FfiCredentialData, FfiEvent};
 pub use user_client::UserAccessClient;
 
+use std::sync::OnceLock;
+
+static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+
+/// Shared tokio runtime for async UniFFI exports and background tasks.
+pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
+    RUNTIME.get_or_init(|| tokio::runtime::Runtime::new().expect("Failed to create tokio runtime"))
+}
+
 /// Initialize tracing subscriber (called once per process, subsequent calls are no-ops).
 pub(crate) fn init_tracing() {
     let _ = tracing_subscriber::fmt()

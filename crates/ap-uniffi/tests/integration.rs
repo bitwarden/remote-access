@@ -165,11 +165,9 @@ async fn setup_user_client_psk(addr: SocketAddr) -> (String, Vec<tokio::task::Jo
         .expect("Should get PSK token");
 
     let notif_task =
-        tokio::task::spawn_local(
-            async move { while let Some(_notif) = notifications.recv().await {} },
-        );
+        tokio::task::spawn(async move { while let Some(_notif) = notifications.recv().await {} });
 
-    let cred_task = tokio::task::spawn_local(async move {
+    let cred_task = tokio::task::spawn(async move {
         loop {
             match requests.recv().await {
                 Some(UserClientRequest::CredentialRequest { reply, .. }) => {
@@ -196,12 +194,12 @@ async fn setup_user_client_psk(addr: SocketAddr) -> (String, Vec<tokio::task::Jo
     });
 
     // Keep user_client alive (its event loop shuts down when all handles drop)
-    let _keepalive = tokio::task::spawn_local(async move {
+    let keepalive = tokio::task::spawn(async move {
         let _client = user_client;
         tokio::time::sleep(Duration::from_secs(300)).await;
     });
 
-    (psk_token, vec![notif_task, cred_task, _keepalive])
+    (psk_token, vec![notif_task, cred_task, keepalive])
 }
 
 fn make_remote_client(proxy_url: String) -> RemoteAccessClient {
@@ -218,145 +216,126 @@ fn make_remote_client(proxy_url: String) -> RemoteAccessClient {
 // RemoteAccessClient Tests
 // ============================================================================
 
-#[test]
-fn connect_to_nonexistent_proxy_fails() {
+#[tokio::test]
+async fn connect_to_nonexistent_proxy_fails() {
     let client = make_remote_client("ws://127.0.0.1:1".to_string());
-    let result = client.connect();
+    let result = client.connect().await;
     assert!(result.is_err());
 }
 
 /// PSK pairing + credential exchange through the split UniFFI API.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn test_psk_pairing_and_credential_request() {
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async {
-            let addr = start_test_server().await;
-            let (psk_token, tasks) = setup_user_client_psk(addr).await;
+    let addr = start_test_server().await;
+    let (psk_token, tasks) = setup_user_client_psk(addr).await;
 
-            let proxy_url = format!("ws://{addr}");
-            let result = tokio::task::spawn_blocking(move || {
-                let client = make_remote_client(proxy_url);
+    let proxy_url = format!("ws://{addr}");
+    let client = make_remote_client(proxy_url);
 
-                client.connect().expect("connect should succeed");
-                client
-                    .pair_with_psk(psk_token)
-                    .expect("pair_with_psk should succeed");
+    client.connect().await.expect("connect should succeed");
+    client
+        .pair_with_psk(psk_token)
+        .await
+        .expect("pair_with_psk should succeed");
 
-                let cred = client
-                    .request_credential("example.com".to_string())
-                    .expect("credential request should succeed");
-                client.close();
-                cred
-            })
-            .await
-            .expect("blocking task should not panic");
+    let cred = client
+        .request_credential("example.com".to_string())
+        .await
+        .expect("credential request should succeed");
+    client.close();
 
-            assert_eq!(result.username.as_deref(), Some("testuser"));
-            assert_eq!(result.password.as_deref(), Some("testpassword123"));
-            assert_eq!(result.totp.as_deref(), Some("123456"));
+    assert_eq!(cred.username.as_deref(), Some("testuser"));
+    assert_eq!(cred.password.as_deref(), Some("testpassword123"));
+    assert_eq!(cred.totp.as_deref(), Some("123456"));
 
-            for t in tasks {
-                t.abort();
-            }
-        })
-        .await;
+    for t in tasks {
+        t.abort();
+    }
 }
 
 /// Rendezvous pairing through the split UniFFI API.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn test_rendezvous_pairing_and_credential_request() {
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async {
-            let addr = start_test_server().await;
+    let addr = start_test_server().await;
 
-            let user_identity = MemoryIdentityProvider::new();
-            let user_proxy = Box::new(DefaultProxyClient::from_url(format!("ws://{addr}")));
-            let user_session_store = MemoryConnectionStore::new();
+    let user_identity = MemoryIdentityProvider::new();
+    let user_proxy = Box::new(DefaultProxyClient::from_url(format!("ws://{addr}")));
+    let user_session_store = MemoryConnectionStore::new();
 
-            let UserClientHandle {
-                client: user_client,
-                mut notifications,
-                mut requests,
-            } = UserClient::connect(
-                Box::new(user_identity),
-                Box::new(user_session_store),
-                user_proxy,
-                None,
-                None,
-            )
-            .await
-            .expect("UserClient should connect");
+    let UserClientHandle {
+        client: user_client,
+        mut notifications,
+        mut requests,
+    } = UserClient::connect(
+        Box::new(user_identity),
+        Box::new(user_session_store),
+        user_proxy,
+        None,
+        None,
+    )
+    .await
+    .expect("UserClient should connect");
 
-            let code = user_client
-                .get_rendezvous_token(None)
-                .await
-                .expect("Should get rendezvous code");
+    let code = user_client
+        .get_rendezvous_token(None)
+        .await
+        .expect("Should get rendezvous code");
 
-            let _notif = tokio::task::spawn_local(async move {
-                while let Some(_n) = notifications.recv().await {}
-            });
+    let _notif =
+        tokio::task::spawn(async move { while let Some(_n) = notifications.recv().await {} });
 
-            let cred_task = tokio::task::spawn_local(async move {
-                loop {
-                    match requests.recv().await {
-                        Some(UserClientRequest::VerifyFingerprint { reply, .. }) => {
-                            reply
-                                .send(FingerprintVerificationReply {
-                                    approved: true,
-                                    name: None,
-                                })
-                                .expect("send fp");
-                        }
-                        Some(UserClientRequest::CredentialRequest { reply, .. }) => {
-                            reply
-                                .send(CredentialRequestReply {
-                                    approved: true,
-                                    credential: Some(test_credential()),
-                                    credential_id: None,
-                                })
-                                .expect("send cred");
-                            break;
-                        }
-                        None => break,
-                    }
+    let cred_task = tokio::task::spawn(async move {
+        loop {
+            match requests.recv().await {
+                Some(UserClientRequest::VerifyFingerprint { reply, .. }) => {
+                    reply
+                        .send(FingerprintVerificationReply {
+                            approved: true,
+                            name: None,
+                        })
+                        .expect("send fp");
                 }
-            });
+                Some(UserClientRequest::CredentialRequest { reply, .. }) => {
+                    reply
+                        .send(CredentialRequestReply {
+                            approved: true,
+                            credential: Some(test_credential()),
+                            credential_id: None,
+                        })
+                        .expect("send cred");
+                    break;
+                }
+                None => break,
+            }
+        }
+    });
 
-            let proxy_url = format!("ws://{addr}");
-            let code_str = code.to_string();
-            let result = tokio::task::spawn_blocking(move || {
-                let client = make_remote_client(proxy_url);
+    let proxy_url = format!("ws://{addr}");
+    let client = make_remote_client(proxy_url);
 
-                client.connect().expect("connect should succeed");
-                let fp = client
-                    .pair_with_handshake(code_str)
-                    .expect("pair_with_handshake should succeed");
-                assert!(!fp.is_empty(), "Fingerprint should not be empty");
+    client.connect().await.expect("connect should succeed");
+    let fp = client
+        .pair_with_handshake(code.to_string())
+        .await
+        .expect("pair_with_handshake should succeed");
+    assert!(!fp.is_empty(), "Fingerprint should not be empty");
 
-                let cred = client
-                    .request_credential("example.com".to_string())
-                    .expect("credential request should succeed");
-                client.close();
-                cred
-            })
-            .await
-            .expect("blocking task should not panic");
+    let cred = client
+        .request_credential("example.com".to_string())
+        .await
+        .expect("credential request should succeed");
+    client.close();
 
-            assert_eq!(result.username.as_deref(), Some("testuser"));
+    assert_eq!(cred.username.as_deref(), Some("testuser"));
 
-            cred_task.abort();
-            // Keep user_client alive for the test duration
-            drop(user_client);
-        })
-        .await;
+    cred_task.abort();
+    drop(user_client);
 }
 
-#[test]
-fn connect_no_token_no_sessions_gives_error() {
+#[tokio::test]
+async fn connect_no_token_no_sessions_gives_error() {
     let client = make_remote_client("ws://127.0.0.1:1".to_string());
-    let result = client.connect();
+    let result = client.connect().await;
     assert!(result.is_err());
 }
 
@@ -375,7 +354,7 @@ fn looks_like_psk_token_works() {
 // ============================================================================
 
 /// Test UserAccessClient with CredentialProvider callback.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test]
 async fn test_user_access_client_with_credential_provider() {
     /// Simple test credential provider.
     struct TestProvider;
@@ -395,54 +374,40 @@ async fn test_user_access_client_with_credential_provider() {
         }
     }
 
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async {
-            let addr = start_test_server().await;
-            let proxy_url = format!("ws://{addr}");
+    let addr = start_test_server().await;
+    let proxy_url = format!("ws://{addr}");
 
-            // Both UserAccessClient and RemoteAccessClient use block_on internally,
-            // so they must run on blocking threads (not inside the tokio runtime).
-            let proxy_url_clone = proxy_url.clone();
-            let psk_token = tokio::task::spawn_blocking(move || {
-                let user = UserAccessClient::new(
-                    proxy_url_clone,
-                    Box::new(MemoryIdentityStorage::new()),
-                    Box::new(MemoryConnectionStorage::new()),
-                    Box::new(TestProvider),
-                    None,
-                )
-                .expect("should create user client");
-                user.connect().expect("user connect should succeed");
-                let token = user.get_psk_token(false).expect("should get psk token");
-                // Keep user alive on a background thread so its event loop runs
-                // for the duration of the test (Drop shuts it down)
-                let _keepalive = Box::leak(Box::new(user));
-                token
-            })
-            .await
-            .expect("user setup should not panic");
+    let user = UserAccessClient::new(
+        proxy_url.clone(),
+        Box::new(MemoryIdentityStorage::new()),
+        Box::new(MemoryConnectionStorage::new()),
+        Box::new(TestProvider),
+        None,
+    )
+    .expect("should create user client");
+    user.connect().await.expect("user connect should succeed");
+    let psk_token = user
+        .get_psk_token(false)
+        .await
+        .expect("should get psk token");
 
-            let result = tokio::task::spawn_blocking(move || {
-                let client = make_remote_client(proxy_url);
+    let client = make_remote_client(proxy_url);
 
-                client.connect().expect("connect should succeed");
-                client
-                    .pair_with_psk(psk_token)
-                    .expect("pair_with_psk should succeed");
+    client.connect().await.expect("connect should succeed");
+    client
+        .pair_with_psk(psk_token)
+        .await
+        .expect("pair_with_psk should succeed");
 
-                let cred = client
-                    .request_credential("example.com".to_string())
-                    .expect("credential request should succeed");
-                client.close();
-                cred
-            })
-            .await
-            .expect("blocking task should not panic");
+    let result = client
+        .request_credential("example.com".to_string())
+        .await
+        .expect("credential request should succeed");
+    client.close();
 
-            assert_eq!(result.username.as_deref(), Some("testuser"));
-            assert_eq!(result.password.as_deref(), Some("testpassword123"));
-            assert_eq!(result.totp.as_deref(), Some("123456"));
-        })
-        .await;
+    assert_eq!(result.username.as_deref(), Some("testuser"));
+    assert_eq!(result.password.as_deref(), Some("testpassword123"));
+    assert_eq!(result.totp.as_deref(), Some("123456"));
+
+    user.close();
 }

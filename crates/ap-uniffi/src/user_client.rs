@@ -12,12 +12,11 @@ use tokio::sync::mpsc;
 
 /// A user-client (trusted device) that listens for incoming credential requests.
 ///
-/// Wraps `ap_client::UserClient` behind a synchronous FFI-safe API.
+/// Wraps `ap_client::UserClient` behind an async FFI-safe API.
 /// Credential requests and fingerprint verifications are dispatched to the
 /// `CredentialProvider` callback supplied at construction.
 #[derive(uniffi::Object)]
 pub struct UserAccessClient {
-    runtime: tokio::runtime::Runtime,
     inner: Mutex<Option<UserClient>>,
     handler: Arc<dyn CredentialProvider>,
     event_handler: Option<Arc<dyn EventHandler>>,
@@ -26,7 +25,7 @@ pub struct UserAccessClient {
     proxy_url: String,
 }
 
-#[uniffi::export]
+#[uniffi::export(async_runtime = "tokio")]
 impl UserAccessClient {
     /// Create a new UserAccessClient.
     ///
@@ -45,13 +44,7 @@ impl UserAccessClient {
     ) -> Result<Self, RemoteAccessError> {
         crate::init_tracing();
 
-        let runtime =
-            tokio::runtime::Runtime::new().map_err(|e| RemoteAccessError::ConnectionFailed {
-                message: format!("Failed to create runtime: {e}"),
-            })?;
-
         Ok(Self {
-            runtime,
             inner: Mutex::new(None),
             handler: Arc::from(handler),
             event_handler: event_handler.map(Arc::from),
@@ -65,8 +58,7 @@ impl UserAccessClient {
     ///
     /// Spawns a background event loop that dispatches credential requests and
     /// fingerprint verifications to the `CredentialProvider` callback.
-    pub fn connect(&self) -> Result<(), RemoteAccessError> {
-        // Close any existing connection first
+    pub async fn connect(&self) -> Result<(), RemoteAccessError> {
         if let Ok(mut inner) = self.inner.lock() {
             *inner = None;
         }
@@ -82,26 +74,22 @@ impl UserAccessClient {
             client,
             notifications,
             requests,
-        } = self
-            .runtime
-            .block_on(async {
-                UserClient::connect(
-                    Box::new(identity),
-                    Box::new(session_store),
-                    proxy_client,
-                    None, // audit_log
-                    None, // psk_store
-                )
-                .await
-            })
-            .map_err(RemoteAccessError::from)?;
+        } = UserClient::connect(
+            Box::new(identity),
+            Box::new(session_store),
+            proxy_client,
+            None, // audit_log
+            None, // psk_store
+        )
+        .await
+        .map_err(RemoteAccessError::from)?;
 
         // Spawn request handler
-        spawn_request_handler(&self.runtime, requests, Arc::clone(&self.handler));
+        spawn_request_handler(requests, Arc::clone(&self.handler));
 
         // Forward notifications to event handler if provided
         if let Some(handler) = &self.event_handler {
-            spawn_user_notification_forwarder(&self.runtime, notifications, Arc::clone(handler));
+            spawn_user_notification_forwarder(notifications, Arc::clone(handler));
         }
 
         let mut inner = self
@@ -120,39 +108,24 @@ impl UserAccessClient {
     /// * `reusable` — If true, the token can be used multiple times.
     ///
     /// Returns the PSK token string (`<64-hex-psk>_<64-hex-fingerprint>`).
-    pub fn get_psk_token(&self, reusable: bool) -> Result<String, RemoteAccessError> {
-        let inner = self
-            .inner
-            .lock()
-            .map_err(|_| RemoteAccessError::SessionError {
-                message: "Failed to acquire client lock".to_string(),
-            })?;
-        let client = inner.as_ref().ok_or(RemoteAccessError::ConnectionFailed {
-            message: "Not connected — call connect() first".to_string(),
-        })?;
+    pub async fn get_psk_token(&self, reusable: bool) -> Result<String, RemoteAccessError> {
+        let client = self.get_client()?;
 
-        self.runtime
-            .block_on(async { client.get_psk_token(None, reusable).await })
+        client
+            .get_psk_token(None, reusable)
+            .await
             .map_err(RemoteAccessError::from)
     }
 
     /// Generate a rendezvous code for pairing.
     ///
     /// Returns the rendezvous code string (e.g. "ABC-DEF-GHI").
-    pub fn get_rendezvous_token(&self) -> Result<String, RemoteAccessError> {
-        let inner = self
-            .inner
-            .lock()
-            .map_err(|_| RemoteAccessError::SessionError {
-                message: "Failed to acquire client lock".to_string(),
-            })?;
-        let client = inner.as_ref().ok_or(RemoteAccessError::ConnectionFailed {
-            message: "Not connected — call connect() first".to_string(),
-        })?;
+    pub async fn get_rendezvous_token(&self) -> Result<String, RemoteAccessError> {
+        let client = self.get_client()?;
 
-        let code = self
-            .runtime
-            .block_on(async { client.get_rendezvous_token(None).await })
+        let code = client
+            .get_rendezvous_token(None)
+            .await
             .map_err(RemoteAccessError::from)?;
 
         Ok(code.to_string())
@@ -166,6 +139,23 @@ impl UserAccessClient {
     }
 }
 
+impl UserAccessClient {
+    fn get_client(&self) -> Result<UserClient, RemoteAccessError> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| RemoteAccessError::SessionError {
+                message: "Failed to acquire client lock".to_string(),
+            })?;
+        inner
+            .as_ref()
+            .cloned()
+            .ok_or(RemoteAccessError::ConnectionFailed {
+                message: "Not connected — call connect() first".to_string(),
+            })
+    }
+}
+
 impl Drop for UserAccessClient {
     fn drop(&mut self) {
         self.close();
@@ -174,11 +164,10 @@ impl Drop for UserAccessClient {
 
 /// Spawn a task that drains `UserClientRequest`s and dispatches to the callback.
 fn spawn_request_handler(
-    runtime: &tokio::runtime::Runtime,
     mut requests: mpsc::Receiver<UserClientRequest>,
     handler: Arc<dyn CredentialProvider>,
 ) {
-    runtime.spawn(async move {
+    crate::runtime().spawn(async move {
         while let Some(request) = requests.recv().await {
             match request {
                 UserClientRequest::CredentialRequest {
@@ -254,11 +243,10 @@ fn spawn_request_handler(
 
 /// Spawn a task that forwards `UserClientNotification`s to an `EventHandler`.
 fn spawn_user_notification_forwarder(
-    runtime: &tokio::runtime::Runtime,
     mut rx: mpsc::Receiver<UserClientNotification>,
     handler: Arc<dyn EventHandler>,
 ) {
-    runtime.spawn(async move {
+    crate::runtime().spawn(async move {
         while let Some(notif) = rx.recv().await {
             let event = match notif {
                 UserClientNotification::Listening {} => FfiEvent::Listening,

@@ -22,7 +22,6 @@ use crate::types::{FfiConnectionInfo, FfiCredentialData, FfiEvent};
 /// caller forgets to call `close()`.
 #[derive(uniffi::Object)]
 pub struct RemoteAccessClient {
-    runtime: tokio::runtime::Runtime,
     inner: Mutex<Option<RemoteClient>>,
     event_handler: Option<Arc<dyn EventHandler>>,
     identity_storage: Arc<dyn IdentityStorage>,
@@ -30,7 +29,7 @@ pub struct RemoteAccessClient {
     proxy_url: String,
 }
 
-#[uniffi::export]
+#[uniffi::export(async_runtime = "tokio")]
 impl RemoteAccessClient {
     /// Create a new RemoteAccessClient.
     ///
@@ -47,13 +46,7 @@ impl RemoteAccessClient {
     ) -> Result<Self, RemoteAccessError> {
         crate::init_tracing();
 
-        let runtime =
-            tokio::runtime::Runtime::new().map_err(|e| RemoteAccessError::ConnectionFailed {
-                message: format!("Failed to create runtime: {e}"),
-            })?;
-
         Ok(Self {
-            runtime,
             inner: Mutex::new(None),
             event_handler: event_handler.map(Arc::from),
             identity_storage: Arc::from(identity_storage),
@@ -66,8 +59,7 @@ impl RemoteAccessClient {
     ///
     /// After this, call one of the pairing methods to establish a secure channel:
     /// `pair_with_handshake()`, `pair_with_psk()`, or `load_existing_connection()`.
-    pub fn connect(&self) -> Result<(), RemoteAccessError> {
-        // Close any existing connection first
+    pub async fn connect(&self) -> Result<(), RemoteAccessError> {
         if let Ok(mut inner) = self.inner.lock() {
             *inner = None;
         }
@@ -83,17 +75,13 @@ impl RemoteAccessClient {
             client,
             notifications,
             requests: _requests,
-        } = self
-            .runtime
-            .block_on(async {
-                RemoteClient::connect(Box::new(identity), Box::new(session_store), proxy_client)
-                    .await
-            })
+        } = RemoteClient::connect(Box::new(identity), Box::new(session_store), proxy_client)
+            .await
             .map_err(RemoteAccessError::from)?;
 
         // Forward notifications to event handler if provided
         if let Some(handler) = &self.event_handler {
-            spawn_remote_notification_forwarder(&self.runtime, notifications, Arc::clone(handler));
+            spawn_remote_notification_forwarder(notifications, Arc::clone(handler));
         }
 
         let mut inner = self
@@ -113,20 +101,12 @@ impl RemoteAccessClient {
     ///
     /// Returns the 6-char handshake fingerprint as a hex string for out-of-band
     /// verification. No fingerprint verification is performed (headless mode).
-    pub fn pair_with_handshake(&self, code: String) -> Result<String, RemoteAccessError> {
-        let inner = self
-            .inner
-            .lock()
-            .map_err(|_| RemoteAccessError::SessionError {
-                message: "Failed to acquire client lock".to_string(),
-            })?;
-        let client = inner.as_ref().ok_or(RemoteAccessError::ConnectionFailed {
-            message: "Not connected — call connect() first".to_string(),
-        })?;
+    pub async fn pair_with_handshake(&self, code: String) -> Result<String, RemoteAccessError> {
+        let client = self.get_client()?;
 
-        let fp = self
-            .runtime
-            .block_on(async { client.pair_with_handshake(code, false).await })
+        let fp = client
+            .pair_with_handshake(code, false)
+            .await
             .map_err(RemoteAccessError::from)?;
 
         Ok(fp.to_hex())
@@ -135,16 +115,8 @@ impl RemoteAccessClient {
     /// Pair with a new device using a PSK token.
     ///
     /// * `psk_token` — PSK token string (`<64-hex-psk>_<64-hex-fingerprint>`).
-    pub fn pair_with_psk(&self, psk_token: String) -> Result<(), RemoteAccessError> {
-        let inner = self
-            .inner
-            .lock()
-            .map_err(|_| RemoteAccessError::SessionError {
-                message: "Failed to acquire client lock".to_string(),
-            })?;
-        let client = inner.as_ref().ok_or(RemoteAccessError::ConnectionFailed {
-            message: "Not connected — call connect() first".to_string(),
-        })?;
+    pub async fn pair_with_psk(&self, psk_token: String) -> Result<(), RemoteAccessError> {
+        let client = self.get_client()?;
 
         let parsed =
             PskToken::parse(&psk_token).map_err(|e| RemoteAccessError::InvalidArgument {
@@ -152,8 +124,9 @@ impl RemoteAccessClient {
             })?;
         let (psk, fingerprint) = parsed.into_parts();
 
-        self.runtime
-            .block_on(async { client.pair_with_psk(psk, fingerprint).await })
+        client
+            .pair_with_psk(psk, fingerprint)
+            .await
             .map_err(RemoteAccessError::from)?;
 
         Ok(())
@@ -162,19 +135,11 @@ impl RemoteAccessClient {
     /// Reconnect to a previously paired device using a cached connection.
     ///
     /// * `fingerprint_hex` — Hex-encoded identity fingerprint of the remote peer.
-    pub fn load_existing_connection(
+    pub async fn load_existing_connection(
         &self,
         fingerprint_hex: String,
     ) -> Result<(), RemoteAccessError> {
-        let inner = self
-            .inner
-            .lock()
-            .map_err(|_| RemoteAccessError::SessionError {
-                message: "Failed to acquire client lock".to_string(),
-            })?;
-        let client = inner.as_ref().ok_or(RemoteAccessError::ConnectionFailed {
-            message: "Not connected — call connect() first".to_string(),
-        })?;
+        let client = self.get_client()?;
 
         let fingerprint = IdentityFingerprint::from_hex(&fingerprint_hex).map_err(|e| {
             RemoteAccessError::InvalidArgument {
@@ -182,8 +147,9 @@ impl RemoteAccessClient {
             }
         })?;
 
-        self.runtime
-            .block_on(async { client.load_cached_connection(fingerprint).await })
+        client
+            .load_cached_connection(fingerprint)
+            .await
             .map_err(RemoteAccessError::from)?;
 
         Ok(())
@@ -192,48 +158,39 @@ impl RemoteAccessClient {
     /// Request a credential for a domain.
     ///
     /// * `domain` — The domain to look up (e.g. "example.com").
-    pub fn request_credential(
+    pub async fn request_credential(
         &self,
         domain: String,
     ) -> Result<FfiCredentialData, RemoteAccessError> {
-        let inner = self
-            .inner
-            .lock()
-            .map_err(|_| RemoteAccessError::SessionError {
-                message: "Failed to acquire client lock".to_string(),
-            })?;
-        let client = inner
-            .as_ref()
-            .ok_or(RemoteAccessError::CredentialRequestFailed {
+        let client = self
+            .get_client()
+            .map_err(|_| RemoteAccessError::CredentialRequestFailed {
                 message: "Not connected — call connect() first".to_string(),
             })?;
 
         let query = CredentialQuery::Domain(domain);
-        let cred = self
-            .runtime
-            .block_on(async { client.request_credential(&query, None).await })
+        let cred = client
+            .request_credential(&query, None)
+            .await
             .map_err(RemoteAccessError::from)?;
 
         Ok(FfiCredentialData::from(cred))
     }
 
     /// List all cached connections.
-    pub fn list_connections(&self) -> Vec<FfiConnectionInfo> {
-        let inner = match self.inner.lock() {
-            Ok(inner) => inner,
+    pub async fn list_connections(&self) -> Vec<FfiConnectionInfo> {
+        let client = match self.get_client() {
+            Ok(client) => client,
             Err(_) => return Vec::new(),
         };
 
-        match inner.as_ref() {
-            Some(client) => self
-                .runtime
-                .block_on(async { client.list_connections().await })
-                .unwrap_or_default()
-                .into_iter()
-                .map(FfiConnectionInfo::from)
-                .collect(),
-            None => Vec::new(),
-        }
+        client
+            .list_connections()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(FfiConnectionInfo::from)
+            .collect()
     }
 
     /// Close the connection and release resources.
@@ -241,6 +198,23 @@ impl RemoteAccessClient {
         if let Ok(mut inner) = self.inner.lock() {
             *inner = None;
         }
+    }
+}
+
+impl RemoteAccessClient {
+    fn get_client(&self) -> Result<RemoteClient, RemoteAccessError> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| RemoteAccessError::SessionError {
+                message: "Failed to acquire client lock".to_string(),
+            })?;
+        inner
+            .as_ref()
+            .cloned()
+            .ok_or(RemoteAccessError::ConnectionFailed {
+                message: "Not connected — call connect() first".to_string(),
+            })
     }
 }
 
@@ -252,11 +226,10 @@ impl Drop for RemoteAccessClient {
 
 /// Spawn a task that forwards `RemoteClientNotification`s to an `EventHandler`.
 fn spawn_remote_notification_forwarder(
-    runtime: &tokio::runtime::Runtime,
     mut rx: mpsc::Receiver<RemoteClientNotification>,
     handler: Arc<dyn EventHandler>,
 ) {
-    runtime.spawn(async move {
+    crate::runtime().spawn(async move {
         while let Some(notif) = rx.recv().await {
             let event = match notif {
                 RemoteClientNotification::Connecting => FfiEvent::Connecting,
@@ -387,10 +360,10 @@ mod tests {
         assert!(client.is_ok());
     }
 
-    #[test]
-    fn client_request_credential_fails_before_connect() {
+    #[tokio::test]
+    async fn client_request_credential_fails_before_connect() {
         let client = make_client();
-        let result = client.request_credential("example.com".to_string());
+        let result = client.request_credential("example.com".to_string()).await;
         assert!(matches!(
             result,
             Err(RemoteAccessError::CredentialRequestFailed { .. })
@@ -403,16 +376,22 @@ mod tests {
         client.close();
     }
 
-    #[test]
-    fn pair_methods_fail_before_connect() {
+    #[tokio::test]
+    async fn pair_methods_fail_before_connect() {
         let client = make_client();
 
         assert!(
             client
                 .pair_with_handshake("ABC-DEF-GHI".to_string())
+                .await
                 .is_err()
         );
-        assert!(client.pair_with_psk("x".repeat(129)).is_err());
-        assert!(client.load_existing_connection("a".repeat(64)).is_err());
+        assert!(client.pair_with_psk("x".repeat(129)).await.is_err());
+        assert!(
+            client
+                .load_existing_connection("a".repeat(64))
+                .await
+                .is_err()
+        );
     }
 }
