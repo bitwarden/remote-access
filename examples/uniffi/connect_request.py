@@ -31,7 +31,7 @@ from ap_uniffi import (
 from storage import MemoryConnectionStorage, MemoryIdentityStorage
 
 
-def main() -> int:
+async def main() -> int:
     parser = argparse.ArgumentParser(
         description="Request a credential via Agent Access (UniFFI bindings)"
     )
@@ -48,15 +48,15 @@ def main() -> int:
             event_handler=None,
         )
 
-        client.connect()
+        await client.connect()
 
         if looks_like_psk_token(args.token):
-            client.pair_with_psk(args.token)
+            await client.pair_with_psk(args.token)
         else:
-            fp = client.pair_with_handshake(args.token)
+            fp = await client.pair_with_handshake(args.token)
             print(f"Handshake fingerprint: {fp}", file=sys.stderr)
 
-        cred = client.request_credential(args.domain)
+        cred = await client.request_credential(args.domain)
         client.close()
 
         if cred.username:
@@ -77,4 +77,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    import asyncio
+    sys.exit(asyncio.run(main()))

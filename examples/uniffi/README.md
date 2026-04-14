@@ -36,7 +36,7 @@ Start a proxy and a listener first (see the main project README), then:
 
 ```bash
 # Connect with a PSK token
-python3 test.py --token <PSK_TOKEN> --domain github.com
+python3 connect_request.py --token <PSK_TOKEN> --domain github.com
 
 # Connect with a rendezvous code
 python3 connect_request.py --token ABC-DEF-GHI --domain example.com
@@ -75,8 +75,7 @@ cargo run --bin uniffi-bindgen generate --library target/debug/libap_uniffi.dyli
 
 | File | Description |
 |------|-------------|
-| `test.py` | Quick test script with CLI args |
-| `connect_request.py` | Full example with connect + credential request |
+| `connect_request.py` | Connect + request credential example |
 | `storage.py` | In-memory storage implementations (shared by examples) |
 | `ap_uniffi.py` | _(generated)_ Python bindings — do not edit |
 | `libap_uniffi.dylib` | _(symlink)_ Native library — do not commit |
