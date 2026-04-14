@@ -38,6 +38,9 @@ impl UserAccessClient {
     /// * `handler` — Callback for credential requests.
     /// * `fingerprint_verifier` — Optional callback for verifying handshake fingerprints
     ///   on rendezvous connections. If `None`, rendezvous fingerprints are auto-accepted.
+    ///   TODO: Fingerprint verification only applies to rendezvous pairing — consider
+    ///   moving this to `get_rendezvous_token()` or a dedicated method instead of
+    ///   requiring it at construction time.
     /// * `event_handler` — Optional callback for status notifications.
     #[uniffi::constructor]
     pub fn new(
