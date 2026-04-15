@@ -20,7 +20,7 @@ ap-proxy-client = { path = "../ap-proxy-client", default-features = false, featu
 ap-proxy-protocol = { path = "../ap-proxy-protocol" }
 ap-noise = { path = "../ap-noise" }
 async-trait = "0.1"
-thiserror = "1.0"
+thiserror = "2.0"
 tokio = { version = "1.36.0", features = ["rt-multi-thread", "sync", "macros"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
