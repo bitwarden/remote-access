@@ -1,0 +1,4 @@
+module ap_uniffiFFI {
+    header "include/ap_uniffiFFI.h"
+    export *
+}

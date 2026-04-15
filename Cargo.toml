@@ -9,6 +9,7 @@ members = [
     "crates/ap-proxy-client",
     "crates/ap-proxy-protocol",
     "crates/ap-cli",
+    "crates/ap-uniffi",
 ]
 exclude = [
     "examples/python-pyo3",

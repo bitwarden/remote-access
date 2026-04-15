@@ -1,0 +1,37 @@
+[package]
+name = "ap-uniffi"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "ap_uniffi"
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+
+[dependencies]
+ap-client = { path = "../ap-client", features = ["native-websocket"] }
+ap-proxy-client = { path = "../ap-proxy-client", default-features = false, features = ["native-websocket"] }
+ap-proxy-protocol = { path = "../ap-proxy-protocol" }
+ap-noise = { path = "../ap-noise" }
+async-trait = "0.1"
+thiserror = "1.0"
+tokio = { version = "1.36.0", features = ["rt-multi-thread", "sync", "macros"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+uniffi = { version = "0.28", features = ["cli", "tokio"] }
+zeroize = { version = "1.8", features = ["zeroize_derive"] }
+
+[dev-dependencies]
+ap-proxy = { path = "../ap-proxy" }
+tokio = { version = "1.36.0", features = ["rt-multi-thread", "sync", "macros", "time"] }
+zeroize = { version = "1.8", features = ["zeroize_derive"] }
+
+[lints.clippy]
+unwrap_used = "deny"
+string_slice = "warn"
