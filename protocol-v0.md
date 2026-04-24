@@ -9,6 +9,9 @@ Authors:
 * Anders Åberg, Bitwarden <aaberg@bitwarden.com>
 * Bernd Schoolmann, Bitwarden
 
+Contributors:
+* Ludovic Widmer, Dashlane
+
 ## Bird's-eye View
 
 ### Problem
