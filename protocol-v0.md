@@ -12,6 +12,10 @@ Authors:
 * Anders Åberg, Bitwarden <aaberg@bitwarden.com>
 * Bernd Schoolmann, Bitwarden
 
+
+Contributors:
+* Ludovic Widmer, Dashlane
+
 ## Introduction
 
 ### Objectives
