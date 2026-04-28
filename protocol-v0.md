@@ -1,6 +1,9 @@
 # Agent Access Protocol v0
 
-Covers the noise, wire and proxy protocol. Does not include client or CLI architecture.
+The Agent Access Protocol is a protocol for presenting credentials whose design
+goals include user-mediation, fine-grained access, and end-to-end encryption.
+
+Covers the Noise, wire and proxy protocol. Does not include client or CLI architecture.
 We've intentionally included some implementation details for the sake of pragamatism.
 
 Status: draft.
@@ -9,15 +12,63 @@ Authors:
 * Anders Åberg, Bitwarden <aaberg@bitwarden.com>
 * Bernd Schoolmann, Bitwarden
 
-## Bird's-eye View
 
-### Problem
+Contributors:
+* Ludovic Widmer, Dashlane
 
-Any remote system (e.g. an AI agent or headless script) needs to fetch
-a specific credential from any password manager running on a user's
-device, without letting any intermediary read the credential and
-without requiring the two systems to be on the same network or a
-proprietary integration.
+## Introduction
+
+### Objectives
+
+Remote systems running on behalf of a user (e.g. an AI agent or headless script)
+may need to authenticate to other third-party services as that user. Users may store their
+credentials in password managers and can grant these remote systems to their password manager. However, this presents some challenges:
+
+- Many password managers only allow all-or-nothing access to password vaults,
+  this leaves the user with the choice
+  to insecurely share access to their entire vault, or require other means.
+
+- This architecture requires remote systems to be designed to securely store
+  third-party user credentials long-term, which would leave them vulnerable to
+  compromise, or to request input from the user, who may not be available at the
+  time.
+
+Existing solutions to connect services, like REST APIs and OAuth 2, are highly
+beneficial, but might not be suitable if the third-party vendor has not
+implemented them, or if it requires the user to have a developer agreement and
+coding knowledge to implement them.
+
+Since password managers already manage access to these third-party services, Password managers that store user credentials have an opportunity to mediate
+access to the user's credentials.
+
+In order to be both secure and practical for both users and remote systems, the solution must have the following be:
+
+- _fine-grained_: The password manager should only grant access to the exact
+  credential that the user needs system should makes it easy to share a specific
+  credential rather than the whole vault.
+
+- _user-mediated_: The user must remain in control of their credentials and when
+  they are used.
+
+- _just-in-time_: Instead of storing third-party user credentials long-term, the
+  remote system should be able to request the credential at the time it needs it,
+  use the credential, and evict it from memory after use in order to reduce
+  exposure.
+
+- _confidential_: Credentials should only be exposed to the remote service the
+  user chooses to use.
+
+- _interoperable_: Instead of N:N solutions for remote systems and password
+  managers, a standard protocol can reduce the effort required on the ecosystem.
+
+- _available_: The remote system and password manager should run anywhere,
+  allowing for easy access from the user.
+
+- _accessible_: The user should be able to use the credentials they have, without steps like developer agreements.
+
+This document defines an online end-to-end encrypted protocol for mediating
+fine-grained access to a user's credentials that can be used with any pair of
+password manager and remote system that supports the protocol.
 
 ### Shape of the solution
 
