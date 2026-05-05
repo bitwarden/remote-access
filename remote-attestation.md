@@ -60,17 +60,14 @@ and verification fails, the connection MUST be rejected (§6.5).
 ## 2. Overview
 
 ```
-   ┌────────────┐  publishes JWKS                           ┌────────────┐
-   │   Vendor   │  at https://<iss>/<path>          ◄────── │ UserClient │
-   │ (e.g.      │                                           │ (verifies) │
-   │  Browser-  │  signs binding token, naming jku          └────────────┘
-   │  base)     │  ─────────────────────────────────┐              ▲
-   └────────────┘                                   ▼              │
-                                              ┌──────────────┐     │
-                                              │ RemoteClient │     │
-                                              │ (presents    │ ────┘
-                                              │  token)      │
-                                              └──────────────┘
+   ┌────────────┐  (1) signs token (sub,              ┌──────────────┐
+   │   Vendor   │      session binding)           ───►│ RemoteClient │
+   │            │                                     └──────┬───────┘
+   └────────────┘                                            │ (2) presents token
+          ▲                                          ┌───────▼──────┐
+          └──────── (3) fetch JWKS ──────────────────│  UserClient  │
+                                                     │  (verifies)  │
+                                                     └──────────────┘
 ```
 
 1. Vendor publishes its public verification key set at an HTTPS URL
@@ -100,7 +97,7 @@ trustworthy identity for the peer." Policy evaluation is layered on
 top.
 
 The verification anchor is web PKI. The token names its JWKS URL via
-the `jku` claim (§4.4); the UserClient fetches that URL over TLS,
+the `jku` header parameter (§4.3); the UserClient fetches that URL over TLS,
 which authenticates the issuer's domain. The `jku` URL MUST be on
 the same origin as `iss`, so the host the verifier reaches is the
 host policy is applied to. A UserClient operating in environments
@@ -149,8 +146,8 @@ verifiers MUST reject them at the parser level, not by allowlist.
 ### 4.2 JWKS publication (issuer requirements)
 
 The issuer MUST publish a JWKS (RFC 7517) at an HTTPS URL on the
-same origin as `iss`. The token names this URL via the `jku` claim
-(§4.4). Verifiers convert each JWK to a `COSE_Key` (RFC 9052 §7) at
+same origin as `iss`. The token names this URL via the `jku` header
+parameter (§4.3). Verifiers convert each JWK to a `COSE_Key` (RFC 9052 §7) at
 verification time, using the standard JOSE-to-COSE parameter mapping.
 
 Each JWK in the document MUST:
@@ -180,10 +177,17 @@ rotation policy. Verifiers honor `Cache-Control` (§6.4).
 
 The COSE protected header contains exactly the following parameters:
 
-| Parameter | COSE label | Required | Value                                  |
-|-----------|------------|----------|----------------------------------------|
-| `typ`     | 16         | yes      | `x.agentaccess-binding+cwt`            |
-| `kid`     | 4          | yes      | A `kid` present in the issuer's JWKS   |
+| Parameter | COSE label | Required | Value                                                        |
+|-----------|------------|----------|--------------------------------------------------------------|
+| `typ`     | 16         | yes      | `x.agentaccess-binding+cwt`                                  |
+| `kid`     | 4          | yes      | A `kid` present in the issuer's JWKS                         |
+| `jku`     | 32         | yes      | HTTPS URL of the JWKS document; hostname MUST equal `iss`    |
+
+The `jku` URL MUST satisfy:
+
+- Scheme is `https`.
+- Hostname (case-insensitive) equals `iss`.
+- No userinfo, fragment, or query component.
 
 The header MUST NOT contain:
 
@@ -212,7 +216,6 @@ until then `x.` is used per RFC 6838 §3.4.
 | `sub`          | 2       | yes      | Hex-encoded `IdentityFingerprint` of the RemoteClient |
 | `exp`          | 4       | no       | Unix seconds; default `iat + MAX_LIFETIME`           |
 | `iat`          | 6       | yes      | Unix seconds                                         |
-| `jku`          | "jku" (tstr) | yes | HTTPS URL of the JWKS document; same origin as `iss` |
 
 The Noise session binding (§4.5) is not a claim in the payload; it
 is carried as COSE `external_aad`.
@@ -257,16 +260,6 @@ The maximum effective validity from any clock is therefore
 `MAX_LIFETIME + 2·SKEW = 7 minutes`. This bound is intentional. Issuers
 MUST NOT set `exp` greater than `iat + MAX_LIFETIME`; verifiers MUST
 reject if they do.
-
-#### 4.4.4 `jku`
-
-An HTTPS URL pointing to the JWKS document the verifier MUST fetch
-to obtain the public key referenced by `kid`. Verifiers MUST reject
-the token unless:
-
-- The URL scheme is `https`.
-- The URL hostname (case-insensitive) equals `iss`.
-- The URL has no userinfo, fragment, or query component.
 
 ### 4.5 Binding to the Noise session
 
@@ -348,32 +341,31 @@ and closure of the underlying proxy connection. There is no fallback
 
 1. `typ` (label 16) equals the expected value (§4.3).
 2. `kid` (label 4) is present in the protected header.
-3. `alg` (label 1) is absent from the protected header.
-4. No unrecognized labels are present in the protected header.
+3. `jku` (label 32) is present and satisfies the URL constraints (§4.3).
+4. `alg` (label 1) is absent from the protected header.
+5. No unrecognized labels are present in the protected header.
 
 ### 6.3 Validate claims
 
 1. `iss` is a syntactically valid hostname (no scheme, path, or
-   port). Whether `iss` is pre-trusted, auto-discovered, or
-   surfaced for first-contact approval is an implementation choice
-   (§3, §7).
-2. `jku` is an HTTPS URL with hostname equal to `iss`, no userinfo,
-   no fragment, no query (§4.4.4).
-3. `sub` equals `hex(SHA256(remote_client_pubkey))` of the peer that
+   port) and its value equals the hostname of `jku` (§4.3). Whether
+   `iss` is pre-trusted, auto-discovered, or surfaced for
+   first-contact approval is an implementation choice (§3, §7).
+2. `sub` equals `hex(SHA256(remote_client_pubkey))` of the peer that
    completed the Noise handshake.
-4. `iat` is within `[now - SKEW, now + SKEW]`.
-5. `exp`, if present, satisfies `exp ∈ (now, now + MAX_LIFETIME]` and
+3. `iat` is within `[now - SKEW, now + SKEW]`.
+4. `exp`, if present, satisfies `exp ∈ (now, now + MAX_LIFETIME]` and
    `exp - iat ≤ MAX_LIFETIME`. If absent, treat as `iat + MAX_LIFETIME`
    and apply the same bound.
 
-Steps 1–5 produce an authenticated identity. Whether that identity
+Steps 1–4 produce an authenticated identity. Whether that identity
 is acceptable for the connection (claim policy, issuer allowlisting,
 TOFU prompts, etc.) is evaluated separately by the UserClient per §3.
 
 ### 6.4 Fetch / verify signature
 
-1. Look up `kid` in the cached JWKS for `jku`.
-2. If absent, fetch the URL given by `jku` once. If the fetch fails
+1. Look up `kid` in the cached JWKS for the `jku` URL (§4.3).
+2. If absent, fetch that URL once. If the fetch fails
    or the JWKS is malformed (including duplicate `kid`), reject. If
    `kid` is still absent after a successful fetch, reject.
 3. Confirm the JWK's `key_ops` is exactly `[verify]` and its `alg` is
@@ -494,6 +486,10 @@ is acceptable because the JWKS already carries it.
 - Claims schema: We may want to define or lean on an existing schema for claim keys (`x.project_id` etc), and for oattern matching for `require` claims (regex, glob, set membership).
 - Certificate / Hierarchical issuer trust (issuer A vouches for issuer B). v0 of
   this extension is flat.
+- Evaluate alignment with EAT (Entity Attestation Token,
+  draft-ietf-rats-eat): its `nonce` claim (CWT key 10) covers a
+  similar freshness/binding role, and its extension mechanism could
+  anchor the `x.` claim vocabulary.
 
 ## 10. References
 
