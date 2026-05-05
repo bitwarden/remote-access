@@ -1,4 +1,4 @@
-# RemoteClient Attestation
+# RemoteClient Identity Attestation
 
 An optional extension to the Agent Access Protocol that lets a UserClient
 apply policy on which RemoteClients it accepts, based on signed claims
