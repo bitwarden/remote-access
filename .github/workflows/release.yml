@@ -129,9 +129,11 @@ jobs:
     if: ${{ inputs.publish_crates == true }}
     runs-on: ubuntu-24.04
     needs: build
+    environment: crates-io
 
     permissions:
       contents: read
+      id-token: write
 
     steps:
       - name: Checkout
@@ -145,8 +147,6 @@ jobs:
           toolchain: stable
 
       - name: Publish crates
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
 
